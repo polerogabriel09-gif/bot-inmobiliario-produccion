@@ -718,6 +718,47 @@ def mensaje_presentacion_inicial():
     return "¡Hola! 👋 Soy Gabriel Polero. 😊 ¿En qué le podemos servir?"
 
 
+def es_solo_saludo(texto):
+    """
+    Devuelve True únicamente cuando el mensaje del cliente es un saludo simple.
+    Ejemplos: "hola", "buenas", "buenos días", "hola buenas noches".
+
+    Si el saludo trae una consulta ("hola, precios de Buenaventura"),
+    devuelve False para que el bot se presente y luego responda la pregunta.
+    """
+    if not texto:
+        return False
+
+    t = texto.lower().strip()
+
+    # Quitamos signos y emojis, pero conservamos letras/números/espacios.
+    t = re.sub(r"[^a-záéíóúüñ0-9\s]", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+
+    saludos_simples = {
+        "hola",
+        "holaaa",
+        "buenas",
+        "buen día",
+        "buen dia",
+        "buenos días",
+        "buenos dias",
+        "buenas tardes",
+        "buenas noches",
+        "qué tal",
+        "que tal",
+        "hola buenas",
+        "hola buen día",
+        "hola buen dia",
+        "hola buenos días",
+        "hola buenos dias",
+        "hola buenas tardes",
+        "hola buenas noches",
+    }
+
+    return t in saludos_simples
+
+
 def enviar_presentacion_si_corresponde(numero, message_id=None):
     """
     Envía una presentación breve antes de cualquier otra respuesta.
@@ -4609,10 +4650,25 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
         # antes de precios, cotizaciones, ubicación, fotos, videos o respuesta IA.
         # Si el cliente pidió algo concreto, después de esta presentación
         # el flujo continúa normalmente y entrega lo solicitado.
-        enviar_presentacion_si_corresponde(
+        presentacion_enviada = enviar_presentacion_si_corresponde(
             numero_cliente,
             message_id
         )
+
+        # Si el PRIMER mensaje fue únicamente un saludo, ya respondimos con la
+        # presentación. Terminamos aquí para que OpenAI no mande un segundo saludo.
+        #
+        # Si escribió algo como:
+        # "Hola, ¿cuánto cuesta Buenaventura?"
+        # NO entra aquí: se presenta y luego continúa para responder la consulta.
+        if presentacion_enviada and es_solo_saludo(texto_cliente):
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(
+                numero_cliente,
+                "assistant",
+                mensaje_presentacion_inicial()
+            )
+            return
 
         # Mantener proyecto fijo por número.
         proyecto = actualizar_proyecto_activo(
