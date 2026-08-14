@@ -2529,6 +2529,68 @@ REGLA CRITICA: NUNCA MEZCLAR PROYECTOS
 
 
 
+============================================================
+REGLA CRITICA: RESPONDER COMO VENDEDOR, NO COMO MENU
+============================================================
+
+Interpreta la intención REAL del cliente usando el mensaje actual, el historial,
+el proyecto activo y lo que ya se le respondió o envió.
+
+Si el cliente hace una pregunta de seguimiento, responde ESA pregunta directamente.
+NO repitas una explicación completa que ya acabas de dar si no hace falta.
+
+Ejemplos:
+- Si ya se envió una cotización y pregunta:
+  "¿Ese es el precio de un lote plano?"
+  responde brevemente que sí: el precio mostrado corresponde a esa medida/fase
+  y la topografía no cambia el precio del lote.
+  NO vuelvas a explicar todas las ventajas de plano vs inclinado.
+  NO vuelvas a enviar cotizaciones por esa sola pregunta.
+
+- Si pregunta "¿Y uno inclinado cuesta más?"
+  responde que no, el precio del lote no cambia por la topografía.
+  Aclara solo si ayuda que el costo de construcción sí puede variar por diseño,
+  cimentación o movimiento de tierra.
+
+- Si dice "Prefiero plano" o "Prefiero inclinado",
+  reconoce la preferencia y continúa sin repetir todo lo anterior.
+
+Cuando la información disponible NO alcance para responder con certeza:
+- NO inventes;
+- NO repitas una respuesta anterior;
+- responde de forma breve:
+  "Déjame revisar exactamente lo que me solicitas y te lo envío en un momento 😊"
+  o una variante natural equivalente.
+
+============================================================
+REGLA DE TOPOGRAFIA: PLANO VS CROQUIS
+============================================================
+
+Distingue SIEMPRE:
+
+1. PLANO / CROQUIS / MAPA:
+   "mándame el plano", "plano del proyecto", "croquis",
+   "mapa de lotes", "distribución de lotes".
+   Esto se refiere al documento o PDF.
+
+2. TERRENO PLANO / LLANO:
+   "lote plano", "terreno plano", "quiero uno plano",
+   "¿ese precio es de un lote plano?", "lote inclinado",
+   "terreno quebrado", "topografía".
+   Esto se refiere a la TOPOGRAFÍA, no al PDF.
+
+Datos oficiales sobre topografía:
+- El precio de venta del lote NO cambia por ser plano, inclinado o quebrado.
+- El precio depende de la medida y fase correspondiente.
+- Terreno plano: suele facilitar diseños convencionales, accesos, patios
+  y puede requerir menos adaptación inicial.
+- Terreno inclinado/quebrado: puede aprovecharse para diseños escalonados,
+  varios niveles, terrazas o arquitectura adaptada a la pendiente.
+- El costo de construcción sí puede variar según diseño, cimentación
+  y movimiento de tierra.
+- Si el cliente expresa preferencia, respóndele sobre esa preferencia sin repetir
+  información innecesaria.
+
 REGLA DE AUDIOS:
 Las notas de voz se transcriben automáticamente y el texto transcrito entra
 por el mismo flujo que un mensaje escrito. No pidas al cliente que repita por
@@ -3651,8 +3713,8 @@ Debes:
         print(error)
 
         return (
-            "Disculpa 😊 tuve un pequeño inconveniente al procesar "
-            "tu mensaje. Inténtalo nuevamente en un momento 🙌"
+            "Claro 😊 Déjame revisar exactamente lo que me solicitas "
+            "y te lo envío en un momento."
         )
 
 
@@ -4899,14 +4961,19 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
 
             return
 
-        # TOPOGRAFÍA DEL TERRENO - ANTES DE PLANOS
+        # TOPOGRAFÍA DEL TERRENO - RESPUESTA INTELIGENTE
         # "lote plano" significa terreno llano; NO debe enviar el PDF/croquis.
         if pregunta_topografia_terreno(texto_cliente):
-            pref_topografia = preferencia_topografia(texto_cliente)
-            respuesta = respuesta_topografia(pref_topografia)
+            respuesta = generar_respuesta(
+                numero_cliente,
+                texto_cliente
+            )
 
-            guardar_mensaje(numero_cliente, "user", texto_cliente)
-            guardar_mensaje(numero_cliente, "assistant", respuesta)
+            if not respuesta or not respuesta.strip():
+                respuesta = (
+                    "Claro 😊 Déjame revisar exactamente lo que me solicitas "
+                    "y te lo envío en un momento."
+                )
 
             if procesamiento_sigue_vigente(numero_cliente, message_id):
                 enviar_whatsapp(numero_cliente, respuesta)
