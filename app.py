@@ -883,17 +883,168 @@ PLANOS_PROYECTOS = {
 }
 
 
+def normalizar_texto_topografia(texto):
+    """Normaliza texto para detectar mejor intenciones de topografía."""
+    t = (texto or "").lower().strip()
+    reemplazos = {
+        "á": "a", "é": "e", "í": "i", "ó": "o", "ú": "u", "ü": "u"
+    }
+    for origen, destino in reemplazos.items():
+        t = t.replace(origen, destino)
+    return " ".join(t.split())
+
+
+def pregunta_topografia_terreno(texto):
+    """
+    Detecta cuando 'plano' significa terreno llano/plano y NO un croquis/PDF.
+    """
+    t = normalizar_texto_topografia(texto)
+
+    referencias_terreno = [
+        "lote", "lotes", "terreno", "terrenos",
+        "topografia", "topografico", "topografica"
+    ]
+
+    referencias_forma = [
+        "plano", "planos", "plana", "planas",
+        "llano", "llanos", "llana", "llanas",
+        "inclinado", "inclinados", "inclinada", "inclinadas",
+        "quebrado", "quebrados", "quebrada", "quebradas",
+        "pendiente", "desnivel"
+    ]
+
+    frases_directas = [
+        "como es la topografia",
+        "que topografia",
+        "topografia del proyecto",
+        "topografia de los lotes",
+        "plano o inclinado",
+        "plano o quebrado",
+        "inclinado o plano",
+        "quebrado o plano"
+    ]
+
+    if any(frase in t for frase in frases_directas):
+        return True
+
+    return (
+        any(ref in t for ref in referencias_terreno)
+        and any(ref in t for ref in referencias_forma)
+    )
+
+
+def preferencia_topografia(texto):
+    """
+    Devuelve 'plano', 'inclinado' o None cuando el cliente expresa
+    preferencia por la topografía del lote.
+    """
+    t = normalizar_texto_topografia(texto)
+
+    if any(x in t for x in [
+        "plano del proyecto", "plano de proyecto", "plano general",
+        "plano de lotes", "plano de los lotes", "ver el plano",
+        "mandame el plano", "enviame el plano", "croquis", "mapa"
+    ]):
+        return None
+
+    if any(x in t for x in [
+        "inclinado", "inclinada", "inclinados", "inclinadas",
+        "quebrado", "quebrada", "quebrados", "quebradas",
+        "con pendiente", "desnivel"
+    ]):
+        return "inclinado"
+
+    if any(x in t for x in [
+        "lote plano", "lotes planos", "terreno plano", "terrenos planos",
+        "lote llano", "terreno llano", "lo quiero plano",
+        "prefiero plano", "me gusta plano", "quiero plano"
+    ]):
+        return "plano"
+
+    return None
+
+
+def respuesta_topografia(preferencia=None):
+    """
+    Explica diferencias entre terreno plano e inclinado.
+    El precio del lote NO cambia por la topografía.
+    """
+    base = (
+        "Claro 😊 En nuestros proyectos puedes encontrar lotes con distintas "
+        "condiciones de topografía. El precio del lote es el mismo según la "
+        "medida y fase, ya sea plano o inclinado/quebrado. 🏡\n\n"
+        "🟢 *Terreno plano:* facilita diseños de construcción más convencionales, "
+        "accesos, patios y distribución exterior; normalmente requiere menos "
+        "adaptación inicial del terreno.\n\n"
+        "⛰️ *Terreno inclinado o quebrado:* puede ser muy atractivo para diseños "
+        "escalonados, casas de varios niveles, terrazas o proyectos que aprovechen "
+        "la pendiente de forma arquitectónica.\n\n"
+        "El costo de construcción sí puede variar dependiendo del diseño, "
+        "movimiento de tierra y cimentación que elijas, pero *el precio de venta "
+        "del lote no cambia por ser plano o inclinado*."
+    )
+
+    if preferencia == "plano":
+        return (
+            base
+            + "\n\nPor lo que me indicas, buscas uno *plano* 👍. "
+              "Puedo ayudarte a enfocarnos en ese tipo de lote. "
+              "¿De cuál proyecto te interesa?"
+        )
+
+    if preferencia == "inclinado":
+        return (
+            base
+            + "\n\nPerfecto 👍 Si prefieres uno *inclinado/quebrado*, "
+              "podemos buscar una opción que se adapte al diseño de casa que tienes en mente. "
+              "¿De cuál proyecto te interesa?"
+        )
+
+    return base + "\n\n¿Cuál prefieres tú: *plano o inclinado*? 😊"
+
+
+def mensaje_topografia_despues_de_plano():
+    return (
+        "🏡 *Sobre la topografía:* los lotes que ves en el plano pueden encontrarse "
+        "en topografía plana. Si prefieres un lote inclinado/quebrado para un diseño "
+        "de casa específico, dínoslo y te ayudamos a buscar una opción adecuada. 😊\n\n"
+        "El precio del lote no cambia por ser plano o inclinado; depende de la medida "
+        "y fase correspondiente.\n\n"
+        "¿Cómo prefieres tu terreno: *plano o inclinado*?"
+    )
+
+
 def pide_plano(texto):
-    """Detecta solicitudes de planos/distribución de lotes sin confundirlas con ubicación."""
-    t = texto.lower().strip()
-    expresiones = [
-        "plano", "planos", "croquis",
+    """
+    Detecta solicitudes del CROQUIS/PDF/distribución de lotes.
+
+    Importante: "lote plano", "terreno plano", "lote inclinado", etc.
+    se interpretan como TOPOGRAFÍA y no deben disparar el envío del PDF.
+    """
+    if pregunta_topografia_terreno(texto):
+        return False
+
+    t = normalizar_texto_topografia(texto)
+
+    expresiones_claras = [
+        "croquis",
         "mapa del proyecto", "mapa de proyecto",
         "mapa de lotes", "mapa de los lotes",
-        "distribucion de lotes", "distribución de lotes",
-        "distribucion del proyecto", "distribución del proyecto"
+        "distribucion de lotes",
+        "distribucion del proyecto",
+        "plano del proyecto", "plano de proyecto",
+        "plano general", "plano de lotes", "plano de los lotes",
+        "ver el plano", "ver plano",
+        "mandame el plano", "manda el plano",
+        "enviame el plano", "envia el plano",
+        "quiero ver el plano", "tienes el plano",
+        "tiene plano", "planos del proyecto", "planos de lotes"
     ]
-    return any(x in t for x in expresiones)
+
+    if any(x in t for x in expresiones_claras):
+        return True
+
+    return t in {"plano", "planos"}
 
 
 def detectar_fase_plano(texto, proyecto):
@@ -4094,6 +4245,10 @@ def enviar_planos_solicitados(numero, proyecto, texto_cliente):
 
     # La explicación de colores debe acompañar SIEMPRE cualquier envío de planos.
     enviar_whatsapp(numero, texto_leyenda_planos())
+
+    # Después de cualquier plano, abrimos la conversación sobre topografía.
+    enviar_whatsapp(numero, mensaje_topografia_despues_de_plano())
+
     return enviados > 0
 
 
@@ -4744,6 +4899,20 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
 
             return
 
+        # TOPOGRAFÍA DEL TERRENO - ANTES DE PLANOS
+        # "lote plano" significa terreno llano; NO debe enviar el PDF/croquis.
+        if pregunta_topografia_terreno(texto_cliente):
+            pref_topografia = preferencia_topografia(texto_cliente)
+            respuesta = respuesta_topografia(pref_topografia)
+
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta)
+
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta)
+
+            return
+
         # PLANOS / MAPA DE LOTES - PRIORIDAD ALTA
         # Usa los PDF públicos de GitHub Pages. Si el archivo se actualiza
         # conservando el mismo nombre, el bot seguirá enviando la versión nueva.
@@ -4765,7 +4934,7 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
             guardar_mensaje(
                 numero_cliente,
                 "assistant",
-                f"Se enviaron los planos de {nombre_proyecto_plano(proyecto)} y la leyenda de colores."
+                f"Se enviaron los planos de {nombre_proyecto_plano(proyecto)}, la leyenda de colores y la pregunta sobre topografía."
             )
 
             if procesamiento_sigue_vigente(numero_cliente, message_id):
