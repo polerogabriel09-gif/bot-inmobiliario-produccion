@@ -778,7 +778,10 @@ def enviar_presentacion_si_corresponde(numero, message_id=None):
 def obtener_estado_conversacion(numero):
     if numero not in estado_conversacion:
         estado_conversacion[numero] = {
-            "proyecto_actual": None
+            "proyecto_actual": None,
+            "esperando_preferencia_topografia": False,
+            "preferencia_topografia": None,
+            "topografia_en_conversacion": False
         }
 
     return estado_conversacion[numero]
@@ -840,6 +843,180 @@ def obtener_proyecto_actual(numero):
         return estado["proyecto_actual"]
 
     return proyecto_activo.get(numero)
+
+
+def marcar_pregunta_topografia(numero):
+    estado = obtener_estado_conversacion(numero)
+    estado["esperando_preferencia_topografia"] = True
+    estado["topografia_en_conversacion"] = True
+
+
+def guardar_preferencia_topografia(numero, preferencia):
+    estado = obtener_estado_conversacion(numero)
+    estado["preferencia_topografia"] = preferencia
+    estado["esperando_preferencia_topografia"] = False
+    estado["topografia_en_conversacion"] = True
+
+
+def respuesta_preferencia_topografia(numero, texto, proyecto):
+    """
+    Maneja respuestas cortas a:
+    "¿Cómo prefieres tu terreno: plano o inclinado?"
+
+    Devuelve None cuando el mensaje no es una respuesta a esa pregunta.
+    """
+    estado = obtener_estado_conversacion(numero)
+
+    if not estado.get("esperando_preferencia_topografia"):
+        return None
+
+    t = normalizar_texto_topografia(texto)
+
+    # Solo tratamos respuestas cortas/claras como elección de topografía.
+    if len(t.split()) > 8:
+        return None
+
+    if any(x in t for x in [
+        "quebrado", "quebrada", "inclinado", "inclinada",
+        "con pendiente", "pendiente"
+    ]):
+        guardar_preferencia_topografia(numero, "inclinado")
+
+        if proyecto in {"palmeras", "buenaventura"}:
+            return (
+                "Perfecto 😊 En este proyecto los lotes se manejan en topografía plana. "
+                "Si buscas específicamente un terreno quebrado o inclinado para un diseño "
+                "especial, dímelo y te ayudo a revisar qué alternativa podemos ofrecerte. 🏡"
+            )
+
+        if proyecto == "vista_hermosa":
+            return (
+                "Perfecto 😊 En Vista Hermosa sí hay lotes planos y también algunos "
+                "quebrados/inclinados. Puedes revisar los planos y escoger las opciones "
+                "que te interesen; si buscas uno quebrado, te ayudo a identificar opciones "
+                "para que puedas escoger con más seguridad. 🏡"
+            )
+
+        return (
+            "Perfecto 😊 Si prefieres un lote quebrado o inclinado, dime qué opción "
+            "te interesa y te ayudo a revisarla."
+        )
+
+    # "plano", "un plano", "uno plano", "prefiero plano", etc.
+    if any(x in t for x in [
+        "plano", "plana", "llano", "llana"
+    ]):
+        guardar_preferencia_topografia(numero, "plano")
+
+        if proyecto in {"palmeras", "buenaventura"}:
+            return (
+                "Perfecto 😊 Puedes revisar el plano y la disponibilidad, escoger el lote "
+                "que más te guste y enviarme el número o una captura. En este proyecto los "
+                "lotes se manejan en topografía plana, así que con gusto te ayudo a revisar "
+                "la opción que elijas. 🏡"
+            )
+
+        if proyecto == "vista_hermosa":
+            return (
+                "Perfecto 😊 Puedes revisar los planos y la disponibilidad, escoger el lote "
+                "que más te guste y enviarme el número o una captura. En Vista Hermosa hay "
+                "lotes planos y también algunos quebrados, así que antes de asegurártelo "
+                "te confirmo la topografía exacta del lote que elijas. 🏡"
+            )
+
+        return (
+            "Perfecto 😊 Revisa el plano, escoge el lote que te interese y envíame "
+            "el número o una captura; te ayudo a confirmar su topografía."
+        )
+
+    return None
+
+
+def parece_numero_de_lote(texto):
+    """
+    Detecta referencias como 'lote 125', 'número de lote 125', '#125'.
+    Se usa únicamente cuando ya venimos hablando de topografía.
+    """
+    t = normalizar_texto_topografia(texto)
+
+    patrones = [
+        r"\blote\s*[#nº°.-]*\s*\d{1,5}\b",
+        r"\bnumero\s+(?:de\s+)?lote\s*[#nº°.-]*\s*\d{1,5}\b",
+        r"\bno\.?\s*\d{1,5}\b",
+        r"^#\s*\d{1,5}$"
+    ]
+
+    return any(re.search(p, t) for p in patrones)
+
+
+def respuesta_revision_lote_topografia(numero, proyecto, texto):
+    """
+    Responde cuando el cliente manda un número de lote dentro del seguimiento
+    de topografía.
+
+    Buenaventura y Palmeras: topografía plana según la regla comercial cargada.
+    Vista Hermosa: no inventamos el dato individual sin una tabla topográfica.
+    """
+    estado = obtener_estado_conversacion(numero)
+
+    if not estado.get("topografia_en_conversacion"):
+        return None
+
+    if not parece_numero_de_lote(texto):
+        return None
+
+    if proyecto in {"palmeras", "buenaventura"}:
+        return (
+            "Sí 😊 Ese lote se maneja en topografía plana. Si quieres, también puedo "
+            "ayudarte a revisar disponibilidad, precio o cuota de esa opción. 🏡"
+        )
+
+    if proyecto == "vista_hermosa":
+        return (
+            "Perfecto 😊 Ya tengo la referencia del lote. En Vista Hermosa hay opciones "
+            "planas y quebradas, así que para darte seguridad prefiero confirmarte la "
+            "topografía exacta de ese lote. Déjame revisarlo y te lo envío en un momento."
+        )
+
+    return (
+        "Perfecto 😊 Déjame revisar exactamente la topografía de ese lote "
+        "y te la confirmo en un momento."
+    )
+
+
+def pregunta_si_lote_es_quebrado(texto):
+    t = normalizar_texto_topografia(texto)
+    return (
+        any(x in t for x in ["quebrado", "quebrada", "inclinado", "inclinada"])
+        and any(x in t for x in ["este", "ese", "el que", "lote", "terreno"])
+        and any(x in t for x in ["es", "esta", "seria", "sera"])
+    )
+
+
+def respuesta_si_pregunta_quebrado(numero, proyecto, texto):
+    estado = obtener_estado_conversacion(numero)
+
+    if not estado.get("topografia_en_conversacion"):
+        return None
+
+    if not pregunta_si_lote_es_quebrado(texto):
+        return None
+
+    if proyecto in {"palmeras", "buenaventura"}:
+        return (
+            "No 😊 En este proyecto los lotes se manejan en topografía plana. "
+            "Si estás buscando específicamente una opción quebrada/inclinada, "
+            "dímelo y te ayudo a revisar alternativas."
+        )
+
+    if proyecto == "vista_hermosa":
+        return (
+            "Si lo que buscas es uno quebrado/inclinado, con gusto te ayudo a revisar "
+            "las opciones de Vista Hermosa que tengan ese tipo de topografía para que "
+            "puedas escoger. 😊🏡"
+        )
+
+    return None
 
 
 # ============================================================
@@ -2611,6 +2788,9 @@ Distingue SIEMPRE:
    Esto se refiere a la TOPOGRAFÍA, no al PDF.
 
 Datos oficiales sobre topografía:
+- Buenaventura Cuyotenango: los lotes se manejan en topografía plana.
+- Palmeras San Miguel: los lotes se manejan en topografía plana.
+- Vista Hermosa: hay lotes planos y también lotes quebrados/inclinados.
 - El precio de venta del lote NO cambia por ser plano, inclinado o quebrado.
 - El precio depende de la medida y fase correspondiente.
 - Terreno plano: suele facilitar diseños convencionales, accesos, patios
@@ -4127,6 +4307,27 @@ def procesar_imagen_o_video_cliente(numero, mensaje, tipo_mensaje):
                 caption
             )
 
+        estado_topografia = obtener_estado_conversacion(numero)
+        proyecto_topografia = obtener_proyecto_actual(numero)
+
+        # Si el cliente viene de escoger topografía y manda una captura de un lote,
+        # podemos responder con la regla oficial del proyecto.
+        if estado_topografia.get("topografia_en_conversacion"):
+            if proyecto_topografia in {"palmeras", "buenaventura"} and not caption:
+                return (
+                    "Perfecto 😊 Recibí la captura. En este proyecto los lotes se "
+                    "manejan en topografía plana. Si me escribes también el número "
+                    "del lote, te ayudo a seguir revisando esa opción. 🏡"
+                )
+
+            if proyecto_topografia == "vista_hermosa" and not caption:
+                return (
+                    "Perfecto 😊 Recibí la captura. En Vista Hermosa hay lotes planos "
+                    "y quebrados, así que para darte seguridad prefiero confirmar la "
+                    "topografía exacta de esa opción. Déjame revisarlo y te lo envío "
+                    "en un momento."
+                )
+
         archivo, mime = obtener_media_whatsapp(
             media_id
         )
@@ -4339,8 +4540,10 @@ def enviar_planos_solicitados(numero, proyecto, texto_cliente):
     # La explicación de colores debe acompañar SIEMPRE cualquier envío de planos.
     enviar_whatsapp(numero, texto_leyenda_planos())
 
-    # Después de cualquier plano, abrimos la conversación sobre topografía.
+    # Después de cualquier plano, abrimos la conversación sobre topografía
+    # y recordamos que la siguiente respuesta corta puede ser "plano" o "quebrado".
     enviar_whatsapp(numero, mensaje_topografia_despues_de_plano())
+    marcar_pregunta_topografia(numero)
 
     return enviados > 0
 
@@ -4923,6 +5126,46 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
             numero_cliente,
             texto_cliente
         )
+
+        # SEGUIMIENTO DE TOPOGRAFÍA DESPUÉS DE ENVIAR PLANOS
+        # Tiene prioridad para que "plano" no vuelva a interpretarse como el PDF.
+        respuesta_pref_topografia = respuesta_preferencia_topografia(
+            numero_cliente,
+            texto_cliente,
+            proyecto
+        )
+        if respuesta_pref_topografia:
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta_pref_topografia)
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta_pref_topografia)
+            return
+
+        # Si ya estamos hablando de topografía y manda un número de lote.
+        respuesta_lote_topografia = respuesta_revision_lote_topografia(
+            numero_cliente,
+            proyecto,
+            texto_cliente
+        )
+        if respuesta_lote_topografia:
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta_lote_topografia)
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta_lote_topografia)
+            return
+
+        # Si pregunta si el lote elegido es quebrado/inclinado.
+        respuesta_quebrado = respuesta_si_pregunta_quebrado(
+            numero_cliente,
+            proyecto,
+            texto_cliente
+        )
+        if respuesta_quebrado:
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta_quebrado)
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta_quebrado)
+            return
 
         # BANCO / FINANCIAMIENTO PROPIO - PRIORIDAD ABSOLUTA
         # Si la frase menciona banco + financiamiento, nunca debe caer en cotizaciones.
