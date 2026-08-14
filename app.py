@@ -896,7 +896,8 @@ def normalizar_texto_topografia(texto):
 
 def pregunta_topografia_terreno(texto):
     """
-    Detecta cuando 'plano' significa terreno llano/plano y NO un croquis/PDF.
+    Detecta cuando "plano" habla de la TOPOGRAFÍA del lote y no del PDF/croquis.
+    Debe ganar prioridad antes de pide_plano().
     """
     t = normalizar_texto_topografia(texto)
 
@@ -921,17 +922,35 @@ def pregunta_topografia_terreno(texto):
         "plano o inclinado",
         "plano o quebrado",
         "inclinado o plano",
-        "quebrado o plano"
+        "quebrado o plano",
+        "uno plano",
+        "uno inclinado",
+        "uno quebrado",
+        "uno llano",
+        "prefiero plano",
+        "prefiero inclinado",
+        "quiero uno plano",
+        "quiero uno inclinado"
     ]
 
     if any(frase in t for frase in frases_directas):
+        return True
+
+    palabras_precio = [
+        "precio", "cuesta", "costaria", "vale", "valor",
+        "mas caro", "mismo precio"
+    ]
+
+    if (
+        any(p in t for p in palabras_precio)
+        and any(f in t for f in referencias_forma)
+    ):
         return True
 
     return (
         any(ref in t for ref in referencias_terreno)
         and any(ref in t for ref in referencias_forma)
     )
-
 
 def preferencia_topografia(texto):
     """
@@ -1016,17 +1035,14 @@ def mensaje_topografia_despues_de_plano():
 
 def pide_plano(texto):
     """
-    Detecta solicitudes del CROQUIS/PDF/distribución de lotes.
-
-    Importante: "lote plano", "terreno plano", "lote inclinado", etc.
-    se interpretan como TOPOGRAFÍA y no deben disparar el envío del PDF.
+    Detecta solicitudes del DOCUMENTO: plano/croquis/mapa/PDF.
     """
     if pregunta_topografia_terreno(texto):
         return False
 
     t = normalizar_texto_topografia(texto)
 
-    expresiones_claras = [
+    if any(x in t for x in [
         "croquis",
         "mapa del proyecto", "mapa de proyecto",
         "mapa de lotes", "mapa de los lotes",
@@ -1034,18 +1050,33 @@ def pide_plano(texto):
         "distribucion del proyecto",
         "plano del proyecto", "plano de proyecto",
         "plano general", "plano de lotes", "plano de los lotes",
-        "ver el plano", "ver plano",
-        "mandame el plano", "manda el plano",
-        "enviame el plano", "envia el plano",
-        "quiero ver el plano", "tienes el plano",
-        "tiene plano", "planos del proyecto", "planos de lotes"
-    ]
-
-    if any(x in t for x in expresiones_claras):
+        "pdf del plano", "plano pdf"
+    ]):
         return True
 
-    return t in {"plano", "planos"}
+    verbos_documento = [
+        "manda", "mandame", "mandarme", "mandar",
+        "envia", "enviame", "enviarme", "enviar",
+        "comparte", "comparteme", "compartirme", "compartir",
+        "muestra", "muestrame", "mostrar",
+        "ensena", "ensename",
+        "pasame", "pasarme", "pasar",
+        "ver", "tienes", "tiene", "tendras",
+        "puede mandarme", "puedes mandarme",
+        "puede enviarme", "puedes enviarme"
+    ]
 
+    if "plano" in t or "planos" in t:
+        if any(v in t for v in verbos_documento):
+            return True
+
+        if re.search(r"\b(el|los)\s+planos?\b", t):
+            return True
+
+        if t in {"plano", "planos"}:
+            return True
+
+    return False
 
 def detectar_fase_plano(texto, proyecto):
     """Devuelve la fase pedida solo cuando tiene sentido para el proyecto activo."""
