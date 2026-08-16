@@ -1,4 +1,4 @@
-from flask import Flask, request
+from flask import Flask, request, Response, redirect, url_for, render_template_string
 from openai import OpenAI
 from dotenv import load_dotenv
 import requests
@@ -24,6 +24,10 @@ VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+# Acceso al CRM. Configúralos en Render > Environment.
+CRM_USER = os.getenv("CRM_USER", "gabriel")
+CRM_PASSWORD = os.getenv("CRM_PASSWORD")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -2738,7 +2742,129 @@ def pide_videos(texto):
 # ============================================================
 
 # Cada numero de WhatsApp tendra su propia conversacion.
+
 conversaciones = {}
+
+# ============================================================
+# CRM / CONTROL MANUAL
+# ============================================================
+# Esta primera versión vive en RAM junto con el bot.
+# Permite ver chats nuevos, pausar IA y responder manualmente.
+crm_mensajes = {}
+crm_modo_manual = set()
+crm_ultima_actividad = {}
+lock_crm = Lock()
+
+
+def crm_hora_actual():
+    return datetime.now(
+        ZoneInfo("America/Guatemala")
+    ).strftime("%d/%m %I:%M %p")
+
+
+def crm_registrar_mensaje(numero, direccion, contenido):
+    if not numero:
+        return
+
+    contenido = str(contenido or "").strip()
+    if not contenido:
+        return
+
+    with lock_crm:
+        lista = crm_mensajes.setdefault(numero, [])
+        lista.append({
+            "direccion": direccion,
+            "contenido": contenido,
+            "hora": crm_hora_actual()
+        })
+
+        # Mantener suficiente historial visual sin consumir RAM sin límite.
+        if len(lista) > 150:
+            crm_mensajes[numero] = lista[-150:]
+
+        crm_ultima_actividad[numero] = time.time()
+
+
+def crm_resumen_entrante(mensaje):
+    tipo = mensaje.get("type")
+
+    if tipo == "text":
+        return mensaje.get("text", {}).get("body", "")
+
+    if tipo == "audio":
+        return "🎙️ Audio recibido"
+
+    if tipo == "image":
+        caption = mensaje.get("image", {}).get("caption", "")
+        return "📷 Imagen recibida" + (f": {caption}" if caption else "")
+
+    if tipo == "video":
+        caption = mensaje.get("video", {}).get("caption", "")
+        return "🎥 Video recibido" + (f": {caption}" if caption else "")
+
+    if tipo == "document":
+        nombre = mensaje.get("document", {}).get("filename", "")
+        return "📄 Documento recibido" + (f": {nombre}" if nombre else "")
+
+    return f"📩 Mensaje recibido ({tipo or 'desconocido'})"
+
+
+def crm_esta_manual(numero):
+    with lock_crm:
+        return numero in crm_modo_manual
+
+
+def crm_poner_manual(numero):
+    with lock_crm:
+        crm_modo_manual.add(numero)
+
+
+def crm_poner_ia(numero):
+    with lock_crm:
+        crm_modo_manual.discard(numero)
+
+
+def crm_autorizado():
+    if not CRM_PASSWORD:
+        return False
+
+    auth = request.authorization
+    return bool(
+        auth
+        and auth.username == CRM_USER
+        and auth.password == CRM_PASSWORD
+    )
+
+
+def crm_pedir_login():
+    if not CRM_PASSWORD:
+        return Response(
+            "CRM_PASSWORD no está configurado en Render.",
+            status=503,
+            content_type="text/plain; charset=utf-8"
+        )
+
+    return Response(
+        "Acceso requerido",
+        status=401,
+        headers={
+            "WWW-Authenticate": 'Basic realm="CRM Gabriel", charset="UTF-8"'
+        }
+    )
+
+
+def crm_nombre_proyecto(numero):
+    nombres = {
+        "palmeras": "Palmeras San Miguel",
+        "vista_hermosa": "Vista Hermosa",
+        "buenaventura": "Buenaventura Cuyotenango"
+    }
+    return nombres.get(
+        proyecto_activo.get(numero),
+        "Sin proyecto"
+    )
+
+
 
 # Maximo de mensajes anteriores que recordara temporalmente.
 MAX_HISTORIAL = 12
@@ -4644,6 +4770,9 @@ def enviar_whatsapp(numero, texto):
         print("META RESPONSE:")
         print(respuesta.text)
 
+        if 200 <= respuesta.status_code < 300:
+            crm_registrar_mensaje(numero, "out", texto)
+
 
     except Exception as error:
 
@@ -5225,6 +5354,16 @@ seguimiento_version = {}
 lock_seguimiento = Lock()
 
 
+def cancelar_seguimiento(numero):
+    """Invalida cualquier seguimiento pendiente de ese cliente."""
+    if not numero:
+        return
+
+    with lock_seguimiento:
+        seguimiento_version[numero] = seguimiento_version.get(numero, 0) + 1
+
+
+
 def programar_seguimiento_inactividad(numero):
     """
     Programa un seguimiento. Si el cliente escribe de nuevo antes del tiempo,
@@ -5283,6 +5422,12 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
 
         print("\nNUMERO DEL CLIENTE:")
         print(numero_cliente)
+
+        # Si Gabriel tomó el control desde el CRM, la IA no responde.
+        # El mensaje ya quedó registrado por el webhook para verlo en el CRM.
+        if crm_esta_manual(numero_cliente):
+            print("CRM: conversación en modo MANUAL. IA pausada.")
+            return
 
         if tipo_mensaje == "audio":
             # La nota de voz se convierte en texto y continúa por TODO el flujo normal.
@@ -5885,6 +6030,7 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
             if (
                 numero_cliente
                 and procesamiento_sigue_vigente(numero_cliente, message_id)
+                and not crm_esta_manual(numero_cliente)
             ):
                 programar_seguimiento_inactividad(numero_cliente)
         except Exception as error_seguimiento:
@@ -5928,6 +6074,17 @@ def recibir_mensaje():
         # mientras se suben fotos/videos o responde OpenAI.
         numero_cliente = mensaje.get("from")
 
+        # CRM: registrar TODO mensaje entrante inmediatamente.
+        crm_registrar_mensaje(
+            numero_cliente,
+            "in",
+            crm_resumen_entrante(mensaje)
+        )
+
+        # Un mensaje nuevo del cliente cancela cualquier seguimiento pendiente
+        # desde el mismo instante en que entra al webhook.
+        cancelar_seguimiento(numero_cliente)
+
         # Este mensaje pasa a ser el único procesamiento vigente para ese número.
         iniciar_procesamiento(
             numero_cliente,
@@ -5952,6 +6109,375 @@ def recibir_mensaje():
         # Aun con un payload inesperado respondemos 200 para evitar
         # reintentos infinitos del mismo evento.
         return "EVENT_RECEIVED", 200
+
+
+
+# ============================================================
+# CRM WEB - GABRIEL
+# ============================================================
+
+CRM_HTML = r"""
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CRM Gabriel</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #f4f6f8;
+            color: #17212b;
+        }
+        .top {
+            background: #111827;
+            color: white;
+            padding: 14px 18px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 5;
+        }
+        .top strong { font-size: 18px; }
+        .top a {
+            color: white;
+            text-decoration: none;
+            border: 1px solid #64748b;
+            border-radius: 8px;
+            padding: 7px 10px;
+            font-size: 13px;
+        }
+        .layout {
+            display: grid;
+            grid-template-columns: 330px 1fr;
+            min-height: calc(100vh - 55px);
+        }
+        .sidebar {
+            background: white;
+            border-right: 1px solid #dbe1e7;
+            overflow-y: auto;
+        }
+        .sidebar-title {
+            padding: 16px;
+            font-weight: bold;
+            border-bottom: 1px solid #edf0f2;
+        }
+        .chat-link {
+            display: block;
+            padding: 14px 16px;
+            color: inherit;
+            text-decoration: none;
+            border-bottom: 1px solid #edf0f2;
+        }
+        .chat-link:hover, .chat-link.active { background: #f0f7f4; }
+        .phone { font-weight: 700; }
+        .preview {
+            margin-top: 5px;
+            color: #667085;
+            font-size: 13px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .small {
+            margin-top: 5px;
+            font-size: 12px;
+            color: #84909d;
+        }
+        .status {
+            display: inline-block;
+            padding: 3px 7px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: bold;
+        }
+        .status.ai { background: #dcfce7; color: #166534; }
+        .status.manual { background: #fee2e2; color: #991b1b; }
+        .main {
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+        }
+        .chat-head {
+            background: white;
+            padding: 13px 18px;
+            border-bottom: 1px solid #dbe1e7;
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            align-items: center;
+        }
+        .chat-head h2 { margin: 0; font-size: 17px; }
+        .chat-head p { margin: 4px 0 0; color: #667085; font-size: 13px; }
+        .toggle {
+            border: 0;
+            border-radius: 9px;
+            padding: 10px 13px;
+            cursor: pointer;
+            font-weight: 700;
+        }
+        .toggle.pause { background: #fee2e2; color: #991b1b; }
+        .toggle.resume { background: #dcfce7; color: #166534; }
+        .messages {
+            flex: 1;
+            padding: 18px;
+            overflow-y: auto;
+            min-height: 60vh;
+        }
+        .row { display: flex; margin-bottom: 10px; }
+        .row.in { justify-content: flex-start; }
+        .row.out { justify-content: flex-end; }
+        .bubble {
+            max-width: 76%;
+            padding: 10px 12px;
+            border-radius: 12px;
+            white-space: pre-wrap;
+            line-height: 1.35;
+            box-shadow: 0 1px 2px rgba(0,0,0,.06);
+        }
+        .in .bubble { background: white; }
+        .out .bubble { background: #d9fdd3; }
+        .time {
+            display: block;
+            text-align: right;
+            font-size: 10px;
+            color: #6b7280;
+            margin-top: 5px;
+        }
+        .composer {
+            background: white;
+            border-top: 1px solid #dbe1e7;
+            padding: 12px;
+            position: sticky;
+            bottom: 0;
+        }
+        .composer form {
+            display: flex;
+            gap: 8px;
+        }
+        .composer textarea {
+            flex: 1;
+            min-height: 46px;
+            resize: vertical;
+            padding: 10px;
+            border: 1px solid #cfd6dd;
+            border-radius: 9px;
+            font: inherit;
+        }
+        .send {
+            border: 0;
+            background: #16a34a;
+            color: white;
+            font-weight: bold;
+            border-radius: 9px;
+            padding: 0 18px;
+            cursor: pointer;
+        }
+        .empty {
+            margin: auto;
+            color: #667085;
+            text-align: center;
+            padding: 50px;
+        }
+        .notice {
+            padding: 8px 18px;
+            background: #fff7ed;
+            border-bottom: 1px solid #fed7aa;
+            color: #9a3412;
+            font-size: 12px;
+        }
+        @media (max-width: 760px) {
+            .layout { grid-template-columns: 1fr; }
+            .sidebar {
+                max-height: 34vh;
+                border-right: 0;
+                border-bottom: 1px solid #dbe1e7;
+            }
+            .bubble { max-width: 88%; }
+            .chat-head { align-items: flex-start; }
+        }
+    </style>
+</head>
+<body>
+    <div class="top">
+        <strong>🏡 CRM Gabriel</strong>
+        <a href="{{ url_for('crm') }}">Actualizar</a>
+    </div>
+
+    <div class="layout">
+        <aside class="sidebar">
+            <div class="sidebar-title">Conversaciones ({{ clientes|length }})</div>
+            {% if not clientes %}
+                <div style="padding:20px;color:#667085;">
+                    Todavía no han entrado mensajes desde que se inició esta versión.
+                </div>
+            {% endif %}
+
+            {% for c in clientes %}
+                <a class="chat-link {% if seleccionado == c.numero %}active{% endif %}"
+                   href="{{ url_for('crm', numero=c.numero) }}">
+                    <div>
+                        <span class="phone">+{{ c.numero }}</span>
+                        {% if c.manual %}
+                            <span class="status manual">MANUAL</span>
+                        {% else %}
+                            <span class="status ai">IA</span>
+                        {% endif %}
+                    </div>
+                    <div class="preview">{{ c.preview }}</div>
+                    <div class="small">{{ c.proyecto }}</div>
+                </a>
+            {% endfor %}
+        </aside>
+
+        <main class="main">
+        {% if seleccionado %}
+            <div class="chat-head">
+                <div>
+                    <h2>+{{ seleccionado }}</h2>
+                    <p>{{ proyecto_seleccionado }}</p>
+                </div>
+
+                <form method="post" action="{{ url_for('crm_toggle', numero=seleccionado) }}">
+                    {% if manual %}
+                        <button class="toggle resume" type="submit">▶ Activar IA</button>
+                    {% else %}
+                        <button class="toggle pause" type="submit">⏸ Pausar IA</button>
+                    {% endif %}
+                </form>
+            </div>
+
+            {% if manual %}
+                <div class="notice">
+                    ✋ Estás atendiendo esta conversación manualmente. La IA y el seguimiento automático están pausados.
+                </div>
+            {% endif %}
+
+            <div class="messages" id="messages">
+                {% for m in mensajes %}
+                    <div class="row {{ m.direccion }}">
+                        <div class="bubble">
+                            {{ m.contenido }}
+                            <span class="time">{{ m.hora }}</span>
+                        </div>
+                    </div>
+                {% endfor %}
+            </div>
+
+            <div class="composer">
+                <form method="post" action="{{ url_for('crm_enviar', numero=seleccionado) }}">
+                    <textarea name="mensaje" placeholder="Escribe tu respuesta manual..." required></textarea>
+                    <button class="send" type="submit">Enviar</button>
+                </form>
+            </div>
+        {% else %}
+            <div class="empty">
+                <h2>Selecciona una conversación</h2>
+                <p>Aquí podrás pausar la IA y responder tú mismo.</p>
+            </div>
+        {% endif %}
+        </main>
+    </div>
+
+    <script>
+        const box = document.getElementById("messages");
+        if (box) box.scrollTop = box.scrollHeight;
+    </script>
+</body>
+</html>
+"""
+
+
+@app.route("/crm", methods=["GET"])
+def crm():
+    if not crm_autorizado():
+        return crm_pedir_login()
+
+    seleccionado = request.args.get("numero", "").strip() or None
+
+    with lock_crm:
+        numeros = list(crm_mensajes.keys())
+
+        numeros.sort(
+            key=lambda n: crm_ultima_actividad.get(n, 0),
+            reverse=True
+        )
+
+        clientes = []
+        for numero in numeros:
+            mensajes = crm_mensajes.get(numero, [])
+            ultimo = mensajes[-1]["contenido"] if mensajes else ""
+            clientes.append({
+                "numero": numero,
+                "preview": ultimo[:70],
+                "manual": numero in crm_modo_manual,
+                "proyecto": crm_nombre_proyecto(numero)
+            })
+
+        mensajes_seleccionados = list(
+            crm_mensajes.get(seleccionado, [])
+        ) if seleccionado else []
+
+        manual = seleccionado in crm_modo_manual if seleccionado else False
+
+    return render_template_string(
+        CRM_HTML,
+        clientes=clientes,
+        seleccionado=seleccionado,
+        mensajes=mensajes_seleccionados,
+        manual=manual,
+        proyecto_seleccionado=crm_nombre_proyecto(seleccionado) if seleccionado else ""
+    )
+
+
+@app.route("/crm/toggle/<numero>", methods=["POST"])
+def crm_toggle(numero):
+    if not crm_autorizado():
+        return crm_pedir_login()
+
+    if crm_esta_manual(numero):
+        crm_poner_ia(numero)
+    else:
+        # Pausar inmediatamente cualquier respuesta IA que esté en proceso.
+        crm_poner_manual(numero)
+        cancelar_seguimiento(numero)
+        iniciar_procesamiento(
+            numero,
+            f"crm-manual-{time.time()}"
+        )
+
+    return redirect(url_for("crm", numero=numero))
+
+
+@app.route("/crm/enviar/<numero>", methods=["POST"])
+def crm_enviar(numero):
+    if not crm_autorizado():
+        return crm_pedir_login()
+
+    mensaje = request.form.get("mensaje", "").strip()
+
+    if not mensaje:
+        return redirect(url_for("crm", numero=numero))
+
+    # Si Gabriel responde manualmente, la conversación queda en manual
+    # hasta que él pulse "Activar IA".
+    crm_poner_manual(numero)
+    cancelar_seguimiento(numero)
+
+    # Invalida cualquier respuesta automática que todavía estuviera procesándose.
+    iniciar_procesamiento(
+        numero,
+        f"crm-manual-{time.time()}"
+    )
+
+    enviar_whatsapp(numero, mensaje)
+    guardar_mensaje(numero, "assistant", mensaje)
+
+    return redirect(url_for("crm", numero=numero))
 
 
 # ============================================================
