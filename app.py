@@ -1928,18 +1928,18 @@ def respuesta_proceso_compra(proyecto):
     extra = f" {d['extra']}" if d["extra"] else ""
 
     return (
-        f"Te cuento cómo es el proceso de compra en *{d['nombre']}* 🏡😊\\n\\n"
+        f"Te cuento cómo es el proceso de compra en *{d['nombre']}* 🏡😊\n\n"
         f"1️⃣ Eliges tu lote y medida 📐 y yo te ayudo a revisar disponibilidad, "
-        f"cotización y plan de pagos.\\n\\n"
+        f"cotización y plan de pagos.\n\n"
         f"2️⃣ Realizas el enganche 💰. En este proyecto es de *{d['enganche']}* "
         f"y contamos con financiamiento propio {d['financiamiento']}. "
-        f"También puedes hacer abonos a capital.{extra}\\n\\n"
+        f"También puedes hacer abonos a capital.{extra}\n\n"
         f"3️⃣ Firma y escrituración ✍️📄. Las escrituras son registradas y se entregan "
-        f"aproximadamente *3 meses después de haber cancelado el 100% del terreno*. ✅\\n\\n"
-        f"📋 *Requisitos para comprar:*\\n"
-        f"🇬🇹 Guatemala: DPI, recibo de luz o agua y constancia de ingresos.\\n"
+        f"aproximadamente *3 meses después de haber cancelado el 100% del terreno*. ✅\n\n"
+        f"📋 *Requisitos para comprar:*\n"
+        f"🇬🇹 Guatemala: DPI, recibo de luz o agua y constancia de ingresos.\n"
         f"🌎 Extranjero: DPI o pasaporte, un gestor en Guatemala y copia de remesa "
-        f"o comprobante de la forma de pago.\\n\\n"
+        f"o comprobante de la forma de pago.\n\n"
         f"😊 ¿Estás en Guatemala o en el extranjero?"
     )
 
