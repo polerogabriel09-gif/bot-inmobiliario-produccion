@@ -252,7 +252,16 @@ def pide_cotizacion(texto):
         "cotizacion", "cotización", "cotizaciones",
         "cuota", "cuotas", "mensualidad", "mensualidades",
         "plan de pago", "plan de pagos",
-        "financiamiento", "financiado"
+        "financiamiento", "financiado",
+
+        # Si el cliente pide información general de un proyecto,
+        # tratamos la intención como solicitud de información comercial completa:
+        # resumen del proyecto + cotizaciones.
+        "informacion", "información",
+        "quiero informacion", "quiero información",
+        "dame informacion", "dame información",
+        "me da informacion", "me da información",
+        "info de", "información de", "informacion de"
     ]
 
     return any(p in t for p in palabras)
@@ -2753,6 +2762,7 @@ conversaciones = {}
 crm_mensajes = {}
 crm_modo_manual = set()
 crm_ultima_actividad = {}
+crm_evento_contador = 0
 lock_crm = Lock()
 
 
@@ -2763,6 +2773,8 @@ def crm_hora_actual():
 
 
 def crm_registrar_mensaje(numero, direccion, contenido):
+    global crm_evento_contador
+
     if not numero:
         return
 
@@ -2771,8 +2783,12 @@ def crm_registrar_mensaje(numero, direccion, contenido):
         return
 
     with lock_crm:
+        crm_evento_contador += 1
+
         lista = crm_mensajes.setdefault(numero, [])
         lista.append({
+            "id": crm_evento_contador,
+            "numero": numero,
             "direccion": direccion,
             "contenido": contenido,
             "hora": crm_hora_actual()
@@ -6305,7 +6321,14 @@ CRM_HTML = r"""
 <body>
     <div class="top">
         <strong>🏡 CRM Gabriel <span style="font-size:12px;color:#86efac;">● En vivo</span></strong>
-        <a href="{{ url_for('crm') }}">Actualizar</a>
+        <div style="display:flex;gap:8px;align-items:center;">
+            <button id="btn-notificaciones"
+                    type="button"
+                    style="background:#1f2937;color:white;border:1px solid #64748b;border-radius:8px;padding:7px 10px;cursor:pointer;">
+                🔔 Activar notificaciones
+            </button>
+            <a href="{{ url_for('crm') }}">Actualizar</a>
+        </div>
     </div>
 
     <div class="layout">
@@ -6389,6 +6412,86 @@ CRM_HTML = r"""
         if (box) box.scrollTop = box.scrollHeight;
 
         let lastSignature = "";
+        let ultimoEventoEntrante = null;
+        const btnNotificaciones = document.getElementById("btn-notificaciones");
+
+        function actualizarBotonNotificaciones() {
+            if (!btnNotificaciones) return;
+
+            if (!("Notification" in window)) {
+                btnNotificaciones.textContent = "🔕 No compatible";
+                btnNotificaciones.disabled = true;
+                return;
+            }
+
+            if (Notification.permission === "granted") {
+                btnNotificaciones.textContent = "🔔 Notificaciones activas";
+            } else if (Notification.permission === "denied") {
+                btnNotificaciones.textContent = "🔕 Notificaciones bloqueadas";
+            } else {
+                btnNotificaciones.textContent = "🔔 Activar notificaciones";
+            }
+        }
+
+        if (btnNotificaciones) {
+            btnNotificaciones.addEventListener("click", async () => {
+                if (!("Notification" in window)) return;
+
+                const permiso = await Notification.requestPermission();
+                actualizarBotonNotificaciones();
+
+                if (permiso === "granted") {
+                    new Notification("CRM Gabriel 🏡", {
+                        body: "Notificaciones activadas correctamente."
+                    });
+                }
+            });
+        }
+
+        actualizarBotonNotificaciones();
+
+        function procesarNotificaciones(eventos) {
+            if (!Array.isArray(eventos) || eventos.length === 0) return;
+
+            const mayorId = Math.max(...eventos.map(e => Number(e.id || 0)));
+
+            // Primera carga: establecemos la línea base.
+            // Así no recibes 30 alertas de mensajes que ya estaban antes de abrir el CRM.
+            if (ultimoEventoEntrante === null) {
+                ultimoEventoEntrante = mayorId;
+                return;
+            }
+
+            const nuevos = eventos.filter(
+                e => Number(e.id || 0) > ultimoEventoEntrante
+            );
+
+            if (
+                nuevos.length > 0 &&
+                "Notification" in window &&
+                Notification.permission === "granted"
+            ) {
+                nuevos.forEach(e => {
+                    const proyecto = e.proyecto && e.proyecto !== "Sin proyecto"
+                        ? ` · ${e.proyecto}`
+                        : "";
+
+                    const n = new Notification("🏡 Nuevo mensaje de cliente", {
+                        body: `+${e.numero}${proyecto}\n${e.contenido}`,
+                        tag: `crm-${e.id}`
+                    });
+
+                    n.onclick = () => {
+                        window.focus();
+                        window.location.href =
+                            "/crm?numero=" + encodeURIComponent(e.numero);
+                        n.close();
+                    };
+                });
+            }
+
+            ultimoEventoEntrante = Math.max(ultimoEventoEntrante, mayorId);
+        }
 
         function escapeHtml(value) {
             return String(value ?? "")
@@ -6484,6 +6587,7 @@ CRM_HTML = r"""
 
                 const data = await res.json();
 
+                procesarNotificaciones(data.eventos_entrantes || []);
                 renderClients(data.clientes || [], numero || null);
 
                 if (box && numero) {
@@ -6595,11 +6699,29 @@ def crm_data():
 
         manual = seleccionado in crm_modo_manual if seleccionado else False
 
+        # Últimos mensajes entrantes de TODAS las conversaciones.
+        # El navegador usa el ID para avisar una sola vez por cada mensaje.
+        eventos_entrantes = []
+        for numero, lista in crm_mensajes.items():
+            for m in lista:
+                if m.get("direccion") == "in":
+                    eventos_entrantes.append({
+                        "id": m.get("id", 0),
+                        "numero": numero,
+                        "contenido": m.get("contenido", ""),
+                        "hora": m.get("hora", ""),
+                        "proyecto": crm_nombre_proyecto(numero)
+                    })
+
+        eventos_entrantes.sort(key=lambda x: x.get("id", 0))
+        eventos_entrantes = eventos_entrantes[-100:]
+
     return jsonify({
         "clientes": clientes,
         "mensajes": mensajes,
         "manual": manual,
-        "seleccionado": seleccionado
+        "seleccionado": seleccionado,
+        "eventos_entrantes": eventos_entrantes
     })
 
 
