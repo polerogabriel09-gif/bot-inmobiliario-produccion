@@ -8,8 +8,15 @@ import tempfile
 from threading import Thread, Lock
 import time
 import re
+import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
+
+try:
+    from pywebpush import webpush, WebPushException
+except ImportError:
+    webpush = None
+    WebPushException = Exception
 
 
 # ============================================================
@@ -28,6 +35,11 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 # Acceso al CRM. Configúralos en Render > Environment.
 CRM_USER = os.getenv("CRM_USER", "gabriel")
 CRM_PASSWORD = os.getenv("CRM_PASSWORD")
+
+# Web Push para notificaciones reales en computadora y teléfono.
+VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY", "")
+VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "")
+VAPID_SUBJECT = os.getenv("VAPID_SUBJECT", "mailto:gabriel@example.com")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -2765,6 +2777,52 @@ crm_ultima_actividad = {}
 crm_evento_contador = 0
 lock_crm = Lock()
 
+# Suscripciones Web Push activadas desde tus dispositivos.
+# Nota: viven en RAM; si Render reinicia el servicio, solo debes abrir el CRM
+# y pulsar otra vez "Activar notificaciones" en el teléfono.
+crm_push_subscriptions = {}
+lock_push = Lock()
+
+def enviar_push_crm(numero, contenido):
+    """Envía una notificación Web Push a todos los dispositivos suscritos."""
+    if not webpush or not VAPID_PRIVATE_KEY:
+        return
+
+    proyecto = crm_nombre_proyecto(numero)
+    proyecto_txt = f" · {proyecto}" if proyecto and proyecto != "Sin proyecto" else ""
+    payload = json.dumps({
+        "title": "🏡 Nuevo mensaje de cliente",
+        "body": f"+{numero}{proyecto_txt}\n{str(contenido)[:180]}",
+        "url": f"/crm?numero={numero}",
+        "tag": f"crm-{numero}-{int(time.time() * 1000)}"
+    }, ensure_ascii=False)
+
+    with lock_push:
+        subs = list(crm_push_subscriptions.items())
+
+    vencidas = []
+    for endpoint, sub in subs:
+        try:
+            webpush(
+                subscription_info=sub,
+                data=payload,
+                vapid_private_key=VAPID_PRIVATE_KEY,
+                vapid_claims={"sub": VAPID_SUBJECT},
+                ttl=300
+            )
+        except WebPushException as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            print("WEB PUSH ERROR:", status, exc)
+            if status in (404, 410):
+                vencidas.append(endpoint)
+        except Exception as exc:
+            print("WEB PUSH ERROR GENERAL:", exc)
+
+    if vencidas:
+        with lock_push:
+            for endpoint in vencidas:
+                crm_push_subscriptions.pop(endpoint, None)
+
 
 def crm_hora_actual():
     return datetime.now(
@@ -2799,6 +2857,10 @@ def crm_registrar_mensaje(numero, direccion, contenido):
             crm_mensajes[numero] = lista[-150:]
 
         crm_ultima_actividad[numero] = time.time()
+
+    # Solo los mensajes ENTRANTES del cliente generan push.
+    if direccion == "in":
+        Thread(target=enviar_push_crm, args=(numero, contenido), daemon=True).start()
 
 
 def crm_resumen_entrante(mensaje):
@@ -6325,7 +6387,7 @@ CRM_HTML = r"""
             <button id="btn-notificaciones"
                     type="button"
                     style="background:#1f2937;color:white;border:1px solid #64748b;border-radius:8px;padding:7px 10px;cursor:pointer;">
-                🔔 Activar notificaciones
+                📱 Activar notificaciones
             </button>
             <a href="{{ url_for('crm') }}">Actualizar</a>
         </div>
@@ -6433,18 +6495,61 @@ CRM_HTML = r"""
             }
         }
 
+        function urlBase64ToUint8Array(base64String) {
+            const padding = "=".repeat((4 - base64String.length % 4) % 4);
+            const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+            const rawData = atob(base64);
+            return Uint8Array.from([...rawData].map(ch => ch.charCodeAt(0)));
+        }
+
+        async function activarPush() {
+            if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+                alert("Este navegador no permite notificaciones push. Prueba Chrome o Edge actualizado.");
+                return;
+            }
+
+            const permiso = await Notification.requestPermission();
+            actualizarBotonNotificaciones();
+            if (permiso !== "granted") return;
+
+            const configResp = await fetch("/crm/push/config");
+            const config = await configResp.json();
+            if (!config.publicKey) {
+                alert("Faltan las llaves VAPID en Render. Configúralas y vuelve a intentar.");
+                return;
+            }
+
+            const registro = await navigator.serviceWorker.register("/crm-sw.js");
+            await navigator.serviceWorker.ready;
+
+            let sub = await registro.pushManager.getSubscription();
+            if (!sub) {
+                sub = await registro.pushManager.subscribe({
+                    userVisibleOnly: true,
+                    applicationServerKey: urlBase64ToUint8Array(config.publicKey)
+                });
+            }
+
+            const resp = await fetch("/crm/push/subscribe", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify(sub.toJSON())
+            });
+
+            if (!resp.ok) throw new Error("No se pudo guardar la suscripción");
+            btnNotificaciones.textContent = "🔔 Notificaciones activas";
+
+            new Notification("CRM Gabriel 🏡", {
+                body: "Este dispositivo ya recibirá mensajes de clientes."
+            });
+        }
+
         if (btnNotificaciones) {
-            btnNotificaciones.addEventListener("click", async () => {
-                if (!("Notification" in window)) return;
-
-                const permiso = await Notification.requestPermission();
-                actualizarBotonNotificaciones();
-
-                if (permiso === "granted") {
-                    new Notification("CRM Gabriel 🏡", {
-                        body: "Notificaciones activadas correctamente."
-                    });
-                }
+            btnNotificaciones.addEventListener("click", () => {
+                activarPush().catch(err => {
+                    console.error(err);
+                    alert("No se pudieron activar las notificaciones: " + err.message);
+                });
             });
         }
 
@@ -6623,6 +6728,63 @@ CRM_HTML = r"""
 </body>
 </html>
 """
+
+
+@app.route("/crm-sw.js", methods=["GET"])
+def crm_service_worker():
+    js = r"""
+self.addEventListener('push', event => {
+    let data = {};
+    try { data = event.data ? event.data.json() : {}; } catch (e) {}
+    const title = data.title || '🏡 Nuevo mensaje de cliente';
+    const options = {
+        body: data.body || 'Tienes un mensaje nuevo.',
+        tag: data.tag || 'crm-gabriel',
+        data: { url: data.url || '/crm' },
+        renotify: true
+    };
+    event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener('notificationclick', event => {
+    event.notification.close();
+    const target = event.notification.data?.url || '/crm';
+    event.waitUntil(
+        clients.matchAll({type: 'window', includeUncontrolled: true}).then(windows => {
+            for (const client of windows) {
+                if ('navigate' in client) client.navigate(target);
+                if ('focus' in client) return client.focus();
+            }
+            return clients.openWindow(target);
+        })
+    );
+});
+"""
+    return Response(js, mimetype="application/javascript", headers={"Cache-Control": "no-cache"})
+
+
+@app.route("/crm/push/config", methods=["GET"])
+def crm_push_config():
+    if not crm_autorizado():
+        return crm_pedir_login()
+    return jsonify({"publicKey": VAPID_PUBLIC_KEY})
+
+
+@app.route("/crm/push/subscribe", methods=["POST"])
+def crm_push_subscribe():
+    if not crm_autorizado():
+        return crm_pedir_login()
+
+    sub = request.get_json(silent=True) or {}
+    endpoint = sub.get("endpoint")
+    keys = sub.get("keys") or {}
+    if not endpoint or not keys.get("p256dh") or not keys.get("auth"):
+        return jsonify({"ok": False, "error": "Suscripción inválida"}), 400
+
+    with lock_push:
+        crm_push_subscriptions[endpoint] = sub
+
+    return jsonify({"ok": True, "devices": len(crm_push_subscriptions)})
 
 
 @app.route("/crm", methods=["GET"])
