@@ -2987,7 +2987,7 @@ def preparar_vapid_private_key():
     return key
 
 
-def enviar_push_crm(numero, contenido):
+def enviar_push_crm(numero, contenido, event_id=None):
     global ultimo_error_push, ultimo_resultado_push
 
     ultimo_error_push = None
@@ -3006,12 +3006,17 @@ def enviar_push_crm(numero, contenido):
     proyecto = crm_nombre_proyecto(numero)
     proyecto_txt = f" · {proyecto}" if proyecto and proyecto != "Sin proyecto" else ""
 
+    push_id = str(event_id or time.time_ns())
+
     payload = json.dumps({
         "title": "🏡 Nuevo mensaje de cliente",
         "body": f"+{numero}{proyecto_txt}\n{str(contenido)[:180]}",
         "url": f"/crm?numero={numero}",
-        # Tag único: Android no reemplaza una notificación anterior.
-        "tag": f"crm-{numero}-{time.time_ns()}"
+        # Cada mensaje de WhatsApp usa su propio tag.
+        # Así Android/Chrome no sustituye una notificación por otra.
+        "tag": f"crm-{push_id}",
+        "message_id": push_id,
+        "timestamp": int(time.time() * 1000)
     }, ensure_ascii=False)
 
     # Leer suscripciones persistentes en CADA envío.
@@ -3035,11 +3040,10 @@ def enviar_push_crm(numero, contenido):
                 data=payload,
                 vapid_private_key=private_key_compatible,
                 vapid_claims={"sub": VAPID_SUBJECT},
-                ttl=300,
+                ttl=600,
                 timeout=20,
                 headers={
-                    "Urgency": "high",
-                    "Topic": f"crm-{time.time_ns()}"
+                    "Urgency": "high"
                 }
             )
             status = getattr(respuesta, "status_code", None)
@@ -3087,7 +3091,7 @@ def crm_hora_actual():
     ).strftime("%d/%m %I:%M %p")
 
 
-def crm_registrar_mensaje(numero, direccion, contenido):
+def crm_registrar_mensaje(numero, direccion, contenido, event_id=None):
     global crm_evento_contador
 
     if not numero:
@@ -3117,7 +3121,11 @@ def crm_registrar_mensaje(numero, direccion, contenido):
 
     # Solo los mensajes ENTRANTES del cliente generan push.
     if direccion == "in":
-        Thread(target=enviar_push_crm, args=(numero, contenido), daemon=True).start()
+        Thread(
+            target=enviar_push_crm,
+            args=(numero, contenido, event_id),
+            daemon=True
+        ).start()
 
 
 def crm_resumen_entrante(mensaje):
@@ -6374,13 +6382,16 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
 
 
 @app.route("/webhook", methods=["POST"])
-def recibir_mensaje():
+def recibir_webhook():
     """
-    Webhook rápido:
-    1. valida si es un mensaje real;
-    2. bloquea duplicados por message_id;
-    3. responde 200 INMEDIATAMENTE a Meta;
-    4. procesa el contenido en segundo plano.
+    Recibe mensajes desde Meta.
+
+    IMPORTANTE:
+    Meta puede incluir MÁS DE UN mensaje dentro de value["messages"].
+    Procesamos cada elemento por separado para que cada mensaje:
+    - aparezca en el CRM;
+    - genere su propia notificación Push;
+    - sea procesado por el bot.
     """
     datos = request.get_json()
 
@@ -6396,55 +6407,80 @@ def recibir_mensaje():
             print("Evento recibido, pero no es mensaje entrante.")
             return "EVENT_RECEIVED", 200
 
-        mensaje = value["messages"][0]
-        message_id = mensaje.get("id")
+        mensajes = value.get("messages") or []
 
-        # MUY IMPORTANTE:
-        # Si Meta reintenta el mismo mensaje, no volvemos a responder.
-        if not marcar_mensaje_como_procesado(message_id):
-            print("MENSAJE DUPLICADO IGNORADO:", message_id)
+        if not mensajes:
             return "EVENT_RECEIVED", 200
 
-        # Procesamos después, para no mantener abierto el webhook
-        # mientras se suben fotos/videos o responde OpenAI.
-        numero_cliente = mensaje.get("from")
+        print("MENSAJES EN ESTE WEBHOOK:", len(mensajes))
 
-        # CRM: registrar TODO mensaje entrante inmediatamente.
-        crm_registrar_mensaje(
-            numero_cliente,
-            "in",
-            crm_resumen_entrante(mensaje)
-        )
+        for mensaje in mensajes:
+            try:
+                message_id = mensaje.get("id")
 
-        # Un mensaje nuevo del cliente cancela cualquier seguimiento pendiente
-        # desde el mismo instante en que entra al webhook.
-        cancelar_seguimiento(numero_cliente)
+                # Si Meta reintenta EL MISMO mensaje, no duplicamos nada.
+                if not marcar_mensaje_como_procesado(message_id):
+                    print("MENSAJE DUPLICADO IGNORADO:", message_id)
+                    continue
 
-        # Este mensaje pasa a ser el único procesamiento vigente para ese número.
-        iniciar_procesamiento(
-            numero_cliente,
-            message_id
-        )
+                numero_cliente = mensaje.get("from")
 
-        # Primero procesamos y respondemos. El contador de seguimiento
-        # arrancará cuando el bot termine de responder este mensaje.
-        Thread(
-            target=procesar_mensaje_en_segundo_plano,
-            args=(datos, message_id),
-            daemon=True
-        ).start()
+                # 1) Guardar en CRM y disparar UNA notificación propia.
+                crm_registrar_mensaje(
+                    numero_cliente,
+                    "in",
+                    crm_resumen_entrante(mensaje),
+                    event_id=message_id
+                )
 
-        # Meta recibe el 200 inmediatamente.
+                # 2) Cancelar seguimiento pendiente.
+                cancelar_seguimiento(numero_cliente)
+
+                # 3) Este mensaje pasa a ser el procesamiento vigente.
+                iniciar_procesamiento(
+                    numero_cliente,
+                    message_id
+                )
+
+                # Construimos un payload individual para reutilizar
+                # el procesador existente sin hacerle creer que solo
+                # existe el primer elemento de un webhook agrupado.
+                datos_individuales = {
+                    "object": datos.get("object"),
+                    "entry": [{
+                        **datos["entry"][0],
+                        "changes": [{
+                            **datos["entry"][0]["changes"][0],
+                            "value": {
+                                **value,
+                                "messages": [mensaje]
+                            }
+                        }]
+                    }]
+                }
+
+                Thread(
+                    target=procesar_mensaje_en_segundo_plano,
+                    args=(datos_individuales, message_id),
+                    daemon=True
+                ).start()
+
+            except Exception as error_mensaje:
+                print(
+                    "ERROR PROCESANDO ELEMENTO DEL WEBHOOK:",
+                    mensaje.get("id"),
+                    error_mensaje
+                )
+
+        # Meta recibe 200 inmediatamente después de despachar todos.
         return "EVENT_RECEIVED", 200
 
     except Exception as error:
         print("\nERROR DEL WEBHOOK:")
         print(error)
 
-        # Aun con un payload inesperado respondemos 200 para evitar
-        # reintentos infinitos del mismo evento.
+        # Siempre respondemos 200 para evitar reintentos infinitos.
         return "EVENT_RECEIVED", 200
-
 
 
 # ============================================================
@@ -7140,34 +7176,84 @@ CRM_HTML = r"""
 @app.route("/crm-sw.js", methods=["GET"])
 def crm_service_worker():
     js = r"""
+self.addEventListener('install', event => {
+    self.skipWaiting();
+});
+
+self.addEventListener('activate', event => {
+    event.waitUntil(self.clients.claim());
+});
+
 self.addEventListener('push', event => {
     let data = {};
-    try { data = event.data ? event.data.json() : {}; } catch (e) {}
+
+    try {
+        data = event.data ? event.data.json() : {};
+    } catch (e) {
+        data = {};
+    }
+
+    const uniqueId =
+        data.message_id ||
+        data.tag ||
+        (Date.now().toString() + '-' + Math.random().toString(36).slice(2));
+
     const title = data.title || '🏡 Nuevo mensaje de cliente';
+
     const options = {
         body: data.body || 'Tienes un mensaje nuevo.',
-        tag: data.tag || 'crm-gabriel',
-        data: { url: data.url || '/crm' },
-        renotify: true
+        // TAG ÚNICO POR MENSAJE: no reemplazar alertas anteriores.
+        tag: 'crm-' + uniqueId,
+        renotify: true,
+        silent: false,
+        timestamp: data.timestamp || Date.now(),
+        data: {
+            url: data.url || '/crm',
+            message_id: uniqueId
+        }
     };
-    event.waitUntil(self.registration.showNotification(title, options));
+
+    event.waitUntil(
+        self.registration.showNotification(title, options)
+    );
 });
 
 self.addEventListener('notificationclick', event => {
     event.notification.close();
-    const target = event.notification.data?.url || '/crm';
+
+    const target =
+        (event.notification.data && event.notification.data.url)
+        ? event.notification.data.url
+        : '/crm';
+
     event.waitUntil(
-        clients.matchAll({type: 'window', includeUncontrolled: true}).then(windows => {
+        clients.matchAll({
+            type: 'window',
+            includeUncontrolled: true
+        }).then(windows => {
             for (const client of windows) {
-                if ('navigate' in client) client.navigate(target);
-                if ('focus' in client) return client.focus();
+                if ('navigate' in client) {
+                    client.navigate(target);
+                }
+
+                if ('focus' in client) {
+                    return client.focus();
+                }
             }
+
             return clients.openWindow(target);
         })
     );
 });
 """
-    return Response(js, mimetype="application/javascript", headers={"Cache-Control": "no-cache"})
+    return Response(
+        js,
+        mimetype="application/javascript",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Service-Worker-Allowed": "/"
+        }
+    )
 
 
 @app.route("/crm/push/config", methods=["GET"])
@@ -7217,6 +7303,19 @@ def crm_push_devices():
         "ok": True,
         "devices": devices,
         "persistent": bool(push_db_disponible())
+    })
+
+
+@app.route("/crm/push/trace", methods=["GET"])
+def crm_push_trace():
+    if not crm_autorizado():
+        return crm_pedir_login()
+
+    return jsonify({
+        "devices": contar_push_devices(),
+        "last_error": ultimo_error_push,
+        "last_result": ultimo_resultado_push,
+        "database_ready": bool(inicializar_push_db())
     })
 
 
