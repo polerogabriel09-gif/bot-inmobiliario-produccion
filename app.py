@@ -6,6 +6,7 @@ import os
 import base64
 import tempfile
 from threading import Thread, Lock
+import time
 import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -5015,6 +5016,59 @@ def enviar_cotizacion_del_proyecto(numero, proyecto, medida=None):
     )
 
 # ============================================================
+# SEGUIMIENTO AUTOMATICO POR INACTIVIDAD - PRUEBA
+# ============================================================
+
+# PRUEBA: 60 segundos.
+# PRODUCCION: cambiar a 8 * 60 * 60 (8 horas).
+SEGUIMIENTO_SEGUNDOS = 60
+
+SEGUIMIENTO_TEXTO = (
+    "Hola 👋😊 Solo paso por aquí.\n\n"
+    "Quizá no ha tenido tiempo de revisar con calma la información de los terrenos "
+    "que le envié 🏡. No hay problema.\n\n"
+    "Cuando pueda verla, escríbame. Si alguna opción le interesa, con gusto le ayudo "
+    "a hacer números para buscar una cuota cómoda para usted ✅\n\n"
+    "👉 ¿Qué cuota mensual le quedaría cómoda?"
+)
+
+seguimiento_version = {}
+lock_seguimiento = Lock()
+
+
+def programar_seguimiento_inactividad(numero):
+    """
+    Programa un seguimiento. Si el cliente escribe de nuevo antes del tiempo,
+    la versión anterior queda cancelada automáticamente.
+    """
+    with lock_seguimiento:
+        version = seguimiento_version.get(numero, 0) + 1
+        seguimiento_version[numero] = version
+
+    def esperar_y_enviar():
+        time.sleep(SEGUIMIENTO_SEGUNDOS)
+
+        with lock_seguimiento:
+            if seguimiento_version.get(numero) != version:
+                return
+
+        # Solo enviar si ya existe conversación real con una respuesta del bot.
+        historial = obtener_historial(numero)
+        if not any(item.get("role") == "assistant" for item in historial):
+            return
+
+        enviar_whatsapp(numero, SEGUIMIENTO_TEXTO)
+        guardar_mensaje(numero, "assistant", SEGUIMIENTO_TEXTO)
+
+        # Marcar esta versión como consumida para que se envíe una sola vez.
+        with lock_seguimiento:
+            if seguimiento_version.get(numero) == version:
+                seguimiento_version[numero] = version + 1
+
+    Thread(target=esperar_y_enviar, daemon=True).start()
+
+
+# ============================================================
 # RECIBIR MENSAJES DE WHATSAPP
 # ============================================================
 
@@ -5658,6 +5712,9 @@ def recibir_mensaje():
             numero_cliente,
             message_id
         )
+
+        # Reinicia el contador de seguimiento con cada mensaje nuevo del cliente.
+        programar_seguimiento_inactividad(numero_cliente)
 
         Thread(
             target=procesar_mensaje_en_segundo_plano,
