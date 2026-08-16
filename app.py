@@ -48,6 +48,16 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 # aunque Render se duerma, reinicie o haga deploy.
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+# ============================================================
+# NTFY - NOTIFICACIONES NATIVAS EN ANDROID
+# ============================================================
+NTFY_TOPIC = os.getenv("NTFY_TOPIC", "").strip()
+NTFY_SERVER = os.getenv("NTFY_SERVER", "https://ntfy.sh").rstrip("/")
+CRM_PUBLIC_URL = os.getenv(
+    "CRM_PUBLIC_URL",
+    "https://bot-inmobiliario-produccion.onrender.com/crm"
+).rstrip("/")
+
 # Acceso al CRM. Configúralos en Render > Environment.
 CRM_USER = os.getenv("CRM_USER", "gabriel")
 CRM_PASSWORD = os.getenv("CRM_PASSWORD")
@@ -3091,6 +3101,59 @@ def crm_hora_actual():
     ).strftime("%d/%m %I:%M %p")
 
 
+
+def enviar_ntfy_crm(numero, contenido, event_id=None):
+    """
+    Envía UNA notificación ntfy por CADA mensaje entrante de WhatsApp.
+    No depende de que Chrome, el CRM o una pestaña estén abiertos.
+    """
+    if not NTFY_TOPIC:
+        print("NTFY: NTFY_TOPIC no está configurado.")
+        return False
+
+    numero_txt = str(numero or "Cliente")
+    contenido_txt = str(contenido or "Nuevo mensaje").strip()
+
+    proyecto = crm_nombre_proyecto(numero)
+    proyecto_txt = (
+        f" · {proyecto}"
+        if proyecto and proyecto != "Sin proyecto"
+        else ""
+    )
+
+    # Abrir directamente la conversación del cliente en el CRM.
+    click_url = f"{CRM_PUBLIC_URL}?numero={numero_txt}"
+
+    try:
+        respuesta = requests.post(
+            f"{NTFY_SERVER}/{NTFY_TOPIC}",
+            data=contenido_txt.encode("utf-8"),
+            headers={
+                "Title": f"Nuevo mensaje - CRM Gabriel",
+                "Priority": "high",
+                "Tags": "house,phone",
+                "Click": click_url,
+                # Identificador únicamente para diagnóstico.
+                "X-Message-ID": str(event_id or time.time_ns())
+            },
+            timeout=12
+        )
+
+        print(
+            "NTFY:",
+            respuesta.status_code,
+            numero_txt,
+            proyecto_txt,
+            contenido_txt[:80]
+        )
+
+        return 200 <= respuesta.status_code < 300
+
+    except Exception as exc:
+        print("NTFY ERROR:", exc)
+        return False
+
+
 def crm_registrar_mensaje(numero, direccion, contenido, event_id=None):
     global crm_evento_contador
 
@@ -3121,8 +3184,16 @@ def crm_registrar_mensaje(numero, direccion, contenido, event_id=None):
 
     # Solo los mensajes ENTRANTES del cliente generan push.
     if direccion == "in":
+        # Web Push anterior (lo dejamos activo por ahora).
         Thread(
             target=enviar_push_crm,
+            args=(numero, contenido, event_id),
+            daemon=True
+        ).start()
+
+        # NTFY: notificación nativa en Android por CADA mensaje.
+        Thread(
+            target=enviar_ntfy_crm,
             args=(numero, contenido, event_id),
             daemon=True
         ).start()
@@ -7303,6 +7374,37 @@ def crm_push_devices():
         "ok": True,
         "devices": devices,
         "persistent": bool(push_db_disponible())
+    })
+
+
+
+@app.route("/crm/ntfy/test", methods=["GET"])
+def crm_ntfy_test():
+    if not crm_autorizado():
+        return crm_pedir_login()
+
+    ok = enviar_ntfy_crm(
+        "PRUEBA",
+        "Prueba de ntfy: las notificaciones del CRM ya están conectadas ✅",
+        event_id=f"test-{time.time_ns()}"
+    )
+
+    return jsonify({
+        "ok": bool(ok),
+        "topic_configured": bool(NTFY_TOPIC),
+        "server": NTFY_SERVER
+    })
+
+
+@app.route("/crm/ntfy/status", methods=["GET"])
+def crm_ntfy_status():
+    if not crm_autorizado():
+        return crm_pedir_login()
+
+    return jsonify({
+        "topic_configured": bool(NTFY_TOPIC),
+        "server": NTFY_SERVER,
+        "crm_url": CRM_PUBLIC_URL
     })
 
 
