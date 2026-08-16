@@ -6,7 +6,6 @@ import os
 import base64
 import tempfile
 from threading import Thread, Lock
-import time
 import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -779,11 +778,7 @@ def enviar_presentacion_si_corresponde(numero, message_id=None):
 def obtener_estado_conversacion(numero):
     if numero not in estado_conversacion:
         estado_conversacion[numero] = {
-            "proyecto_actual": None,
-            "esperando_preferencia_topografia": False,
-            "preferencia_topografia": None,
-            "topografia_en_conversacion": False,
-            "multimedia_pendiente": False
+            "proyecto_actual": None
         }
 
     return estado_conversacion[numero]
@@ -847,180 +842,6 @@ def obtener_proyecto_actual(numero):
     return proyecto_activo.get(numero)
 
 
-def marcar_pregunta_topografia(numero):
-    estado = obtener_estado_conversacion(numero)
-    estado["esperando_preferencia_topografia"] = True
-    estado["topografia_en_conversacion"] = True
-
-
-def guardar_preferencia_topografia(numero, preferencia):
-    estado = obtener_estado_conversacion(numero)
-    estado["preferencia_topografia"] = preferencia
-    estado["esperando_preferencia_topografia"] = False
-    estado["topografia_en_conversacion"] = True
-
-
-def respuesta_preferencia_topografia(numero, texto, proyecto):
-    """
-    Maneja respuestas cortas a:
-    "¿Cómo prefieres tu terreno: plano o inclinado?"
-
-    Devuelve None cuando el mensaje no es una respuesta a esa pregunta.
-    """
-    estado = obtener_estado_conversacion(numero)
-
-    if not estado.get("esperando_preferencia_topografia"):
-        return None
-
-    t = normalizar_texto_topografia(texto)
-
-    # Solo tratamos respuestas cortas/claras como elección de topografía.
-    if len(t.split()) > 8:
-        return None
-
-    if any(x in t for x in [
-        "quebrado", "quebrada", "inclinado", "inclinada",
-        "con pendiente", "pendiente"
-    ]):
-        guardar_preferencia_topografia(numero, "inclinado")
-
-        if proyecto in {"palmeras", "buenaventura"}:
-            return (
-                "Perfecto 😊 En este proyecto los lotes se manejan en topografía plana. "
-                "Si buscas específicamente un terreno quebrado o inclinado para un diseño "
-                "especial, dímelo y te ayudo a revisar qué alternativa podemos ofrecerte. 🏡"
-            )
-
-        if proyecto == "vista_hermosa":
-            return (
-                "Perfecto 😊 En Vista Hermosa sí hay lotes planos y también algunos "
-                "quebrados/inclinados. Puedes revisar los planos y escoger las opciones "
-                "que te interesen; si buscas uno quebrado, te ayudo a identificar opciones "
-                "para que puedas escoger con más seguridad. 🏡"
-            )
-
-        return (
-            "Perfecto 😊 Si prefieres un lote quebrado o inclinado, dime qué opción "
-            "te interesa y te ayudo a revisarla."
-        )
-
-    # "plano", "un plano", "uno plano", "prefiero plano", etc.
-    if any(x in t for x in [
-        "plano", "plana", "llano", "llana"
-    ]):
-        guardar_preferencia_topografia(numero, "plano")
-
-        if proyecto in {"palmeras", "buenaventura"}:
-            return (
-                "Perfecto 😊 Puedes revisar el plano y la disponibilidad, escoger el lote "
-                "que más te guste y enviarme el número o una captura. En este proyecto los "
-                "lotes se manejan en topografía plana, así que con gusto te ayudo a revisar "
-                "la opción que elijas. 🏡"
-            )
-
-        if proyecto == "vista_hermosa":
-            return (
-                "Perfecto 😊 Puedes revisar los planos y la disponibilidad, escoger el lote "
-                "que más te guste y enviarme el número o una captura. En Vista Hermosa hay "
-                "lotes planos y también algunos quebrados, así que antes de asegurártelo "
-                "te confirmo la topografía exacta del lote que elijas. 🏡"
-            )
-
-        return (
-            "Perfecto 😊 Revisa el plano, escoge el lote que te interese y envíame "
-            "el número o una captura; te ayudo a confirmar su topografía."
-        )
-
-    return None
-
-
-def parece_numero_de_lote(texto):
-    """
-    Detecta referencias como 'lote 125', 'número de lote 125', '#125'.
-    Se usa únicamente cuando ya venimos hablando de topografía.
-    """
-    t = normalizar_texto_topografia(texto)
-
-    patrones = [
-        r"\blote\s*[#nº°.-]*\s*\d{1,5}\b",
-        r"\bnumero\s+(?:de\s+)?lote\s*[#nº°.-]*\s*\d{1,5}\b",
-        r"\bno\.?\s*\d{1,5}\b",
-        r"^#\s*\d{1,5}$"
-    ]
-
-    return any(re.search(p, t) for p in patrones)
-
-
-def respuesta_revision_lote_topografia(numero, proyecto, texto):
-    """
-    Responde cuando el cliente manda un número de lote dentro del seguimiento
-    de topografía.
-
-    Buenaventura y Palmeras: topografía plana según la regla comercial cargada.
-    Vista Hermosa: no inventamos el dato individual sin una tabla topográfica.
-    """
-    estado = obtener_estado_conversacion(numero)
-
-    if not estado.get("topografia_en_conversacion"):
-        return None
-
-    if not parece_numero_de_lote(texto):
-        return None
-
-    if proyecto in {"palmeras", "buenaventura"}:
-        return (
-            "Sí 😊 Ese lote se maneja en topografía plana. Si quieres, también puedo "
-            "ayudarte a revisar disponibilidad, precio o cuota de esa opción. 🏡"
-        )
-
-    if proyecto == "vista_hermosa":
-        return (
-            "Perfecto 😊 Ya tengo la referencia del lote. En Vista Hermosa hay opciones "
-            "planas y quebradas, así que para darte seguridad prefiero confirmarte la "
-            "topografía exacta de ese lote. Déjame revisarlo y te lo envío en un momento."
-        )
-
-    return (
-        "Perfecto 😊 Déjame revisar exactamente la topografía de ese lote "
-        "y te la confirmo en un momento."
-    )
-
-
-def pregunta_si_lote_es_quebrado(texto):
-    t = normalizar_texto_topografia(texto)
-    return (
-        any(x in t for x in ["quebrado", "quebrada", "inclinado", "inclinada"])
-        and any(x in t for x in ["este", "ese", "el que", "lote", "terreno"])
-        and any(x in t for x in ["es", "esta", "seria", "sera"])
-    )
-
-
-def respuesta_si_pregunta_quebrado(numero, proyecto, texto):
-    estado = obtener_estado_conversacion(numero)
-
-    if not estado.get("topografia_en_conversacion"):
-        return None
-
-    if not pregunta_si_lote_es_quebrado(texto):
-        return None
-
-    if proyecto in {"palmeras", "buenaventura"}:
-        return (
-            "No 😊 En este proyecto los lotes se manejan en topografía plana. "
-            "Si estás buscando específicamente una opción quebrada/inclinada, "
-            "dímelo y te ayudo a revisar alternativas."
-        )
-
-    if proyecto == "vista_hermosa":
-        return (
-            "Si lo que buscas es uno quebrado/inclinado, con gusto te ayudo a revisar "
-            "las opciones de Vista Hermosa que tengan ese tipo de topografía para que "
-            "puedas escoger. 😊🏡"
-        )
-
-    return None
-
-
 # ============================================================
 # PLANOS PUBLICADOS EN GITHUB PAGES
 # ============================================================
@@ -1062,200 +883,18 @@ PLANOS_PROYECTOS = {
 }
 
 
-def normalizar_texto_topografia(texto):
-    """Normaliza texto para detectar mejor intenciones de topografía."""
-    t = (texto or "").lower().strip()
-    reemplazos = {
-        "á": "a", "é": "e", "í": "i", "ó": "o", "ú": "u", "ü": "u"
-    }
-    for origen, destino in reemplazos.items():
-        t = t.replace(origen, destino)
-    return " ".join(t.split())
-
-
-def pregunta_topografia_terreno(texto):
-    """
-    Detecta cuando "plano" habla de la TOPOGRAFÍA del lote y no del PDF/croquis.
-    Debe ganar prioridad antes de pide_plano().
-    """
-    t = normalizar_texto_topografia(texto)
-
-    referencias_terreno = [
-        "lote", "lotes", "terreno", "terrenos",
-        "topografia", "topografico", "topografica"
-    ]
-
-    referencias_forma = [
-        "plano", "planos", "plana", "planas",
-        "llano", "llanos", "llana", "llanas",
-        "inclinado", "inclinados", "inclinada", "inclinadas",
-        "quebrado", "quebrados", "quebrada", "quebradas",
-        "pendiente", "desnivel"
-    ]
-
-    frases_directas = [
-        "como es la topografia",
-        "que topografia",
-        "topografia del proyecto",
-        "topografia de los lotes",
-        "plano o inclinado",
-        "plano o quebrado",
-        "inclinado o plano",
-        "quebrado o plano",
-        "uno plano",
-        "uno inclinado",
-        "uno quebrado",
-        "uno llano",
-        "prefiero plano",
-        "prefiero inclinado",
-        "quiero uno plano",
-        "quiero uno inclinado"
-    ]
-
-    if any(frase in t for frase in frases_directas):
-        return True
-
-    palabras_precio = [
-        "precio", "cuesta", "costaria", "vale", "valor",
-        "mas caro", "mismo precio"
-    ]
-
-    if (
-        any(p in t for p in palabras_precio)
-        and any(f in t for f in referencias_forma)
-    ):
-        return True
-
-    return (
-        any(ref in t for ref in referencias_terreno)
-        and any(ref in t for ref in referencias_forma)
-    )
-
-def preferencia_topografia(texto):
-    """
-    Devuelve 'plano', 'inclinado' o None cuando el cliente expresa
-    preferencia por la topografía del lote.
-    """
-    t = normalizar_texto_topografia(texto)
-
-    if any(x in t for x in [
-        "plano del proyecto", "plano de proyecto", "plano general",
-        "plano de lotes", "plano de los lotes", "ver el plano",
-        "mandame el plano", "enviame el plano", "croquis", "mapa"
-    ]):
-        return None
-
-    if any(x in t for x in [
-        "inclinado", "inclinada", "inclinados", "inclinadas",
-        "quebrado", "quebrada", "quebrados", "quebradas",
-        "con pendiente", "desnivel"
-    ]):
-        return "inclinado"
-
-    if any(x in t for x in [
-        "lote plano", "lotes planos", "terreno plano", "terrenos planos",
-        "lote llano", "terreno llano", "lo quiero plano",
-        "prefiero plano", "me gusta plano", "quiero plano"
-    ]):
-        return "plano"
-
-    return None
-
-
-def respuesta_topografia(preferencia=None):
-    """
-    Explica diferencias entre terreno plano e inclinado.
-    El precio del lote NO cambia por la topografía.
-    """
-    base = (
-        "Claro 😊 En nuestros proyectos puedes encontrar lotes con distintas "
-        "condiciones de topografía. El precio del lote es el mismo según la "
-        "medida y fase, ya sea plano o inclinado/quebrado. 🏡\n\n"
-        "🟢 *Terreno plano:* facilita diseños de construcción más convencionales, "
-        "accesos, patios y distribución exterior; normalmente requiere menos "
-        "adaptación inicial del terreno.\n\n"
-        "⛰️ *Terreno inclinado o quebrado:* puede ser muy atractivo para diseños "
-        "escalonados, casas de varios niveles, terrazas o proyectos que aprovechen "
-        "la pendiente de forma arquitectónica.\n\n"
-        "El costo de construcción sí puede variar dependiendo del diseño, "
-        "movimiento de tierra y cimentación que elijas, pero *el precio de venta "
-        "del lote no cambia por ser plano o inclinado*."
-    )
-
-    if preferencia == "plano":
-        return (
-            base
-            + "\n\nPor lo que me indicas, buscas uno *plano* 👍. "
-              "Puedo ayudarte a enfocarnos en ese tipo de lote. "
-              "¿De cuál proyecto te interesa?"
-        )
-
-    if preferencia == "inclinado":
-        return (
-            base
-            + "\n\nPerfecto 👍 Si prefieres uno *inclinado/quebrado*, "
-              "podemos buscar una opción que se adapte al diseño de casa que tienes en mente. "
-              "¿De cuál proyecto te interesa?"
-        )
-
-    return base + "\n\n¿Cuál prefieres tú: *plano o inclinado*? 😊"
-
-
-def mensaje_topografia_despues_de_plano():
-    return (
-        "🏡 *Sobre la topografía:* los lotes que ves en el plano pueden encontrarse "
-        "en topografía plana. Si prefieres un lote inclinado/quebrado para un diseño "
-        "de casa específico, dínoslo y te ayudamos a buscar una opción adecuada. 😊\n\n"
-        "El precio del lote no cambia por ser plano o inclinado; depende de la medida "
-        "y fase correspondiente.\n\n"
-        "¿Cómo prefieres tu terreno: *plano o inclinado*?"
-    )
-
-
 def pide_plano(texto):
-    """
-    Detecta solicitudes del DOCUMENTO: plano/croquis/mapa/PDF.
-    """
-    if pregunta_topografia_terreno(texto):
-        return False
-
-    t = normalizar_texto_topografia(texto)
-
-    if any(x in t for x in [
-        "croquis",
+    """Detecta solicitudes de planos/distribución de lotes sin confundirlas con ubicación."""
+    t = texto.lower().strip()
+    expresiones = [
+        "plano", "planos", "croquis",
         "mapa del proyecto", "mapa de proyecto",
         "mapa de lotes", "mapa de los lotes",
-        "distribucion de lotes",
-        "distribucion del proyecto",
-        "plano del proyecto", "plano de proyecto",
-        "plano general", "plano de lotes", "plano de los lotes",
-        "pdf del plano", "plano pdf"
-    ]):
-        return True
-
-    verbos_documento = [
-        "manda", "mandame", "mandarme", "mandar",
-        "envia", "enviame", "enviarme", "enviar",
-        "comparte", "comparteme", "compartirme", "compartir",
-        "muestra", "muestrame", "mostrar",
-        "ensena", "ensename",
-        "pasame", "pasarme", "pasar",
-        "ver", "tienes", "tiene", "tendras",
-        "puede mandarme", "puedes mandarme",
-        "puede enviarme", "puedes enviarme"
+        "distribucion de lotes", "distribución de lotes",
+        "distribucion del proyecto", "distribución del proyecto"
     ]
+    return any(x in t for x in expresiones)
 
-    if "plano" in t or "planos" in t:
-        if any(v in t for v in verbos_documento):
-            return True
-
-        if re.search(r"\b(el|los)\s+planos?\b", t):
-            return True
-
-        if t in {"plano", "planos"}:
-            return True
-
-    return False
 
 def detectar_fase_plano(texto, proyecto):
     """Devuelve la fase pedida solo cuando tiene sentido para el proyecto activo."""
@@ -1875,28 +1514,31 @@ def respuesta_punto_encuentro(numero, proyecto):
 
     nombre = nombres.get(proyecto, "el proyecto")
 
-    return (
-        f"Podemos encontrarnos directamente en {nombre} 😊📍. "
-        "Si necesitas otro punto, me lo indicas."
+    sugerencias = {
+        "palmeras": (
+            "Lo más práctico es que nos encontremos directamente en Palmeras San Miguel 🏡📍. "
+            "Si te queda mejor un punto conocido, también podemos reunirnos en el Centro Comercial La Trinidad "
+            "y de ahí coordinamos para ir al proyecto."
+        ),
+        "vista_hermosa": (
+            "Lo más práctico es encontrarnos directamente en Vista Hermosa, sobre la CA-2 km 188 🏡📍. "
+            "Si prefieres otro punto cercano sobre la ruta, dime cuál te queda cómodo y lo coordinamos."
+        ),
+        "buenaventura": (
+            "Lo más práctico es encontrarnos directamente en Buenaventura Cuyotenango 🏡📍. "
+            "Como punto alternativo, podemos reunirnos en el Parque Central de Cuyotenango y de ahí ir al proyecto."
+        )
+    }
+
+    base = sugerencias.get(
+        proyecto,
+        f"Lo más práctico es encontrarnos directamente en {nombre} 🏡📍."
     )
 
-
-
-def pregunta_horario_para_visita(texto):
-    t = texto.lower().strip()
-
-    frases = [
-        "cuando me puede atender", "cuándo me puede atender",
-        "a que hora me puede atender", "a qué hora me puede atender",
-        "cuando me pueden atender", "cuándo me pueden atender",
-        "a que hora me pueden atender", "a qué hora me pueden atender",
-        "que horario tienen", "qué horario tienen",
-        "en que horario me atiende", "en qué horario me atiende",
-        "a que hora puedo llegar", "a qué hora puedo llegar",
-        "a que hora puedo ir", "a qué hora puedo ir"
-    ]
-
-    return any(f in t for f in frases)
+    return (
+        base
+        + " Si ya tienes otro lugar en mente, también me lo puedes indicar y lo coordinamos 👍"
+    )
 
 
 def detectar_intencion_visita(texto):
@@ -1911,7 +1553,7 @@ def detectar_intencion_visita(texto):
         "coordinar visita"
     ]
 
-    return any(f in t for f in frases) or pregunta_horario_para_visita(texto)
+    return any(f in t for f in frases)
 
 
 def extraer_dia_visita(texto):
@@ -1967,27 +1609,44 @@ def respuesta_visita(numero, texto, proyecto):
     if hora:
         estado["hora"] = hora
 
-    # Si pregunta cuándo/a qué hora podemos atenderlo, no ofrecemos otros puntos.
-    # Dejamos que el cliente elija el horario.
-    if pregunta_horario_para_visita(texto) and not hora:
-        if estado.get("dia"):
-            return "A la hora que tú dispongas 😊 ¿A qué hora te queda bien?"
-        return "A la hora que tú dispongas 😊 ¿Qué día te gustaría visitar?"
+    nombres = {
+        "palmeras": "Palmeras San Miguel",
+        "vista_hermosa": "Vista Hermosa",
+        "buenaventura": "Buenaventura Cuyotenango"
+    }
 
-    # Día + hora = cita cerrada.
-    # El usuario pidió una confirmación mínima, sin volver a vender ni preguntar.
+    nombre = nombres.get(
+        estado.get("proyecto"),
+        "el proyecto"
+    )
+
+    # Día + hora = CITA CERRADA.
+    # No ofrecer nada más, no hacer preguntas y no agregar CTA.
     if estado["dia"] and estado["hora"]:
         estado["cerrada"] = True
-        return "Sí, perfecto 😊 Queda coordinado."
+
+        return (
+            f"¡Perfecto! 🙌 Queda coordinada tu visita a {nombre} "
+            f"para el {estado['dia']} a las {estado['hora']} 🏡📍. "
+            "Antes de salir, escríbeme por aquí para confirmar y estar pendiente de tu llegada."
+        )
 
     if estado["dia"]:
-        return "Perfecto 😊 ¿A qué hora te queda bien?"
+        return (
+            f"¡Perfecto! 🙌 Coordinamos la visita a {nombre} para el "
+            f"{estado['dia']} 🏡📍. ¿A qué hora te queda mejor llegar?"
+        )
 
     if estado["hora"]:
-        return "Perfecto 😊 ¿Qué día te queda bien?"
+        return (
+            f"¡Perfecto! 🙌 Podemos coordinar la visita a {nombre} a las "
+            f"{estado['hora']} 🏡📍. ¿Qué día te queda mejor?"
+        )
 
-    return "Claro 😊 ¿Qué día te gustaría visitar?"
-
+    return (
+        f"¡Claro! 🙌 Con gusto coordinamos una visita a {nombre} 🏡📍. "
+        "¿Qué día te gustaría ir?"
+    )
 
 
 def cita_ya_cerrada(numero):
@@ -2519,22 +2178,6 @@ def enviar_ubicacion_proyecto(numero, proyecto):
 
 
 
-def marcar_multimedia_pendiente(numero):
-    estado = obtener_estado_conversacion(numero)
-    estado["multimedia_pendiente"] = True
-
-
-def limpiar_multimedia_pendiente(numero):
-    estado = obtener_estado_conversacion(numero)
-    estado["multimedia_pendiente"] = False
-
-
-def multimedia_pendiente(numero):
-    return bool(
-        obtener_estado_conversacion(numero).get("multimedia_pendiente")
-    )
-
-
 def pide_fotos(texto):
     t = texto.lower()
 
@@ -2734,71 +2377,6 @@ REGLA CRITICA: NUNCA MEZCLAR PROYECTOS
 
 
 
-
-============================================================
-REGLA CRITICA: RESPONDER COMO VENDEDOR, NO COMO MENU
-============================================================
-
-Interpreta la intención REAL del cliente usando el mensaje actual, el historial,
-el proyecto activo y lo que ya se le respondió o envió.
-
-Si el cliente hace una pregunta de seguimiento, responde ESA pregunta directamente.
-NO repitas una explicación completa que ya acabas de dar si no hace falta.
-
-Ejemplos:
-- Si ya se envió una cotización y pregunta:
-  "¿Ese es el precio de un lote plano?"
-  responde brevemente que sí: el precio mostrado corresponde a esa medida/fase
-  y la topografía no cambia el precio del lote.
-  NO vuelvas a explicar todas las ventajas de plano vs inclinado.
-  NO vuelvas a enviar cotizaciones por esa sola pregunta.
-
-- Si pregunta "¿Y uno inclinado cuesta más?"
-  responde que no, el precio del lote no cambia por la topografía.
-  Aclara solo si ayuda que el costo de construcción sí puede variar por diseño,
-  cimentación o movimiento de tierra.
-
-- Si dice "Prefiero plano" o "Prefiero inclinado",
-  reconoce la preferencia y continúa sin repetir todo lo anterior.
-
-Cuando la información disponible NO alcance para responder con certeza:
-- NO inventes;
-- NO repitas una respuesta anterior;
-- responde de forma breve:
-  "Déjame revisar exactamente lo que me solicitas y te lo envío en un momento 😊"
-  o una variante natural equivalente.
-
-============================================================
-REGLA DE TOPOGRAFIA: PLANO VS CROQUIS
-============================================================
-
-Distingue SIEMPRE:
-
-1. PLANO / CROQUIS / MAPA:
-   "mándame el plano", "plano del proyecto", "croquis",
-   "mapa de lotes", "distribución de lotes".
-   Esto se refiere al documento o PDF.
-
-2. TERRENO PLANO / LLANO:
-   "lote plano", "terreno plano", "quiero uno plano",
-   "¿ese precio es de un lote plano?", "lote inclinado",
-   "terreno quebrado", "topografía".
-   Esto se refiere a la TOPOGRAFÍA, no al PDF.
-
-Datos oficiales sobre topografía:
-- Buenaventura Cuyotenango: los lotes se manejan en topografía plana.
-- Palmeras San Miguel: los lotes se manejan en topografía plana.
-- Vista Hermosa: hay lotes planos y también lotes quebrados/inclinados.
-- El precio de venta del lote NO cambia por ser plano, inclinado o quebrado.
-- El precio depende de la medida y fase correspondiente.
-- Terreno plano: suele facilitar diseños convencionales, accesos, patios
-  y puede requerir menos adaptación inicial.
-- Terreno inclinado/quebrado: puede aprovecharse para diseños escalonados,
-  varios niveles, terrazas o arquitectura adaptada a la pendiente.
-- El costo de construcción sí puede variar según diseño, cimentación
-  y movimiento de tierra.
-- Si el cliente expresa preferencia, respóndele sobre esa preferencia sin repetir
-  información innecesaria.
 
 REGLA DE AUDIOS:
 Las notas de voz se transcriben automáticamente y el texto transcrito entra
@@ -3009,19 +2587,15 @@ Cuando ya exista día y hora definidos para una visita:
 - Si el cliente solo dice "gracias", responde breve, por ejemplo: "¡Con gusto! 🙌 Nos vemos el jueves."
 
 REGLA DE RESPUESTAS CORTAS Y NO REDUNDANTES:
-- En WhatsApp prioriza respuestas MUY fáciles de leer.
-- Como regla general usa 1 a 3 oraciones cortas.
-- Da primero el dato que el cliente pidió.
-- Añade solo UN beneficio o contexto si realmente ayuda.
-- Haz como máximo UNA pregunta sencilla al final.
-- NO mandes listas largas salvo que el cliente pida varios datos a la vez.
-- NO repitas ubicación, precios, amenidades, financiamiento y requisitos en cada respuesta.
-- Si el cliente ya eligió un proyecto, NO vuelvas a preguntarle de cuál proyecto habla.
-- Si el cliente pidió fotos/videos y luego responde únicamente con el nombre del proyecto,
-  entiende que está respondiendo a tu pregunta y envía el material; no preguntes qué quiere saber.
-- Si la conversación está cerca de cerrar una visita, deja de vender y coordina únicamente día y hora.
-- Si pregunta cuándo puedes atenderlo, responde que a la hora que él disponga.
-- Cuando ya haya día y hora, confirma brevemente y termina.
+- Responde primero y directamente a la pregunta actual.
+- No repitas información que ya se dio en los últimos mensajes.
+- No vuelvas a explicar requisitos, financiamiento, ubicación, amenidades o precios si el cliente ya pasó a otra etapa.
+- Haz como máximo UNA pregunta de avance al final.
+- Si el cliente muestra intención de visita, deja de ofrecer información y coordina la visita.
+- Si ya tiene día de visita, pregunta únicamente la hora.
+- Si ya tiene día y hora, confirma la visita brevemente.
+- Evita párrafos largos cuando una respuesta de 1 a 3 oraciones resuelve la duda.
+- Usa emojis de forma natural, normalmente 1 a 3 por respuesta.
 
 REGLA DE PLAZOS:
 Si el cliente menciona directamente un plazo de 1 a 8 años o su equivalente
@@ -3926,8 +3500,8 @@ Debes:
         print(error)
 
         return (
-            "Claro 😊 Déjame revisar exactamente lo que me solicitas "
-            "y te lo envío en un momento."
+            "Disculpa 😊 tuve un pequeño inconveniente al procesar "
+            "tu mensaje. Inténtalo nuevamente en un momento 🙌"
         )
 
 
@@ -4309,27 +3883,6 @@ def procesar_imagen_o_video_cliente(numero, mensaje, tipo_mensaje):
                 caption
             )
 
-        estado_topografia = obtener_estado_conversacion(numero)
-        proyecto_topografia = obtener_proyecto_actual(numero)
-
-        # Si el cliente viene de escoger topografía y manda una captura de un lote,
-        # podemos responder con la regla oficial del proyecto.
-        if estado_topografia.get("topografia_en_conversacion"):
-            if proyecto_topografia in {"palmeras", "buenaventura"} and not caption:
-                return (
-                    "Perfecto 😊 Recibí la captura. En este proyecto los lotes se "
-                    "manejan en topografía plana. Si me escribes también el número "
-                    "del lote, te ayudo a seguir revisando esa opción. 🏡"
-                )
-
-            if proyecto_topografia == "vista_hermosa" and not caption:
-                return (
-                    "Perfecto 😊 Recibí la captura. En Vista Hermosa hay lotes planos "
-                    "y quebrados, así que para darte seguridad prefiero confirmar la "
-                    "topografía exacta de esa opción. Déjame revisarlo y te lo envío "
-                    "en un momento."
-                )
-
         archivo, mime = obtener_media_whatsapp(
             media_id
         )
@@ -4541,12 +4094,6 @@ def enviar_planos_solicitados(numero, proyecto, texto_cliente):
 
     # La explicación de colores debe acompañar SIEMPRE cualquier envío de planos.
     enviar_whatsapp(numero, texto_leyenda_planos())
-
-    # Después de cualquier plano, abrimos la conversación sobre topografía
-    # y recordamos que la siguiente respuesta corta puede ser "plano" o "quebrado".
-    enviar_whatsapp(numero, mensaje_topografia_despues_de_plano())
-    marcar_pregunta_topografia(numero)
-
     return enviados > 0
 
 
@@ -4765,14 +4312,11 @@ def enviar_multimedia_del_proyecto(
     """
 
     if not proyecto:
-        marcar_multimedia_pendiente(numero)
         enviar_whatsapp(
             numero,
-            "Claro 😊 ¿De cuál proyecto quieres ver las fotos y videos?"
+            "¡Claro! 📸🎥 ¿De cuál proyecto quieres ver el material?"
         )
         return
-
-    limpiar_multimedia_pendiente(numero)
 
     nombres = {
         "palmeras": "Palmeras San Miguel",
@@ -5016,59 +4560,6 @@ def enviar_cotizacion_del_proyecto(numero, proyecto, medida=None):
     )
 
 # ============================================================
-# SEGUIMIENTO AUTOMATICO POR INACTIVIDAD - PRUEBA
-# ============================================================
-
-# PRUEBA: 60 segundos.
-# PRODUCCION: cambiar a 8 * 60 * 60 (8 horas).
-SEGUIMIENTO_SEGUNDOS = 60
-
-SEGUIMIENTO_TEXTO = (
-    "Hola 👋😊 Solo paso por aquí.\n\n"
-    "Quizá no ha tenido tiempo de revisar con calma la información de los terrenos "
-    "que le envié 🏡. No hay problema.\n\n"
-    "Cuando pueda verla, escríbame. Si alguna opción le interesa, con gusto le ayudo "
-    "a hacer números para buscar una cuota cómoda para usted ✅\n\n"
-    "👉 ¿Qué cuota mensual le quedaría cómoda?"
-)
-
-seguimiento_version = {}
-lock_seguimiento = Lock()
-
-
-def programar_seguimiento_inactividad(numero):
-    """
-    Programa un seguimiento. Si el cliente escribe de nuevo antes del tiempo,
-    la versión anterior queda cancelada automáticamente.
-    """
-    with lock_seguimiento:
-        version = seguimiento_version.get(numero, 0) + 1
-        seguimiento_version[numero] = version
-
-    def esperar_y_enviar():
-        time.sleep(SEGUIMIENTO_SEGUNDOS)
-
-        with lock_seguimiento:
-            if seguimiento_version.get(numero) != version:
-                return
-
-        # Solo enviar si ya existe conversación real con una respuesta del bot.
-        historial = obtener_historial(numero)
-        if not any(item.get("role") == "assistant" for item in historial):
-            return
-
-        enviar_whatsapp(numero, SEGUIMIENTO_TEXTO)
-        guardar_mensaje(numero, "assistant", SEGUIMIENTO_TEXTO)
-
-        # Marcar esta versión como consumida para que se envíe una sola vez.
-        with lock_seguimiento:
-            if seguimiento_version.get(numero) == version:
-                seguimiento_version[numero] = version + 1
-
-    Thread(target=esperar_y_enviar, daemon=True).start()
-
-
-# ============================================================
 # RECIBIR MENSAJES DE WHATSAPP
 # ============================================================
 
@@ -5185,69 +4676,6 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
             texto_cliente
         )
 
-        # CONTINUACIÓN DE FOTOS/VIDEOS PENDIENTES
-        # Ejemplo:
-        # Cliente: "Me puede fotos"
-        # Bot: "¿De cuál proyecto?"
-        # Cliente: "Palmeras San Miguel"
-        # => enviar el material inmediatamente, sin volver a preguntar qué desea.
-        if multimedia_pendiente(numero_cliente) and proyecto:
-            guardar_mensaje(numero_cliente, "user", texto_cliente)
-            guardar_mensaje(
-                numero_cliente,
-                "assistant",
-                f"Se envió el material multimedia del proyecto {proyecto}."
-            )
-
-            if procesamiento_sigue_vigente(numero_cliente, message_id):
-                enviar_multimedia_del_proyecto(
-                    numero_cliente,
-                    proyecto,
-                    enviar_fotos=True,
-                    enviar_videos=True
-                )
-            return
-
-        # SEGUIMIENTO DE TOPOGRAFÍA DESPUÉS DE ENVIAR PLANOS
-        # Tiene prioridad para que "plano" no vuelva a interpretarse como el PDF.
-        respuesta_pref_topografia = respuesta_preferencia_topografia(
-            numero_cliente,
-            texto_cliente,
-            proyecto
-        )
-        if respuesta_pref_topografia:
-            guardar_mensaje(numero_cliente, "user", texto_cliente)
-            guardar_mensaje(numero_cliente, "assistant", respuesta_pref_topografia)
-            if procesamiento_sigue_vigente(numero_cliente, message_id):
-                enviar_whatsapp(numero_cliente, respuesta_pref_topografia)
-            return
-
-        # Si ya estamos hablando de topografía y manda un número de lote.
-        respuesta_lote_topografia = respuesta_revision_lote_topografia(
-            numero_cliente,
-            proyecto,
-            texto_cliente
-        )
-        if respuesta_lote_topografia:
-            guardar_mensaje(numero_cliente, "user", texto_cliente)
-            guardar_mensaje(numero_cliente, "assistant", respuesta_lote_topografia)
-            if procesamiento_sigue_vigente(numero_cliente, message_id):
-                enviar_whatsapp(numero_cliente, respuesta_lote_topografia)
-            return
-
-        # Si pregunta si el lote elegido es quebrado/inclinado.
-        respuesta_quebrado = respuesta_si_pregunta_quebrado(
-            numero_cliente,
-            proyecto,
-            texto_cliente
-        )
-        if respuesta_quebrado:
-            guardar_mensaje(numero_cliente, "user", texto_cliente)
-            guardar_mensaje(numero_cliente, "assistant", respuesta_quebrado)
-            if procesamiento_sigue_vigente(numero_cliente, message_id):
-                enviar_whatsapp(numero_cliente, respuesta_quebrado)
-            return
-
         # BANCO / FINANCIAMIENTO PROPIO - PRIORIDAD ABSOLUTA
         # Si la frase menciona banco + financiamiento, nunca debe caer en cotizaciones.
         if pregunta_banco_financiamiento(texto_cliente):
@@ -5316,25 +4744,6 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
 
             return
 
-        # TOPOGRAFÍA DEL TERRENO - RESPUESTA INTELIGENTE
-        # "lote plano" significa terreno llano; NO debe enviar el PDF/croquis.
-        if pregunta_topografia_terreno(texto_cliente):
-            respuesta = generar_respuesta(
-                numero_cliente,
-                texto_cliente
-            )
-
-            if not respuesta or not respuesta.strip():
-                respuesta = (
-                    "Claro 😊 Déjame revisar exactamente lo que me solicitas "
-                    "y te lo envío en un momento."
-                )
-
-            if procesamiento_sigue_vigente(numero_cliente, message_id):
-                enviar_whatsapp(numero_cliente, respuesta)
-
-            return
-
         # PLANOS / MAPA DE LOTES - PRIORIDAD ALTA
         # Usa los PDF públicos de GitHub Pages. Si el archivo se actualiza
         # conservando el mismo nombre, el bot seguirá enviando la versión nueva.
@@ -5356,7 +4765,7 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
             guardar_mensaje(
                 numero_cliente,
                 "assistant",
-                f"Se enviaron los planos de {nombre_proyecto_plano(proyecto)}, la leyenda de colores y la pregunta sobre topografía."
+                f"Se enviaron los planos de {nombre_proyecto_plano(proyecto)} y la leyenda de colores."
             )
 
             if procesamiento_sigue_vigente(numero_cliente, message_id):
@@ -5712,9 +5121,6 @@ def recibir_mensaje():
             numero_cliente,
             message_id
         )
-
-        # Reinicia el contador de seguimiento con cada mensaje nuevo del cliente.
-        programar_seguimiento_inactividad(numero_cliente)
 
         Thread(
             target=procesar_mensaje_en_segundo_plano,
