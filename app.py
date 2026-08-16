@@ -6565,6 +6565,9 @@ CRM_HTML = r"""
         let ultimoEventoEntrante = null;
         const btnNotificaciones = document.getElementById("btn-notificaciones");
 
+        let pushRegistradoServidor = false;
+        let pushDevices = 0;
+
         function actualizarBotonNotificaciones() {
             if (!btnNotificaciones) return;
 
@@ -6574,13 +6577,22 @@ CRM_HTML = r"""
                 return;
             }
 
-            if (Notification.permission === "granted") {
-                btnNotificaciones.textContent = "🔔 Notificaciones activas";
-            } else if (Notification.permission === "denied") {
+            if (Notification.permission === "denied") {
                 btnNotificaciones.textContent = "🔕 Notificaciones bloqueadas";
-            } else {
-                btnNotificaciones.textContent = "🔔 Activar notificaciones";
+                return;
             }
+
+            if (Notification.permission === "granted" && pushRegistradoServidor) {
+                btnNotificaciones.textContent = `🔔 Activo en este teléfono (${pushDevices})`;
+                return;
+            }
+
+            if (Notification.permission === "granted") {
+                btnNotificaciones.textContent = "📱 Registrar este teléfono";
+                return;
+            }
+
+            btnNotificaciones.textContent = "🔔 Activar notificaciones";
         }
 
         function urlBase64ToUint8Array(base64String) {
@@ -6590,27 +6602,53 @@ CRM_HTML = r"""
             return Uint8Array.from([...rawData].map(ch => ch.charCodeAt(0)));
         }
 
-        async function activarPush() {
+        async function sincronizarPush({
+            pedirPermiso = false,
+            mostrarMensaje = false
+        } = {}) {
             if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
-                alert("Este navegador no permite notificaciones push. Prueba Chrome o Edge actualizado.");
-                return;
+                throw new Error(
+                    "Este navegador no permite Web Push. Usa Chrome actualizado."
+                );
             }
 
-            const permiso = await Notification.requestPermission();
-            actualizarBotonNotificaciones();
-            if (permiso !== "granted") return;
+            let permiso = Notification.permission;
 
-            const configResp = await fetch("/crm/push/config");
+            if (pedirPermiso && permiso !== "granted") {
+                permiso = await Notification.requestPermission();
+            }
+
+            if (permiso !== "granted") {
+                pushRegistradoServidor = false;
+                actualizarBotonNotificaciones();
+                return {ok: false, devices: 0, permiso};
+            }
+
+            const configResp = await fetch("/crm/push/config", {
+                cache: "no-store"
+            });
+
+            if (!configResp.ok) {
+                throw new Error("No pude obtener la configuración Push del servidor.");
+            }
+
             const config = await configResp.json();
+
             if (!config.publicKey) {
-                alert("Faltan las llaves VAPID en Render. Configúralas y vuelve a intentar.");
-                return;
+                throw new Error("Falta VAPID_PUBLIC_KEY en Render.");
             }
 
-            const registro = await navigator.serviceWorker.register("/crm-sw.js");
-            await navigator.serviceWorker.ready;
+            // Registrar SW y esperar hasta que realmente esté activo.
+            await navigator.serviceWorker.register("/crm-sw.js", {
+                scope: "/"
+            });
 
+            const registro = await navigator.serviceWorker.ready;
+
+            // Recuperar una suscripción anterior si existe.
             let sub = await registro.pushManager.getSubscription();
+
+            // Si no existe, crearla usando la llave pública VAPID.
             if (!sub) {
                 sub = await registro.pushManager.subscribe({
                     userVisibleOnly: true,
@@ -6618,17 +6656,54 @@ CRM_HTML = r"""
                 });
             }
 
+            if (!sub || !sub.endpoint) {
+                throw new Error("Chrome no devolvió una suscripción Push válida.");
+            }
+
+            // IMPORTANTE:
+            // Aunque Chrome ya estuviera suscrito, SIEMPRE mandamos esa
+            // suscripción otra vez al servidor. Esto recupera el registro
+            // después de un deploy/reinicio de Render.
             const resp = await fetch("/crm/push/subscribe", {
                 method: "POST",
-                headers: {"Content-Type": "application/json"},
+                headers: {
+                    "Content-Type": "application/json",
+                    "Cache-Control": "no-cache"
+                },
                 body: JSON.stringify(sub.toJSON())
             });
 
-            if (!resp.ok) throw new Error("No se pudo guardar la suscripción");
-            btnNotificaciones.textContent = "🔔 Notificaciones activas";
+            const data = await resp.json().catch(() => ({}));
 
-            new Notification("CRM Gabriel 🏡", {
-                body: "Este dispositivo ya recibirá mensajes de clientes."
+            if (!resp.ok || !data.ok) {
+                throw new Error(
+                    data.error || "No se pudo guardar el teléfono en el servidor."
+                );
+            }
+
+            pushRegistradoServidor = true;
+            pushDevices = Number(data.devices || 1);
+            actualizarBotonNotificaciones();
+
+            if (mostrarMensaje) {
+                alert(
+                    `✅ Teléfono registrado correctamente.\n\n` +
+                    `Dispositivos suscritos: ${pushDevices}`
+                );
+            }
+
+            return {
+                ok: true,
+                devices: pushDevices,
+                subscription: sub
+            };
+        }
+
+
+        async function activarPush() {
+            return sincronizarPush({
+                pedirPermiso: true,
+                mostrarMensaje: true
             });
         }
 
@@ -6649,6 +6724,19 @@ CRM_HTML = r"""
                     btnProbarPush.disabled = true;
                     btnProbarPush.textContent = "⏳ Probando...";
 
+                    // Primero garantizamos que ESTE teléfono esté registrado
+                    // en el servidor antes de intentar el push.
+                    const sync = await sincronizarPush({
+                        pedirPermiso: true,
+                        mostrarMensaje: false
+                    });
+
+                    if (!sync.ok) {
+                        throw new Error(
+                            "No se pudo registrar este teléfono para recibir Push."
+                        );
+                    }
+
                     const resp = await fetch("/crm/push/test", {
                         method: "POST",
                         headers: {"Content-Type": "application/json"}
@@ -6657,7 +6745,11 @@ CRM_HTML = r"""
                     const data = await resp.json();
 
                     if (data.ok) {
-                        alert("✅ El servidor envió la notificación. Revisa tu teléfono.");
+                        alert(
+                            "✅ El servidor envió la notificación.\n\n" +
+                            "Dispositivos suscritos: " + (data.devices ?? sync.devices) +
+                            "\n\nAhora revisa la barra de notificaciones del teléfono."
+                        );
                     } else {
                         alert(
                             "❌ No se pudo enviar.\n\n" +
@@ -6676,6 +6768,25 @@ CRM_HTML = r"""
         }
 
         actualizarBotonNotificaciones();
+
+        // Si este teléfono YA dio permiso anteriormente, al abrir el CRM
+        // volvemos a registrar silenciosamente su PushSubscription en Render.
+        // No muestra popups ni solicita permiso nuevo.
+        if (
+            "Notification" in window &&
+            Notification.permission === "granted" &&
+            "serviceWorker" in navigator &&
+            "PushManager" in window
+        ) {
+            sincronizarPush({
+                pedirPermiso: false,
+                mostrarMensaje: false
+            }).catch(err => {
+                pushRegistradoServidor = false;
+                actualizarBotonNotificaciones();
+                console.error("AUTO-SYNC PUSH:", err);
+            });
+        }
 
         function procesarNotificaciones(eventos) {
             if (!Array.isArray(eventos) || eventos.length === 0) return;
@@ -6910,6 +7021,20 @@ def crm_push_subscribe():
     print("WEB PUSH SUSCRIPCION GUARDADA:", endpoint[:90], "| dispositivos:", devices)
 
     return jsonify({"ok": True, "devices": devices})
+
+
+@app.route("/crm/push/devices", methods=["GET"])
+def crm_push_devices():
+    if not crm_autorizado():
+        return crm_pedir_login()
+
+    with lock_push:
+        devices = len(crm_push_subscriptions)
+
+    return jsonify({
+        "ok": True,
+        "devices": devices
+    })
 
 
 @app.route("/crm/push/test", methods=["POST"])
