@@ -1882,6 +1882,179 @@ def respuesta_punto_encuentro(numero, proyecto):
 
 
 
+
+def pregunta_proceso_compra(texto):
+    t = normalizar_texto_topografia(texto)
+    frases = [
+        "proceso de compra", "como se compra", "como comprar",
+        "como puedo comprar", "como hago para comprar",
+        "que necesito para comprar", "que se necesita para comprar",
+        "como es la compra", "como funciona la compra",
+        "cual es el proceso", "cuál es el proceso"
+    ]
+    return any(f in t for f in frases)
+
+
+def respuesta_proceso_compra(proyecto):
+    datos = {
+        "buenaventura": {
+            "nombre": "Buenaventura Cuyotenango",
+            "enganche": "Q6,000",
+            "financiamiento": "de 2 a 8 años",
+            "extra": "También hay un plan alternativo de 1 año sin intereses cuando esté vigente.",
+        },
+        "palmeras": {
+            "nombre": "Palmeras San Miguel",
+            "enganche": "Q6,000",
+            "financiamiento": "de 1 a 8 años",
+            "extra": "",
+        },
+        "vista_hermosa": {
+            "nombre": "Vista Hermosa",
+            "enganche": "Q6,000",
+            "financiamiento": "de 1 a 8 años",
+            "extra": "",
+        },
+    }
+
+    d = datos.get(proyecto)
+    if not d:
+        return (
+            "Claro 😊 Primero elegimos el lote y confirmamos disponibilidad. "
+            "Luego revisamos el enganche, el plan de pagos y los documentos necesarios. "
+            "¿De qué proyecto te interesa comprar? 🏡"
+        )
+
+    extra = f" {d['extra']}" if d["extra"] else ""
+
+    return (
+        f"Te cuento cómo es el proceso de compra en *{d['nombre']}* 🏡😊\\n\\n"
+        f"1️⃣ Eliges tu lote y medida 📐 y yo te ayudo a revisar disponibilidad, "
+        f"cotización y plan de pagos.\\n\\n"
+        f"2️⃣ Realizas el enganche 💰. En este proyecto es de *{d['enganche']}* "
+        f"y contamos con financiamiento propio {d['financiamiento']}. "
+        f"También puedes hacer abonos a capital.{extra}\\n\\n"
+        f"3️⃣ Firma y escrituración ✍️📄. Las escrituras son registradas y se entregan "
+        f"aproximadamente *3 meses después de haber cancelado el 100% del terreno*. ✅\\n\\n"
+        f"📋 *Requisitos para comprar:*\\n"
+        f"🇬🇹 Guatemala: DPI, recibo de luz o agua y constancia de ingresos.\\n"
+        f"🌎 Extranjero: DPI o pasaporte, un gestor en Guatemala y copia de remesa "
+        f"o comprobante de la forma de pago.\\n\\n"
+        f"😊 ¿Estás en Guatemala o en el extranjero?"
+    )
+
+
+def seguimiento_compra_respuesta_directa(texto, proyecto):
+    """
+    Maneja preguntas típicas que suelen venir después de explicar el proceso.
+    Devuelve None si no aplica.
+    """
+    t = normalizar_texto_topografia(texto)
+
+    # Guatemala / extranjero
+    if t in {"guatemala", "estoy en guatemala", "aqui en guatemala", "soy de guatemala"}:
+        return (
+            "Perfecto 😊🇬🇹 Necesitarías DPI, recibo de luz o agua y constancia de ingresos. "
+            "¿Quieres que revisemos primero qué lote te interesa? 🏡"
+        )
+
+    if any(x in t for x in [
+        "estados unidos", "usa", "eeuu", "extranjero", "afuera",
+        "estoy en usa", "estoy en estados unidos"
+    ]):
+        return (
+            "Claro 😊🇺🇸🇬🇹 Puedes comprar desde el extranjero. Necesitarías DPI o pasaporte, "
+            "un gestor en Guatemala y comprobante de remesa o forma de pago. "
+            "¿Quieres que te explique cómo iniciar?"
+        )
+
+    if "que es un gestor" in t or "qué es un gestor" in texto.lower():
+        return (
+            "Es una persona de confianza que tengas en Guatemala 😊. "
+            "Puede ser un familiar o conocido que te apoye con las gestiones necesarias."
+        )
+
+    # Project-specific payment facts
+    enganches = {
+        "buenaventura": "Q6,000",
+        "palmeras": "Q6,000",
+        "vista_hermosa": "Q6,000",
+    }
+    financiamientos = {
+        "buenaventura": "de 2 a 8 años",
+        "palmeras": "de 1 a 8 años",
+        "vista_hermosa": "de 1 a 8 años",
+    }
+
+    if any(x in t for x in [
+        "cuanto tengo que dar", "cuanto doy para empezar",
+        "cuanto es el enganche", "enganche"
+    ]):
+        e = enganches.get(proyecto)
+        if e:
+            return (
+                f"El enganche en este proyecto es de *{e}* 💰😊. "
+                "¿Quieres que te muestre las cuotas según el plazo que prefieras?"
+            )
+
+    if any(x in t for x in [
+        "puedo dar el enganche en pagos", "enganche en pagos",
+        "fraccionar el enganche", "pagar el enganche por partes"
+    ]):
+        if proyecto in {"buenaventura", "vista_hermosa"}:
+            return (
+                "Sí 😊 El enganche puede fraccionarse en 2 pagos mensuales. "
+                "¿Quieres que te muestre cómo quedarían las cuotas?"
+            )
+        return (
+            "Déjame revisar exactamente la condición del enganche para este proyecto "
+            "y te la confirmo en un momento 😊."
+        )
+
+    if any(x in t for x in ["trabajan con banco", "con banco", "banco"]):
+        f = financiamientos.get(proyecto)
+        return (
+            f"No necesitas banco 😊🏡 El financiamiento es propio de la empresa"
+            + (f" y se maneja {f}." if f else ".")
+        )
+
+    if any(x in t for x in ["abono a capital", "abonar a capital", "puedo abonar"]):
+        return "Sí 😊💰 Puedes realizar abonos a capital para reducir tu saldo pendiente."
+
+    if any(x in t for x in [
+        "cuando me dan las escrituras", "cuando entregan escrituras",
+        "cuando dan escritura", "cuando me dan escritura"
+    ]):
+        return (
+            "Las escrituras son registradas 📄✅ y se entregan aproximadamente "
+            "3 meses después de haber cancelado el 100% del terreno."
+        )
+
+    if any(x in t for x in [
+        "queda a mi nombre", "escritura a mi nombre", "a nombre de quien"
+    ]):
+        return "Sí 😊📄 La escritura del lote se realiza a nombre del comprador."
+
+    if any(x in t for x in [
+        "quiero comprar uno", "quiero uno", "me interesa comprar",
+        "quiero apartarlo", "quiero reservar"
+    ]):
+        return (
+            "Excelente 😊🏡 Primero revisemos cuál lote te interesa y confirmamos disponibilidad. "
+            "¿Qué medida estás buscando?"
+        )
+
+    if any(x in t for x in [
+        "lo voy a pensar", "lo pensare", "lo voy a revisar", "despues te digo"
+    ]):
+        return (
+            "Claro 😊 Revísalo con calma. Si te surge alguna duda sobre el terreno, "
+            "pagos o el proceso, con gusto te ayudo 🏡."
+        )
+
+    return None
+
+
 def pregunta_horario_para_visita(texto):
     t = texto.lower().strip()
 
@@ -3007,6 +3180,22 @@ Cuando ya exista día y hora definidos para una visita:
 - Termina el mensaje justo después de confirmar día, hora y proyecto.
 - Si el cliente luego hace una pregunta concreta, responde únicamente esa pregunta y NO cierres con otra pregunta.
 - Si el cliente solo dice "gracias", responde breve, por ejemplo: "¡Con gusto! 🙌 Nos vemos el jueves."
+
+REGLA DE PROCESO DE COMPRA Y SEGUIMIENTOS:
+- Si el cliente pregunta "cuál es el proceso de compra", "cómo se compra", "cómo comprar",
+  "qué necesito para comprar" o equivalente, explica el proceso del PROYECTO ACTIVO.
+- Cambia automáticamente nombre del proyecto, enganche y plazo de financiamiento según el proyecto.
+- No repitas el proceso completo si después hace una pregunta puntual.
+- Responde únicamente esa duda concreta y termina con como máximo una pregunta sencilla.
+- Si dice Guatemala, responde solo requisitos de Guatemala y siguiente paso.
+- Si dice Estados Unidos/extranjero, responde solo requisitos para extranjero y siguiente paso.
+- Si pregunta por gestor, explica solo qué es un gestor.
+- Si pregunta enganche, cuotas, banco, abonos a capital, escrituras o disponibilidad,
+  responde solo ese punto.
+- Si expresa intención alta ("quiero comprar", "quiero uno", "quiero apartarlo"),
+  deja de explicar y avanza a lote/medida/disponibilidad.
+- Si dice "lo voy a pensar", no presiones.
+- Si falta un dato oficial, no inventes: di que lo revisarás y se lo enviarás en un momento.
 
 REGLA DE RESPUESTAS CORTAS Y NO REDUNDANTES:
 - En WhatsApp prioriza respuestas MUY fáciles de leer.
@@ -5243,6 +5432,26 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
             guardar_mensaje(numero_cliente, "assistant", respuesta_quebrado)
             if procesamiento_sigue_vigente(numero_cliente, message_id):
                 enviar_whatsapp(numero_cliente, respuesta_quebrado)
+            return
+
+        # PROCESO DE COMPRA Y SEGUIMIENTOS DIRECTOS
+        respuesta_compra_directa = seguimiento_compra_respuesta_directa(
+            texto_cliente,
+            proyecto
+        )
+        if respuesta_compra_directa:
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta_compra_directa)
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta_compra_directa)
+            return
+
+        if pregunta_proceso_compra(texto_cliente):
+            respuesta = respuesta_proceso_compra(proyecto)
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta)
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta)
             return
 
         # BANCO / FINANCIAMIENTO PROPIO - PRIORIDAD ABSOLUTA
