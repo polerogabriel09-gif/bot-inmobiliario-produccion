@@ -18,6 +18,13 @@ except ImportError:
     webpush = None
     WebPushException = Exception
 
+try:
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives import serialization
+except Exception:
+    ec = None
+    serialization = None
+
 
 # ============================================================
 # CONFIGURACION
@@ -2782,14 +2789,55 @@ lock_crm = Lock()
 # y pulsar otra vez "Activar notificaciones" en el teléfono.
 crm_push_subscriptions = {}
 lock_push = Lock()
+ultimo_error_push = None
+ultimo_resultado_push = None
+
+
+def preparar_vapid_private_key():
+    key = (VAPID_PRIVATE_KEY or "").strip()
+    if not key:
+        return ""
+
+    try:
+        padding = "=" * ((4 - len(key) % 4) % 4)
+        raw = base64.urlsafe_b64decode(key + padding)
+
+        if len(raw) == 32 and ec is not None and serialization is not None:
+            private_value = int.from_bytes(raw, "big")
+            private_key = ec.derive_private_key(private_value, ec.SECP256R1())
+
+            der = private_key.private_bytes(
+                encoding=serialization.Encoding.DER,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption()
+            )
+
+            return base64.urlsafe_b64encode(der).decode().rstrip("=")
+    except Exception as exc:
+        print("VAPID conversion raw->DER:", exc)
+
+    return key
+
 
 def enviar_push_crm(numero, contenido):
-    """Envía una notificación Web Push a todos los dispositivos suscritos."""
-    if not webpush or not VAPID_PRIVATE_KEY:
-        return
+    global ultimo_error_push, ultimo_resultado_push
+
+    ultimo_error_push = None
+    ultimo_resultado_push = None
+
+    if not webpush:
+        ultimo_error_push = "pywebpush no está disponible en el servidor."
+        return {"ok": False, "error": ultimo_error_push, "enviadas": 0}
+
+    if not VAPID_PRIVATE_KEY:
+        ultimo_error_push = "VAPID_PRIVATE_KEY no está configurada."
+        return {"ok": False, "error": ultimo_error_push, "enviadas": 0}
+
+    private_key_compatible = preparar_vapid_private_key()
 
     proyecto = crm_nombre_proyecto(numero)
     proyecto_txt = f" · {proyecto}" if proyecto and proyecto != "Sin proyecto" else ""
+
     payload = json.dumps({
         "title": "🏡 Nuevo mensaje de cliente",
         "body": f"+{numero}{proyecto_txt}\n{str(contenido)[:180]}",
@@ -2800,28 +2848,63 @@ def enviar_push_crm(numero, contenido):
     with lock_push:
         subs = list(crm_push_subscriptions.items())
 
+    if not subs:
+        ultimo_error_push = "No hay teléfonos suscritos actualmente."
+        print("WEB PUSH:", ultimo_error_push)
+        return {"ok": False, "error": ultimo_error_push, "enviadas": 0}
+
+    enviadas = 0
+    errores = []
     vencidas = []
+
     for endpoint, sub in subs:
         try:
-            webpush(
+            respuesta = webpush(
                 subscription_info=sub,
                 data=payload,
-                vapid_private_key=VAPID_PRIVATE_KEY,
+                vapid_private_key=private_key_compatible,
                 vapid_claims={"sub": VAPID_SUBJECT},
-                ttl=300
+                ttl=300,
+                timeout=20
             )
+            status = getattr(respuesta, "status_code", None)
+            print("WEB PUSH OK:", status, endpoint[:70])
+            enviadas += 1
         except WebPushException as exc:
             status = getattr(getattr(exc, "response", None), "status_code", None)
-            print("WEB PUSH ERROR:", status, exc)
+            body = ""
+            try:
+                body = exc.response.text if exc.response is not None else ""
+            except Exception:
+                pass
+            msg = f"HTTP {status}: {exc}"
+            if body:
+                msg += f" | {body[:300]}"
+            print("WEB PUSH ERROR:", msg)
+            errores.append(msg)
             if status in (404, 410):
                 vencidas.append(endpoint)
         except Exception as exc:
-            print("WEB PUSH ERROR GENERAL:", exc)
+            msg = f"{type(exc).__name__}: {exc}"
+            print("WEB PUSH ERROR GENERAL:", msg)
+            errores.append(msg)
 
     if vencidas:
         with lock_push:
             for endpoint in vencidas:
                 crm_push_subscriptions.pop(endpoint, None)
+
+    if enviadas:
+        ultimo_resultado_push = f"{enviadas} notificación(es) enviada(s)."
+    if errores:
+        ultimo_error_push = " | ".join(errores[-3:])
+
+    return {
+        "ok": enviadas > 0,
+        "enviadas": enviadas,
+        "error": ultimo_error_push
+    }
+
 
 
 def crm_hora_actual():
@@ -6389,6 +6472,11 @@ CRM_HTML = r"""
                     style="background:#1f2937;color:white;border:1px solid #64748b;border-radius:8px;padding:7px 10px;cursor:pointer;">
                 📱 Activar notificaciones
             </button>
+            <button id="btn-probar-push"
+                    type="button"
+                    style="background:#065f46;color:white;border:1px solid #047857;border-radius:8px;padding:7px 10px;cursor:pointer;">
+                🧪 Probar móvil
+            </button>
             <a href="{{ url_for('crm') }}">Actualizar</a>
         </div>
     </div>
@@ -6550,6 +6638,40 @@ CRM_HTML = r"""
                     console.error(err);
                     alert("No se pudieron activar las notificaciones: " + err.message);
                 });
+            });
+        }
+
+        const btnProbarPush = document.getElementById("btn-probar-push");
+
+        if (btnProbarPush) {
+            btnProbarPush.addEventListener("click", async () => {
+                try {
+                    btnProbarPush.disabled = true;
+                    btnProbarPush.textContent = "⏳ Probando...";
+
+                    const resp = await fetch("/crm/push/test", {
+                        method: "POST",
+                        headers: {"Content-Type": "application/json"}
+                    });
+
+                    const data = await resp.json();
+
+                    if (data.ok) {
+                        alert("✅ El servidor envió la notificación. Revisa tu teléfono.");
+                    } else {
+                        alert(
+                            "❌ No se pudo enviar.\n\n" +
+                            (data.error || "Error desconocido") +
+                            "\n\nDispositivos suscritos: " +
+                            (data.devices ?? 0)
+                        );
+                    }
+                } catch (err) {
+                    alert("❌ Error probando push: " + err.message);
+                } finally {
+                    btnProbarPush.disabled = false;
+                    btnProbarPush.textContent = "🧪 Probar móvil";
+                }
             });
         }
 
@@ -6783,8 +6905,35 @@ def crm_push_subscribe():
 
     with lock_push:
         crm_push_subscriptions[endpoint] = sub
+        devices = len(crm_push_subscriptions)
 
-    return jsonify({"ok": True, "devices": len(crm_push_subscriptions)})
+    print("WEB PUSH SUSCRIPCION GUARDADA:", endpoint[:90], "| dispositivos:", devices)
+
+    return jsonify({"ok": True, "devices": devices})
+
+
+@app.route("/crm/push/test", methods=["POST"])
+def crm_push_test():
+    if not crm_autorizado():
+        return crm_pedir_login()
+
+    with lock_push:
+        devices = len(crm_push_subscriptions)
+
+    resultado = enviar_push_crm(
+        "PRUEBA",
+        "Esta es una prueba de notificación móvil del CRM Gabriel ✅"
+    )
+
+    return jsonify({
+        "ok": bool(resultado.get("ok")),
+        "enviadas": resultado.get("enviadas", 0),
+        "error": resultado.get("error"),
+        "devices": devices,
+        "pywebpush": bool(webpush),
+        "vapid_public": bool(VAPID_PUBLIC_KEY),
+        "vapid_private": bool(VAPID_PRIVATE_KEY)
+    })
 
 
 @app.route("/crm", methods=["GET"])
