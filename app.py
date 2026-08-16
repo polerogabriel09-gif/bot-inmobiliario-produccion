@@ -1,4 +1,4 @@
-from flask import Flask, request, Response, redirect, url_for, render_template_string
+from flask import Flask, request, Response, redirect, url_for, render_template_string, jsonify
 from openai import OpenAI
 from dotenv import load_dotenv
 import requests
@@ -6304,13 +6304,13 @@ CRM_HTML = r"""
 </head>
 <body>
     <div class="top">
-        <strong>🏡 CRM Gabriel</strong>
+        <strong>🏡 CRM Gabriel <span style="font-size:12px;color:#86efac;">● En vivo</span></strong>
         <a href="{{ url_for('crm') }}">Actualizar</a>
     </div>
 
     <div class="layout">
-        <aside class="sidebar">
-            <div class="sidebar-title">Conversaciones ({{ clientes|length }})</div>
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-title">Conversaciones (<span id="client-count">{{ clientes|length }}</span>)</div>
             {% if not clientes %}
                 <div style="padding:20px;color:#667085;">
                     Todavía no han entrado mensajes desde que se inició esta versión.
@@ -6357,7 +6357,7 @@ CRM_HTML = r"""
                 </div>
             {% endif %}
 
-            <div class="messages" id="messages">
+            <div class="messages" id="messages" data-numero="{{ seleccionado or '' }}">
                 {% for m in mensajes %}
                     <div class="row {{ m.direccion }}">
                         <div class="bubble">
@@ -6370,7 +6370,7 @@ CRM_HTML = r"""
 
             <div class="composer">
                 <form method="post" action="{{ url_for('crm_enviar', numero=seleccionado) }}">
-                    <textarea name="mensaje" placeholder="Escribe tu respuesta manual..." required></textarea>
+                    <textarea id="composer-text" name="mensaje" placeholder="Escribe tu respuesta manual..." required></textarea>
                     <button class="send" type="submit">Enviar</button>
                 </form>
             </div>
@@ -6385,7 +6385,136 @@ CRM_HTML = r"""
 
     <script>
         const box = document.getElementById("messages");
+        const composer = document.getElementById("composer-text");
         if (box) box.scrollTop = box.scrollHeight;
+
+        let lastSignature = "";
+
+        function escapeHtml(value) {
+            return String(value ?? "")
+                .replaceAll("&", "&amp;")
+                .replaceAll("<", "&lt;")
+                .replaceAll(">", "&gt;")
+                .replaceAll('"', "&quot;")
+                .replaceAll("'", "&#039;");
+        }
+
+        function renderMessages(messages) {
+            if (!box) return;
+
+            const signature = JSON.stringify(messages);
+            if (signature === lastSignature) return;
+            lastSignature = signature;
+
+            const nearBottom =
+                box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+
+            box.innerHTML = messages.map(m => `
+                <div class="row ${m.direccion}">
+                    <div class="bubble">
+                        ${escapeHtml(m.contenido).replaceAll("\n", "<br>")}
+                        <span class="time">${escapeHtml(m.hora)}</span>
+                    </div>
+                </div>
+            `).join("");
+
+            if (nearBottom || messages.length <= 3) {
+                box.scrollTop = box.scrollHeight;
+            }
+        }
+
+        function renderClients(clientes, seleccionado) {
+            const sidebar = document.getElementById("sidebar");
+            if (!sidebar) return;
+
+            const title = sidebar.querySelector(".sidebar-title");
+            const oldLinks = Array.from(sidebar.querySelectorAll(".chat-link"));
+            oldLinks.forEach(el => el.remove());
+
+            const empty = sidebar.querySelector(".crm-empty");
+            if (empty) empty.remove();
+
+            const count = document.getElementById("client-count");
+            if (count) count.textContent = clientes.length;
+
+            if (!clientes.length) {
+                const div = document.createElement("div");
+                div.className = "crm-empty";
+                div.style.padding = "20px";
+                div.style.color = "#667085";
+                div.textContent = "Todavía no han entrado mensajes desde que se inició esta versión.";
+                sidebar.appendChild(div);
+                return;
+            }
+
+            clientes.forEach(c => {
+                const a = document.createElement("a");
+                a.className = "chat-link" + (seleccionado === c.numero ? " active" : "");
+                a.href = "/crm?numero=" + encodeURIComponent(c.numero);
+                a.innerHTML = `
+                    <div>
+                        <span class="phone">+${escapeHtml(c.numero)}</span>
+                        <span class="status ${c.manual ? "manual" : "ai"}">
+                            ${c.manual ? "MANUAL" : "IA"}
+                        </span>
+                    </div>
+                    <div class="preview">${escapeHtml(c.preview)}</div>
+                    <div class="small">${escapeHtml(c.proyecto)}</div>
+                `;
+                sidebar.appendChild(a);
+            });
+        }
+
+        async function actualizarCRM() {
+            try {
+                const numero = box ? box.dataset.numero : "";
+                const url = numero
+                    ? "/crm/data?numero=" + encodeURIComponent(numero)
+                    : "/crm/data";
+
+                const res = await fetch(url, {
+                    method: "GET",
+                    cache: "no-store",
+                    headers: {
+                        "X-Requested-With": "XMLHttpRequest"
+                    }
+                });
+
+                if (!res.ok) return;
+
+                const data = await res.json();
+
+                renderClients(data.clientes || [], numero || null);
+
+                if (box && numero) {
+                    renderMessages(data.mensajes || []);
+                }
+
+                const toggle = document.querySelector(".toggle");
+                const notice = document.querySelector(".notice");
+
+                if (toggle && numero) {
+                    if (data.manual) {
+                        toggle.textContent = "▶ Activar IA";
+                        toggle.classList.remove("pause");
+                        toggle.classList.add("resume");
+                        if (notice) notice.style.display = "";
+                    } else {
+                        toggle.textContent = "⏸ Pausar IA";
+                        toggle.classList.remove("resume");
+                        toggle.classList.add("pause");
+                        if (notice) notice.style.display = "none";
+                    }
+                }
+            } catch (err) {
+                console.log("CRM polling:", err);
+            }
+        }
+
+        // Actualiza automáticamente sin interrumpir lo que estás escribiendo.
+        // No recarga la página completa.
+        actualizarCRM();
+        setInterval(actualizarCRM, 2500);
     </script>
 </body>
 </html>
@@ -6432,6 +6561,46 @@ def crm():
         manual=manual,
         proyecto_seleccionado=crm_nombre_proyecto(seleccionado) if seleccionado else ""
     )
+
+
+
+@app.route("/crm/data", methods=["GET"])
+def crm_data():
+    if not crm_autorizado():
+        return crm_pedir_login()
+
+    seleccionado = request.args.get("numero", "").strip() or None
+
+    with lock_crm:
+        numeros = list(crm_mensajes.keys())
+        numeros.sort(
+            key=lambda n: crm_ultima_actividad.get(n, 0),
+            reverse=True
+        )
+
+        clientes = []
+        for numero in numeros:
+            mensajes = crm_mensajes.get(numero, [])
+            ultimo = mensajes[-1]["contenido"] if mensajes else ""
+            clientes.append({
+                "numero": numero,
+                "preview": ultimo[:70],
+                "manual": numero in crm_modo_manual,
+                "proyecto": crm_nombre_proyecto(numero)
+            })
+
+        mensajes = list(
+            crm_mensajes.get(seleccionado, [])
+        ) if seleccionado else []
+
+        manual = seleccionado in crm_modo_manual if seleccionado else False
+
+    return jsonify({
+        "clientes": clientes,
+        "mensajes": mensajes,
+        "manual": manual,
+        "seleccionado": seleccionado
+    })
 
 
 @app.route("/crm/toggle/<numero>", methods=["POST"])
