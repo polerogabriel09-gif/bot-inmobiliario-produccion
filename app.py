@@ -781,7 +781,8 @@ def obtener_estado_conversacion(numero):
             "proyecto_actual": None,
             "esperando_preferencia_topografia": False,
             "preferencia_topografia": None,
-            "topografia_en_conversacion": False
+            "topografia_en_conversacion": False,
+            "multimedia_pendiente": False
         }
 
     return estado_conversacion[numero]
@@ -1873,31 +1874,28 @@ def respuesta_punto_encuentro(numero, proyecto):
 
     nombre = nombres.get(proyecto, "el proyecto")
 
-    sugerencias = {
-        "palmeras": (
-            "Lo más práctico es que nos encontremos directamente en Palmeras San Miguel 🏡📍. "
-            "Si te queda mejor un punto conocido, también podemos reunirnos en el Centro Comercial La Trinidad "
-            "y de ahí coordinamos para ir al proyecto."
-        ),
-        "vista_hermosa": (
-            "Lo más práctico es encontrarnos directamente en Vista Hermosa, sobre la CA-2 km 188 🏡📍. "
-            "Si prefieres otro punto cercano sobre la ruta, dime cuál te queda cómodo y lo coordinamos."
-        ),
-        "buenaventura": (
-            "Lo más práctico es encontrarnos directamente en Buenaventura Cuyotenango 🏡📍. "
-            "Como punto alternativo, podemos reunirnos en el Parque Central de Cuyotenango y de ahí ir al proyecto."
-        )
-    }
-
-    base = sugerencias.get(
-        proyecto,
-        f"Lo más práctico es encontrarnos directamente en {nombre} 🏡📍."
-    )
-
     return (
-        base
-        + " Si ya tienes otro lugar en mente, también me lo puedes indicar y lo coordinamos 👍"
+        f"Podemos encontrarnos directamente en {nombre} 😊📍. "
+        "Si necesitas otro punto, me lo indicas."
     )
+
+
+
+def pregunta_horario_para_visita(texto):
+    t = texto.lower().strip()
+
+    frases = [
+        "cuando me puede atender", "cuándo me puede atender",
+        "a que hora me puede atender", "a qué hora me puede atender",
+        "cuando me pueden atender", "cuándo me pueden atender",
+        "a que hora me pueden atender", "a qué hora me pueden atender",
+        "que horario tienen", "qué horario tienen",
+        "en que horario me atiende", "en qué horario me atiende",
+        "a que hora puedo llegar", "a qué hora puedo llegar",
+        "a que hora puedo ir", "a qué hora puedo ir"
+    ]
+
+    return any(f in t for f in frases)
 
 
 def detectar_intencion_visita(texto):
@@ -1912,7 +1910,7 @@ def detectar_intencion_visita(texto):
         "coordinar visita"
     ]
 
-    return any(f in t for f in frases)
+    return any(f in t for f in frases) or pregunta_horario_para_visita(texto)
 
 
 def extraer_dia_visita(texto):
@@ -1968,44 +1966,27 @@ def respuesta_visita(numero, texto, proyecto):
     if hora:
         estado["hora"] = hora
 
-    nombres = {
-        "palmeras": "Palmeras San Miguel",
-        "vista_hermosa": "Vista Hermosa",
-        "buenaventura": "Buenaventura Cuyotenango"
-    }
+    # Si pregunta cuándo/a qué hora podemos atenderlo, no ofrecemos otros puntos.
+    # Dejamos que el cliente elija el horario.
+    if pregunta_horario_para_visita(texto) and not hora:
+        if estado.get("dia"):
+            return "A la hora que tú dispongas 😊 ¿A qué hora te queda bien?"
+        return "A la hora que tú dispongas 😊 ¿Qué día te gustaría visitar?"
 
-    nombre = nombres.get(
-        estado.get("proyecto"),
-        "el proyecto"
-    )
-
-    # Día + hora = CITA CERRADA.
-    # No ofrecer nada más, no hacer preguntas y no agregar CTA.
+    # Día + hora = cita cerrada.
+    # El usuario pidió una confirmación mínima, sin volver a vender ni preguntar.
     if estado["dia"] and estado["hora"]:
         estado["cerrada"] = True
-
-        return (
-            f"¡Perfecto! 🙌 Queda coordinada tu visita a {nombre} "
-            f"para el {estado['dia']} a las {estado['hora']} 🏡📍. "
-            "Antes de salir, escríbeme por aquí para confirmar y estar pendiente de tu llegada."
-        )
+        return "Sí, perfecto 😊 Queda coordinado."
 
     if estado["dia"]:
-        return (
-            f"¡Perfecto! 🙌 Coordinamos la visita a {nombre} para el "
-            f"{estado['dia']} 🏡📍. ¿A qué hora te queda mejor llegar?"
-        )
+        return "Perfecto 😊 ¿A qué hora te queda bien?"
 
     if estado["hora"]:
-        return (
-            f"¡Perfecto! 🙌 Podemos coordinar la visita a {nombre} a las "
-            f"{estado['hora']} 🏡📍. ¿Qué día te queda mejor?"
-        )
+        return "Perfecto 😊 ¿Qué día te queda bien?"
 
-    return (
-        f"¡Claro! 🙌 Con gusto coordinamos una visita a {nombre} 🏡📍. "
-        "¿Qué día te gustaría ir?"
-    )
+    return "Claro 😊 ¿Qué día te gustaría visitar?"
+
 
 
 def cita_ya_cerrada(numero):
@@ -2537,6 +2518,22 @@ def enviar_ubicacion_proyecto(numero, proyecto):
 
 
 
+def marcar_multimedia_pendiente(numero):
+    estado = obtener_estado_conversacion(numero)
+    estado["multimedia_pendiente"] = True
+
+
+def limpiar_multimedia_pendiente(numero):
+    estado = obtener_estado_conversacion(numero)
+    estado["multimedia_pendiente"] = False
+
+
+def multimedia_pendiente(numero):
+    return bool(
+        obtener_estado_conversacion(numero).get("multimedia_pendiente")
+    )
+
+
 def pide_fotos(texto):
     t = texto.lower()
 
@@ -3011,15 +3008,19 @@ Cuando ya exista día y hora definidos para una visita:
 - Si el cliente solo dice "gracias", responde breve, por ejemplo: "¡Con gusto! 🙌 Nos vemos el jueves."
 
 REGLA DE RESPUESTAS CORTAS Y NO REDUNDANTES:
-- Responde primero y directamente a la pregunta actual.
-- No repitas información que ya se dio en los últimos mensajes.
-- No vuelvas a explicar requisitos, financiamiento, ubicación, amenidades o precios si el cliente ya pasó a otra etapa.
-- Haz como máximo UNA pregunta de avance al final.
-- Si el cliente muestra intención de visita, deja de ofrecer información y coordina la visita.
-- Si ya tiene día de visita, pregunta únicamente la hora.
-- Si ya tiene día y hora, confirma la visita brevemente.
-- Evita párrafos largos cuando una respuesta de 1 a 3 oraciones resuelve la duda.
-- Usa emojis de forma natural, normalmente 1 a 3 por respuesta.
+- En WhatsApp prioriza respuestas MUY fáciles de leer.
+- Como regla general usa 1 a 3 oraciones cortas.
+- Da primero el dato que el cliente pidió.
+- Añade solo UN beneficio o contexto si realmente ayuda.
+- Haz como máximo UNA pregunta sencilla al final.
+- NO mandes listas largas salvo que el cliente pida varios datos a la vez.
+- NO repitas ubicación, precios, amenidades, financiamiento y requisitos en cada respuesta.
+- Si el cliente ya eligió un proyecto, NO vuelvas a preguntarle de cuál proyecto habla.
+- Si el cliente pidió fotos/videos y luego responde únicamente con el nombre del proyecto,
+  entiende que está respondiendo a tu pregunta y envía el material; no preguntes qué quiere saber.
+- Si la conversación está cerca de cerrar una visita, deja de vender y coordina únicamente día y hora.
+- Si pregunta cuándo puedes atenderlo, responde que a la hora que él disponga.
+- Cuando ya haya día y hora, confirma brevemente y termina.
 
 REGLA DE PLAZOS:
 Si el cliente menciona directamente un plazo de 1 a 8 años o su equivalente
@@ -4763,11 +4764,14 @@ def enviar_multimedia_del_proyecto(
     """
 
     if not proyecto:
+        marcar_multimedia_pendiente(numero)
         enviar_whatsapp(
             numero,
-            "¡Claro! 📸🎥 ¿De cuál proyecto quieres ver el material?"
+            "Claro 😊 ¿De cuál proyecto quieres ver las fotos y videos?"
         )
         return
+
+    limpiar_multimedia_pendiente(numero)
 
     nombres = {
         "palmeras": "Palmeras San Miguel",
@@ -5126,6 +5130,29 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
             numero_cliente,
             texto_cliente
         )
+
+        # CONTINUACIÓN DE FOTOS/VIDEOS PENDIENTES
+        # Ejemplo:
+        # Cliente: "Me puede fotos"
+        # Bot: "¿De cuál proyecto?"
+        # Cliente: "Palmeras San Miguel"
+        # => enviar el material inmediatamente, sin volver a preguntar qué desea.
+        if multimedia_pendiente(numero_cliente) and proyecto:
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(
+                numero_cliente,
+                "assistant",
+                f"Se envió el material multimedia del proyecto {proyecto}."
+            )
+
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_multimedia_del_proyecto(
+                    numero_cliente,
+                    proyecto,
+                    enviar_fotos=True,
+                    enviar_videos=True
+                )
+            return
 
         # SEGUIMIENTO DE TOPOGRAFÍA DESPUÉS DE ENVIAR PLANOS
         # Tiene prioridad para que "plano" no vuelva a interpretarse como el PDF.
