@@ -19,6 +19,11 @@ except ImportError:
     WebPushException = Exception
 
 try:
+    import psycopg2
+except ImportError:
+    psycopg2 = None
+
+try:
     from cryptography.hazmat.primitives.asymmetric import ec
     from cryptography.hazmat.primitives import serialization
 except Exception:
@@ -38,6 +43,10 @@ VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+# PostgreSQL persistente para conservar las suscripciones Push
+# aunque Render se duerma, reinicie o haga deploy.
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 # Acceso al CRM. Configúralos en Render > Environment.
 CRM_USER = os.getenv("CRM_USER", "gabriel")
@@ -2785,12 +2794,171 @@ crm_evento_contador = 0
 lock_crm = Lock()
 
 # Suscripciones Web Push activadas desde tus dispositivos.
-# Nota: viven en RAM; si Render reinicia el servicio, solo debes abrir el CRM
-# y pulsar otra vez "Activar notificaciones" en el teléfono.
+# La RAM se mantiene como caché, pero PostgreSQL es la fuente persistente.
 crm_push_subscriptions = {}
 lock_push = Lock()
 ultimo_error_push = None
 ultimo_resultado_push = None
+_push_db_initialized = False
+lock_push_db = Lock()
+
+
+def push_db_disponible():
+    return bool(DATABASE_URL and psycopg2)
+
+
+def inicializar_push_db():
+    """Crea la tabla de suscripciones si todavía no existe."""
+    global _push_db_initialized
+
+    if not push_db_disponible():
+        return False
+
+    if _push_db_initialized:
+        return True
+
+    with lock_push_db:
+        if _push_db_initialized:
+            return True
+
+        try:
+            conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS crm_push_subscriptions (
+                            endpoint TEXT PRIMARY KEY,
+                            subscription JSONB NOT NULL,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                    """)
+                conn.commit()
+                _push_db_initialized = True
+                print("PUSH DB: tabla lista")
+                return True
+            finally:
+                conn.close()
+
+        except Exception as exc:
+            print("PUSH DB INIT ERROR:", exc)
+            return False
+
+
+def guardar_push_subscription(sub):
+    endpoint = (sub or {}).get("endpoint")
+    if not endpoint:
+        return False
+
+    # Caché RAM
+    with lock_push:
+        crm_push_subscriptions[endpoint] = sub
+
+    # Persistencia PostgreSQL
+    if not inicializar_push_db():
+        return False
+
+    try:
+        conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO crm_push_subscriptions (
+                        endpoint,
+                        subscription,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (%s, %s::jsonb, NOW(), NOW())
+                    ON CONFLICT (endpoint)
+                    DO UPDATE SET
+                        subscription = EXCLUDED.subscription,
+                        updated_at = NOW()
+                """, (
+                    endpoint,
+                    json.dumps(sub)
+                ))
+            conn.commit()
+            return True
+        finally:
+            conn.close()
+
+    except Exception as exc:
+        print("PUSH DB SAVE ERROR:", exc)
+        return False
+
+
+def cargar_push_subscriptions():
+    """
+    Devuelve todas las suscripciones conocidas.
+    Si hay PostgreSQL, siempre lee desde ahí para sobrevivir reinicios.
+    """
+    encontrados = {}
+
+    if inicializar_push_db():
+        try:
+            conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT endpoint, subscription
+                        FROM crm_push_subscriptions
+                        ORDER BY updated_at DESC
+                    """)
+                    for endpoint, subscription in cur.fetchall():
+                        # psycopg2 suele entregar JSONB como dict.
+                        if isinstance(subscription, str):
+                            try:
+                                subscription = json.loads(subscription)
+                            except Exception:
+                                continue
+
+                        if isinstance(subscription, dict):
+                            encontrados[endpoint] = subscription
+            finally:
+                conn.close()
+
+        except Exception as exc:
+            print("PUSH DB LOAD ERROR:", exc)
+
+    # Si DB está temporalmente caída, usamos la caché RAM.
+    if not encontrados:
+        with lock_push:
+            encontrados = dict(crm_push_subscriptions)
+    else:
+        with lock_push:
+            crm_push_subscriptions.clear()
+            crm_push_subscriptions.update(encontrados)
+
+    return encontrados
+
+
+def eliminar_push_subscription(endpoint):
+    if not endpoint:
+        return
+
+    with lock_push:
+        crm_push_subscriptions.pop(endpoint, None)
+
+    if inicializar_push_db():
+        try:
+            conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "DELETE FROM crm_push_subscriptions WHERE endpoint = %s",
+                        (endpoint,)
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as exc:
+            print("PUSH DB DELETE ERROR:", exc)
+
+
+def contar_push_devices():
+    return len(cargar_push_subscriptions())
+
 
 
 def preparar_vapid_private_key():
@@ -2842,11 +3010,14 @@ def enviar_push_crm(numero, contenido):
         "title": "🏡 Nuevo mensaje de cliente",
         "body": f"+{numero}{proyecto_txt}\n{str(contenido)[:180]}",
         "url": f"/crm?numero={numero}",
-        "tag": f"crm-{numero}-{int(time.time() * 1000)}"
+        # Tag único: Android no reemplaza una notificación anterior.
+        "tag": f"crm-{numero}-{time.time_ns()}"
     }, ensure_ascii=False)
 
-    with lock_push:
-        subs = list(crm_push_subscriptions.items())
+    # Leer suscripciones persistentes en CADA envío.
+    # Así un webhook que despierta a Render puede notificar aunque
+    # el CRM no haya sido abierto después del reinicio.
+    subs = list(cargar_push_subscriptions().items())
 
     if not subs:
         ultimo_error_push = "No hay teléfonos suscritos actualmente."
@@ -2865,7 +3036,11 @@ def enviar_push_crm(numero, contenido):
                 vapid_private_key=private_key_compatible,
                 vapid_claims={"sub": VAPID_SUBJECT},
                 ttl=300,
-                timeout=20
+                timeout=20,
+                headers={
+                    "Urgency": "high",
+                    "Topic": f"crm-{time.time_ns()}"
+                }
             )
             status = getattr(respuesta, "status_code", None)
             print("WEB PUSH OK:", status, endpoint[:70])
@@ -2890,9 +3065,8 @@ def enviar_push_crm(numero, contenido):
             errores.append(msg)
 
     if vencidas:
-        with lock_push:
-            for endpoint in vencidas:
-                crm_push_subscriptions.pop(endpoint, None)
+        for endpoint in vencidas:
+            eliminar_push_subscription(endpoint)
 
     if enviadas:
         ultimo_resultado_push = f"{enviadas} notificación(es) enviada(s)."
@@ -7014,13 +7188,22 @@ def crm_push_subscribe():
     if not endpoint or not keys.get("p256dh") or not keys.get("auth"):
         return jsonify({"ok": False, "error": "Suscripción inválida"}), 400
 
-    with lock_push:
-        crm_push_subscriptions[endpoint] = sub
-        devices = len(crm_push_subscriptions)
+    guardado = guardar_push_subscription(sub)
+    devices = contar_push_devices()
 
-    print("WEB PUSH SUSCRIPCION GUARDADA:", endpoint[:90], "| dispositivos:", devices)
+    print(
+        "WEB PUSH SUSCRIPCION:",
+        "PERSISTENTE" if guardado else "SOLO RAM",
+        endpoint[:90],
+        "| dispositivos:",
+        devices
+    )
 
-    return jsonify({"ok": True, "devices": devices})
+    return jsonify({
+        "ok": True,
+        "devices": devices,
+        "persistent": bool(guardado)
+    })
 
 
 @app.route("/crm/push/devices", methods=["GET"])
@@ -7028,12 +7211,25 @@ def crm_push_devices():
     if not crm_autorizado():
         return crm_pedir_login()
 
-    with lock_push:
-        devices = len(crm_push_subscriptions)
+    devices = contar_push_devices()
 
     return jsonify({
         "ok": True,
-        "devices": devices
+        "devices": devices,
+        "persistent": bool(push_db_disponible())
+    })
+
+
+@app.route("/crm/push/persistence", methods=["GET"])
+def crm_push_persistence():
+    if not crm_autorizado():
+        return crm_pedir_login()
+
+    return jsonify({
+        "database_configured": bool(DATABASE_URL),
+        "psycopg2_available": bool(psycopg2),
+        "database_ready": bool(inicializar_push_db()),
+        "devices": contar_push_devices()
     })
 
 
@@ -7042,8 +7238,7 @@ def crm_push_test():
     if not crm_autorizado():
         return crm_pedir_login()
 
-    with lock_push:
-        devices = len(crm_push_subscriptions)
+    devices = contar_push_devices()
 
     resultado = enviar_push_crm(
         "PRUEBA",
@@ -7057,7 +7252,8 @@ def crm_push_test():
         "devices": devices,
         "pywebpush": bool(webpush),
         "vapid_public": bool(VAPID_PUBLIC_KEY),
-        "vapid_private": bool(VAPID_PRIVATE_KEY)
+        "vapid_private": bool(VAPID_PRIVATE_KEY),
+        "database": bool(push_db_disponible())
     })
 
 
