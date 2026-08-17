@@ -1272,6 +1272,11 @@ def pide_plano(texto):
 
     t = normalizar_texto_topografia(texto)
 
+    # Si el cliente pregunta por disponibilidad de lotes, enviar el plano directamente.
+    # Evitamos usar esta regla cuando claramente habla de disponibilidad de agua.
+    if "disponibilidad" in t and "agua" not in t:
+        return True
+
     if any(x in t for x in [
         "croquis",
         "mapa del proyecto", "mapa de proyecto",
@@ -5274,11 +5279,8 @@ def enviar_planos_solicitados(numero, proyecto, texto_cliente):
     # La explicación de colores debe acompañar SIEMPRE cualquier envío de planos.
     enviar_whatsapp(numero, texto_leyenda_planos())
 
-    # Después de cualquier plano, abrimos la conversación sobre topografía
-    # y recordamos que la siguiente respuesta corta puede ser "plano" o "quebrado".
-    enviar_whatsapp(numero, mensaje_topografia_despues_de_plano())
-    marcar_pregunta_topografia(numero)
-
+    # No hacemos preguntas adicionales después del plano.
+    # Si el cliente pidió plano o disponibilidad, se entrega directamente.
     return enviados > 0
 
 
@@ -6176,7 +6178,7 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
             guardar_mensaje(
                 numero_cliente,
                 "assistant",
-                f"Se enviaron los planos de {nombre_proyecto_plano(proyecto)}, la leyenda de colores y la pregunta sobre topografía."
+                f"Se enviaron directamente los planos de {nombre_proyecto_plano(proyecto)} y la leyenda de colores."
             )
 
             if procesamiento_sigue_vigente(numero_cliente, message_id):
