@@ -690,6 +690,49 @@ def obtener_enganche_exacto(proyecto, texto):
         return None
     return datos.get("enganche")
 
+# ============================================================
+# IDENTIFICACION DEL PROYECTO DESDE ANUNCIOS DE META / CLICK-TO-WHATSAPP
+# ============================================================
+
+ANUNCIOS_META_PROYECTO = {
+    # Buenaventura Cuyotenango
+    "120248129659680634": "buenaventura",  # AD VID - 01 - BNV CUYO
+    "120248129290310634": "buenaventura",  # AD IMG - 01 - BNV CUYO
+
+    # Palmeras San Miguel
+    "120248129867550634": "palmeras",  # AD VID - 01 - PSM
+    "120248129884270634": "palmeras",  # AD VID - 02 - PSM
+    "120248129845750634": "palmeras",  # AD IMG - 01 - PSM
+    "120248129863630634": "palmeras",  # AD IMG - 02 - PSM
+
+    # Vista Hermosa
+    "120248129777940634": "vista_hermosa",  # AD VID - 01 - VTH
+    "120248129694970634": "vista_hermosa",  # AD IMG - 01 - VTH
+    "120248129773580634": "vista_hermosa",  # AD IMG - 02 - VTH
+}
+
+def proyecto_desde_referencia_anuncio(mensaje):
+    """Detecta el proyecto cuando WhatsApp incluye referral.source_id del anuncio."""
+    referral = (mensaje or {}).get("referral") or {}
+    source_id = str(referral.get("source_id") or "").strip()
+    if not source_id:
+        return None
+    proyecto = ANUNCIOS_META_PROYECTO.get(source_id)
+    if proyecto:
+        print(f"ANUNCIO META DETECTADO: {source_id} -> {proyecto}")
+    else:
+        print(f"ANUNCIO META SIN MAPEAR: {source_id}")
+    return proyecto
+
+def fijar_proyecto_desde_anuncio(numero, mensaje):
+    proyecto = proyecto_desde_referencia_anuncio(mensaje)
+    if not proyecto:
+        return None
+    estado = obtener_estado_conversacion(numero)
+    estado["proyecto_actual"] = proyecto
+    proyecto_activo[numero] = proyecto
+    return proyecto
+
 # Guarda qué proyecto está activo para cada número.
 proyecto_activo = {}
 
@@ -5983,6 +6026,11 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
                 mensaje_presentacion_inicial()
             )
             return
+
+        # Si el mensaje nació desde un anuncio Click-to-WhatsApp, fijamos primero
+        # el proyecto según referral.source_id. Después, si el cliente menciona
+        # explícitamente otro proyecto en el texto, esa mención tiene prioridad.
+        fijar_proyecto_desde_anuncio(numero_cliente, mensaje)
 
         # Mantener proyecto fijo por número.
         proyecto = actualizar_proyecto_activo(
