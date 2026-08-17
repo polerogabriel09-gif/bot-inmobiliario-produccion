@@ -5756,7 +5756,7 @@ def enviar_cotizacion_del_proyecto(numero, proyecto, medida=None):
 SEGUIMIENTO_SEGUNDOS = 60
 
 SEGUIMIENTO_TEXTO = (
-    "Hola 👋😊 Solo paso por aquí.\n\n"
+    "Hola 👋😊 Solo pasaba por aquí.\n\n"
     "Quizá no ha tenido tiempo de revisar con calma la información de los terrenos "
     "que le envié 🏡. No hay problema.\n\n"
     "Cuando pueda verla, escríbame. Si alguna opción le interesa, con gusto le ayudo "
