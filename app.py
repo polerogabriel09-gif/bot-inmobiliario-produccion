@@ -1,4 +1,4 @@
-from flask import Flask, request
+from flask import Flask, request, Response, redirect, url_for, render_template_string, jsonify
 from openai import OpenAI
 from dotenv import load_dotenv
 import requests
@@ -6,9 +6,29 @@ import os
 import base64
 import tempfile
 from threading import Thread, Lock
+import time
 import re
+import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
+
+try:
+    from pywebpush import webpush, WebPushException
+except ImportError:
+    webpush = None
+    WebPushException = Exception
+
+try:
+    import psycopg2
+except ImportError:
+    psycopg2 = None
+
+try:
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives import serialization
+except Exception:
+    ec = None
+    serialization = None
 
 
 # ============================================================
@@ -19,10 +39,44 @@ load_dotenv()
 
 app = Flask(__name__)
 
+# ============================================================
+# RITMO HUMANO DE ENVIO
+# ============================================================
+# Espera breve entre mensajes consecutivos para que la información
+# no llegue toda de golpe y la conversación se sienta más natural.
+PAUSA_ENTRE_ENVIOS = 1.5
+PAUSA_ENTRE_BLOQUES = 2.5
+
+def pausa_envio(segundos=PAUSA_ENTRE_ENVIOS):
+    time.sleep(segundos)
+
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+# PostgreSQL persistente para conservar las suscripciones Push
+# aunque Render se duerma, reinicie o haga deploy.
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+# ============================================================
+# NTFY - NOTIFICACIONES NATIVAS EN ANDROID
+# ============================================================
+NTFY_TOPIC = os.getenv("NTFY_TOPIC", "").strip()
+NTFY_SERVER = os.getenv("NTFY_SERVER", "https://ntfy.sh").rstrip("/")
+CRM_PUBLIC_URL = os.getenv(
+    "CRM_PUBLIC_URL",
+    "https://bot-inmobiliario-produccion.onrender.com/crm"
+).rstrip("/")
+
+# Acceso al CRM. Configúralos en Render > Environment.
+CRM_USER = os.getenv("CRM_USER", "gabriel")
+CRM_PASSWORD = os.getenv("CRM_PASSWORD")
+
+# Web Push para notificaciones reales en computadora y teléfono.
+VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY", "")
+VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "")
+VAPID_SUBJECT = os.getenv("VAPID_SUBJECT", "mailto:gabriel@example.com")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -247,7 +301,16 @@ def pide_cotizacion(texto):
         "cotizacion", "cotización", "cotizaciones",
         "cuota", "cuotas", "mensualidad", "mensualidades",
         "plan de pago", "plan de pagos",
-        "financiamiento", "financiado"
+        "financiamiento", "financiado",
+
+        # Si el cliente pide información general de un proyecto,
+        # tratamos la intención como solicitud de información comercial completa:
+        # resumen del proyecto + cotizaciones.
+        "informacion", "información",
+        "quiero informacion", "quiero información",
+        "dame informacion", "dame información",
+        "me da informacion", "me da información",
+        "info de", "información de", "informacion de"
     ]
 
     return any(p in t for p in palabras)
@@ -778,7 +841,11 @@ def enviar_presentacion_si_corresponde(numero, message_id=None):
 def obtener_estado_conversacion(numero):
     if numero not in estado_conversacion:
         estado_conversacion[numero] = {
-            "proyecto_actual": None
+            "proyecto_actual": None,
+            "esperando_preferencia_topografia": False,
+            "preferencia_topografia": None,
+            "topografia_en_conversacion": False,
+            "multimedia_pendiente": False
         }
 
     return estado_conversacion[numero]
@@ -842,6 +909,180 @@ def obtener_proyecto_actual(numero):
     return proyecto_activo.get(numero)
 
 
+def marcar_pregunta_topografia(numero):
+    estado = obtener_estado_conversacion(numero)
+    estado["esperando_preferencia_topografia"] = True
+    estado["topografia_en_conversacion"] = True
+
+
+def guardar_preferencia_topografia(numero, preferencia):
+    estado = obtener_estado_conversacion(numero)
+    estado["preferencia_topografia"] = preferencia
+    estado["esperando_preferencia_topografia"] = False
+    estado["topografia_en_conversacion"] = True
+
+
+def respuesta_preferencia_topografia(numero, texto, proyecto):
+    """
+    Maneja respuestas cortas a:
+    "¿Cómo prefieres tu terreno: plano o inclinado?"
+
+    Devuelve None cuando el mensaje no es una respuesta a esa pregunta.
+    """
+    estado = obtener_estado_conversacion(numero)
+
+    if not estado.get("esperando_preferencia_topografia"):
+        return None
+
+    t = normalizar_texto_topografia(texto)
+
+    # Solo tratamos respuestas cortas/claras como elección de topografía.
+    if len(t.split()) > 8:
+        return None
+
+    if any(x in t for x in [
+        "quebrado", "quebrada", "inclinado", "inclinada",
+        "con pendiente", "pendiente"
+    ]):
+        guardar_preferencia_topografia(numero, "inclinado")
+
+        if proyecto in {"palmeras", "buenaventura"}:
+            return (
+                "Perfecto 😊 En este proyecto los lotes se manejan en topografía plana. "
+                "Si buscas específicamente un terreno quebrado o inclinado para un diseño "
+                "especial, dímelo y te ayudo a revisar qué alternativa podemos ofrecerte. 🏡"
+            )
+
+        if proyecto == "vista_hermosa":
+            return (
+                "Perfecto 😊 En Vista Hermosa sí hay lotes planos y también algunos "
+                "quebrados/inclinados. Puedes revisar los planos y escoger las opciones "
+                "que te interesen; si buscas uno quebrado, te ayudo a identificar opciones "
+                "para que puedas escoger con más seguridad. 🏡"
+            )
+
+        return (
+            "Perfecto 😊 Si prefieres un lote quebrado o inclinado, dime qué opción "
+            "te interesa y te ayudo a revisarla."
+        )
+
+    # "plano", "un plano", "uno plano", "prefiero plano", etc.
+    if any(x in t for x in [
+        "plano", "plana", "llano", "llana"
+    ]):
+        guardar_preferencia_topografia(numero, "plano")
+
+        if proyecto in {"palmeras", "buenaventura"}:
+            return (
+                "Perfecto 😊 Puedes revisar el plano y la disponibilidad, escoger el lote "
+                "que más te guste y enviarme el número o una captura. En este proyecto los "
+                "lotes se manejan en topografía plana, así que con gusto te ayudo a revisar "
+                "la opción que elijas. 🏡"
+            )
+
+        if proyecto == "vista_hermosa":
+            return (
+                "Perfecto 😊 Puedes revisar los planos y la disponibilidad, escoger el lote "
+                "que más te guste y enviarme el número o una captura. En Vista Hermosa hay "
+                "lotes planos y también algunos quebrados, así que antes de asegurártelo "
+                "te confirmo la topografía exacta del lote que elijas. 🏡"
+            )
+
+        return (
+            "Perfecto 😊 Revisa el plano, escoge el lote que te interese y envíame "
+            "el número o una captura; te ayudo a confirmar su topografía."
+        )
+
+    return None
+
+
+def parece_numero_de_lote(texto):
+    """
+    Detecta referencias como 'lote 125', 'número de lote 125', '#125'.
+    Se usa únicamente cuando ya venimos hablando de topografía.
+    """
+    t = normalizar_texto_topografia(texto)
+
+    patrones = [
+        r"\blote\s*[#nº°.-]*\s*\d{1,5}\b",
+        r"\bnumero\s+(?:de\s+)?lote\s*[#nº°.-]*\s*\d{1,5}\b",
+        r"\bno\.?\s*\d{1,5}\b",
+        r"^#\s*\d{1,5}$"
+    ]
+
+    return any(re.search(p, t) for p in patrones)
+
+
+def respuesta_revision_lote_topografia(numero, proyecto, texto):
+    """
+    Responde cuando el cliente manda un número de lote dentro del seguimiento
+    de topografía.
+
+    Buenaventura y Palmeras: topografía plana según la regla comercial cargada.
+    Vista Hermosa: no inventamos el dato individual sin una tabla topográfica.
+    """
+    estado = obtener_estado_conversacion(numero)
+
+    if not estado.get("topografia_en_conversacion"):
+        return None
+
+    if not parece_numero_de_lote(texto):
+        return None
+
+    if proyecto in {"palmeras", "buenaventura"}:
+        return (
+            "Sí 😊 Ese lote se maneja en topografía plana. Si quieres, también puedo "
+            "ayudarte a revisar disponibilidad, precio o cuota de esa opción. 🏡"
+        )
+
+    if proyecto == "vista_hermosa":
+        return (
+            "Perfecto 😊 Ya tengo la referencia del lote. En Vista Hermosa hay opciones "
+            "planas y quebradas, así que para darte seguridad prefiero confirmarte la "
+            "topografía exacta de ese lote. Déjame revisarlo y te lo envío en un momento."
+        )
+
+    return (
+        "Perfecto 😊 Déjame revisar exactamente la topografía de ese lote "
+        "y te la confirmo en un momento."
+    )
+
+
+def pregunta_si_lote_es_quebrado(texto):
+    t = normalizar_texto_topografia(texto)
+    return (
+        any(x in t for x in ["quebrado", "quebrada", "inclinado", "inclinada"])
+        and any(x in t for x in ["este", "ese", "el que", "lote", "terreno"])
+        and any(x in t for x in ["es", "esta", "seria", "sera"])
+    )
+
+
+def respuesta_si_pregunta_quebrado(numero, proyecto, texto):
+    estado = obtener_estado_conversacion(numero)
+
+    if not estado.get("topografia_en_conversacion"):
+        return None
+
+    if not pregunta_si_lote_es_quebrado(texto):
+        return None
+
+    if proyecto in {"palmeras", "buenaventura"}:
+        return (
+            "No 😊 En este proyecto los lotes se manejan en topografía plana. "
+            "Si estás buscando específicamente una opción quebrada/inclinada, "
+            "dímelo y te ayudo a revisar alternativas."
+        )
+
+    if proyecto == "vista_hermosa":
+        return (
+            "Si lo que buscas es uno quebrado/inclinado, con gusto te ayudo a revisar "
+            "las opciones de Vista Hermosa que tengan ese tipo de topografía para que "
+            "puedas escoger. 😊🏡"
+        )
+
+    return None
+
+
 # ============================================================
 # PLANOS PUBLICADOS EN GITHUB PAGES
 # ============================================================
@@ -883,18 +1124,200 @@ PLANOS_PROYECTOS = {
 }
 
 
+def normalizar_texto_topografia(texto):
+    """Normaliza texto para detectar mejor intenciones de topografía."""
+    t = (texto or "").lower().strip()
+    reemplazos = {
+        "á": "a", "é": "e", "í": "i", "ó": "o", "ú": "u", "ü": "u"
+    }
+    for origen, destino in reemplazos.items():
+        t = t.replace(origen, destino)
+    return " ".join(t.split())
+
+
+def pregunta_topografia_terreno(texto):
+    """
+    Detecta cuando "plano" habla de la TOPOGRAFÍA del lote y no del PDF/croquis.
+    Debe ganar prioridad antes de pide_plano().
+    """
+    t = normalizar_texto_topografia(texto)
+
+    referencias_terreno = [
+        "lote", "lotes", "terreno", "terrenos",
+        "topografia", "topografico", "topografica"
+    ]
+
+    referencias_forma = [
+        "plano", "planos", "plana", "planas",
+        "llano", "llanos", "llana", "llanas",
+        "inclinado", "inclinados", "inclinada", "inclinadas",
+        "quebrado", "quebrados", "quebrada", "quebradas",
+        "pendiente", "desnivel"
+    ]
+
+    frases_directas = [
+        "como es la topografia",
+        "que topografia",
+        "topografia del proyecto",
+        "topografia de los lotes",
+        "plano o inclinado",
+        "plano o quebrado",
+        "inclinado o plano",
+        "quebrado o plano",
+        "uno plano",
+        "uno inclinado",
+        "uno quebrado",
+        "uno llano",
+        "prefiero plano",
+        "prefiero inclinado",
+        "quiero uno plano",
+        "quiero uno inclinado"
+    ]
+
+    if any(frase in t for frase in frases_directas):
+        return True
+
+    palabras_precio = [
+        "precio", "cuesta", "costaria", "vale", "valor",
+        "mas caro", "mismo precio"
+    ]
+
+    if (
+        any(p in t for p in palabras_precio)
+        and any(f in t for f in referencias_forma)
+    ):
+        return True
+
+    return (
+        any(ref in t for ref in referencias_terreno)
+        and any(ref in t for ref in referencias_forma)
+    )
+
+def preferencia_topografia(texto):
+    """
+    Devuelve 'plano', 'inclinado' o None cuando el cliente expresa
+    preferencia por la topografía del lote.
+    """
+    t = normalizar_texto_topografia(texto)
+
+    if any(x in t for x in [
+        "plano del proyecto", "plano de proyecto", "plano general",
+        "plano de lotes", "plano de los lotes", "ver el plano",
+        "mandame el plano", "enviame el plano", "croquis", "mapa"
+    ]):
+        return None
+
+    if any(x in t for x in [
+        "inclinado", "inclinada", "inclinados", "inclinadas",
+        "quebrado", "quebrada", "quebrados", "quebradas",
+        "con pendiente", "desnivel"
+    ]):
+        return "inclinado"
+
+    if any(x in t for x in [
+        "lote plano", "lotes planos", "terreno plano", "terrenos planos",
+        "lote llano", "terreno llano", "lo quiero plano",
+        "prefiero plano", "me gusta plano", "quiero plano"
+    ]):
+        return "plano"
+
+    return None
+
+
+def respuesta_topografia(preferencia=None):
+    """
+    Explica diferencias entre terreno plano e inclinado.
+    El precio del lote NO cambia por la topografía.
+    """
+    base = (
+        "Claro 😊 En nuestros proyectos puedes encontrar lotes con distintas "
+        "condiciones de topografía. El precio del lote es el mismo según la "
+        "medida y fase, ya sea plano o inclinado/quebrado. 🏡\n\n"
+        "🟢 *Terreno plano:* facilita diseños de construcción más convencionales, "
+        "accesos, patios y distribución exterior; normalmente requiere menos "
+        "adaptación inicial del terreno.\n\n"
+        "⛰️ *Terreno inclinado o quebrado:* puede ser muy atractivo para diseños "
+        "escalonados, casas de varios niveles, terrazas o proyectos que aprovechen "
+        "la pendiente de forma arquitectónica.\n\n"
+        "El costo de construcción sí puede variar dependiendo del diseño, "
+        "movimiento de tierra y cimentación que elijas, pero *el precio de venta "
+        "del lote no cambia por ser plano o inclinado*."
+    )
+
+    if preferencia == "plano":
+        return (
+            base
+            + "\n\nPor lo que me indicas, buscas uno *plano* 👍. "
+              "Puedo ayudarte a enfocarnos en ese tipo de lote. "
+              "¿De cuál proyecto te interesa?"
+        )
+
+    if preferencia == "inclinado":
+        return (
+            base
+            + "\n\nPerfecto 👍 Si prefieres uno *inclinado/quebrado*, "
+              "podemos buscar una opción que se adapte al diseño de casa que tienes en mente. "
+              "¿De cuál proyecto te interesa?"
+        )
+
+    return base + "\n\n¿Cuál prefieres tú: *plano o inclinado*? 😊"
+
+
+def mensaje_topografia_despues_de_plano():
+    return (
+        "🏡 *Sobre la topografía:* los lotes que ves en el plano pueden encontrarse "
+        "en topografía plana. Si prefieres un lote inclinado/quebrado para un diseño "
+        "de casa específico, dínoslo y te ayudamos a buscar una opción adecuada. 😊\n\n"
+        "El precio del lote no cambia por ser plano o inclinado; depende de la medida "
+        "y fase correspondiente.\n\n"
+        "¿Cómo prefieres tu terreno: *plano o inclinado*?"
+    )
+
+
 def pide_plano(texto):
-    """Detecta solicitudes de planos/distribución de lotes sin confundirlas con ubicación."""
-    t = texto.lower().strip()
-    expresiones = [
-        "plano", "planos", "croquis",
+    """
+    Detecta solicitudes del DOCUMENTO: plano/croquis/mapa/PDF.
+    """
+    if pregunta_topografia_terreno(texto):
+        return False
+
+    t = normalizar_texto_topografia(texto)
+
+    if any(x in t for x in [
+        "croquis",
         "mapa del proyecto", "mapa de proyecto",
         "mapa de lotes", "mapa de los lotes",
-        "distribucion de lotes", "distribución de lotes",
-        "distribucion del proyecto", "distribución del proyecto"
-    ]
-    return any(x in t for x in expresiones)
+        "distribucion de lotes",
+        "distribucion del proyecto",
+        "plano del proyecto", "plano de proyecto",
+        "plano general", "plano de lotes", "plano de los lotes",
+        "pdf del plano", "plano pdf"
+    ]):
+        return True
 
+    verbos_documento = [
+        "manda", "mandame", "mandarme", "mandar",
+        "envia", "enviame", "enviarme", "enviar",
+        "comparte", "comparteme", "compartirme", "compartir",
+        "muestra", "muestrame", "mostrar",
+        "ensena", "ensename",
+        "pasame", "pasarme", "pasar",
+        "ver", "tienes", "tiene", "tendras",
+        "puede mandarme", "puedes mandarme",
+        "puede enviarme", "puedes enviarme"
+    ]
+
+    if "plano" in t or "planos" in t:
+        if any(v in t for v in verbos_documento):
+            return True
+
+        if re.search(r"\b(el|los)\s+planos?\b", t):
+            return True
+
+        if t in {"plano", "planos"}:
+            return True
+
+    return False
 
 def detectar_fase_plano(texto, proyecto):
     """Devuelve la fase pedida solo cuando tiene sentido para el proyecto activo."""
@@ -1422,6 +1845,7 @@ def enviar_paquete_amenidades(numero, proyecto):
         "También te comparto videos de las amenidades para que puedas "
         "conocer mejor las áreas del proyecto 🏊🌳🏡🎥"
     )
+    pausa_envio(PAUSA_ENTRE_BLOQUES)
 
     for i, ruta in enumerate(videos[:3], start=1):
         enviar_video_whatsapp(
@@ -1429,6 +1853,7 @@ def enviar_paquete_amenidades(numero, proyecto):
             ruta,
             caption="Recorrido por las amenidades 🎥✨" if i == 1 else ""
         )
+        pausa_envio(PAUSA_ENTRE_ENVIOS)
 
 
 def pregunta_banco_financiamiento(texto):
@@ -1514,31 +1939,201 @@ def respuesta_punto_encuentro(numero, proyecto):
 
     nombre = nombres.get(proyecto, "el proyecto")
 
-    sugerencias = {
-        "palmeras": (
-            "Lo más práctico es que nos encontremos directamente en Palmeras San Miguel 🏡📍. "
-            "Si te queda mejor un punto conocido, también podemos reunirnos en el Centro Comercial La Trinidad "
-            "y de ahí coordinamos para ir al proyecto."
-        ),
-        "vista_hermosa": (
-            "Lo más práctico es encontrarnos directamente en Vista Hermosa, sobre la CA-2 km 188 🏡📍. "
-            "Si prefieres otro punto cercano sobre la ruta, dime cuál te queda cómodo y lo coordinamos."
-        ),
-        "buenaventura": (
-            "Lo más práctico es encontrarnos directamente en Buenaventura Cuyotenango 🏡📍. "
-            "Como punto alternativo, podemos reunirnos en el Parque Central de Cuyotenango y de ahí ir al proyecto."
-        )
+    return (
+        f"Podemos encontrarnos directamente en {nombre} 😊📍. "
+        "Si necesitas otro punto, me lo indicas."
+    )
+
+
+
+
+def pregunta_proceso_compra(texto):
+    t = normalizar_texto_topografia(texto)
+    frases = [
+        "proceso de compra", "como se compra", "como comprar",
+        "como puedo comprar", "como hago para comprar",
+        "que necesito para comprar", "que se necesita para comprar",
+        "como es la compra", "como funciona la compra",
+        "cual es el proceso", "cuál es el proceso"
+    ]
+    return any(f in t for f in frases)
+
+
+def respuesta_proceso_compra(proyecto):
+    datos = {
+        "buenaventura": {
+            "nombre": "Buenaventura Cuyotenango",
+            "enganche": "Q6,000",
+            "financiamiento": "de 2 a 8 años",
+            "extra": "También hay un plan alternativo de 1 año sin intereses cuando esté vigente.",
+        },
+        "palmeras": {
+            "nombre": "Palmeras San Miguel",
+            "enganche": "Q6,000",
+            "financiamiento": "de 1 a 8 años",
+            "extra": "",
+        },
+        "vista_hermosa": {
+            "nombre": "Vista Hermosa",
+            "enganche": "Q6,000",
+            "financiamiento": "de 1 a 8 años",
+            "extra": "",
+        },
     }
 
-    base = sugerencias.get(
-        proyecto,
-        f"Lo más práctico es encontrarnos directamente en {nombre} 🏡📍."
-    )
+    d = datos.get(proyecto)
+    if not d:
+        return (
+            "Claro 😊 Primero elegimos el lote y confirmamos disponibilidad. "
+            "Luego revisamos el enganche, el plan de pagos y los documentos necesarios. "
+            "¿De qué proyecto te interesa comprar? 🏡"
+        )
+
+    extra = f" {d['extra']}" if d["extra"] else ""
 
     return (
-        base
-        + " Si ya tienes otro lugar en mente, también me lo puedes indicar y lo coordinamos 👍"
+        f"Te cuento cómo es el proceso de compra en *{d['nombre']}* 🏡😊\n\n"
+        f"1️⃣ Eliges tu lote y medida 📐 y yo te ayudo a revisar disponibilidad, "
+        f"cotización y plan de pagos.\n\n"
+        f"2️⃣ Realizas el enganche 💰. En este proyecto es de *{d['enganche']}* "
+        f"y contamos con financiamiento propio {d['financiamiento']}. "
+        f"También puedes hacer abonos a capital.{extra}\n\n"
+        f"3️⃣ Firma y escrituración ✍️📄. Las escrituras son registradas y se entregan "
+        f"aproximadamente *3 meses después de haber cancelado el 100% del terreno*. ✅\n\n"
+        f"📋 *Requisitos para comprar:*\n"
+        f"🇬🇹 Guatemala: DPI, recibo de luz o agua y constancia de ingresos.\n"
+        f"🌎 Extranjero: DPI o pasaporte, un gestor en Guatemala y copia de remesa "
+        f"o comprobante de la forma de pago.\n\n"
+        f"😊 ¿Estás en Guatemala o en el extranjero?"
     )
+
+
+def seguimiento_compra_respuesta_directa(texto, proyecto):
+    """
+    Maneja preguntas típicas que suelen venir después de explicar el proceso.
+    Devuelve None si no aplica.
+    """
+    t = normalizar_texto_topografia(texto)
+
+    # Guatemala / extranjero
+    if t in {"guatemala", "estoy en guatemala", "aqui en guatemala", "soy de guatemala"}:
+        return (
+            "Perfecto 😊🇬🇹 Necesitarías DPI, recibo de luz o agua y constancia de ingresos. "
+            "¿Quieres que revisemos primero qué lote te interesa? 🏡"
+        )
+
+    if any(x in t for x in [
+        "estados unidos", "usa", "eeuu", "extranjero", "afuera",
+        "estoy en usa", "estoy en estados unidos"
+    ]):
+        return (
+            "Claro 😊🇺🇸🇬🇹 Puedes comprar desde el extranjero. Necesitarías DPI o pasaporte, "
+            "un gestor en Guatemala y comprobante de remesa o forma de pago. "
+            "¿Quieres que te explique cómo iniciar?"
+        )
+
+    if "que es un gestor" in t or "qué es un gestor" in texto.lower():
+        return (
+            "Es una persona de confianza que tengas en Guatemala 😊. "
+            "Puede ser un familiar o conocido que te apoye con las gestiones necesarias."
+        )
+
+    # Project-specific payment facts
+    enganches = {
+        "buenaventura": "Q6,000",
+        "palmeras": "Q6,000",
+        "vista_hermosa": "Q6,000",
+    }
+    financiamientos = {
+        "buenaventura": "de 2 a 8 años",
+        "palmeras": "de 1 a 8 años",
+        "vista_hermosa": "de 1 a 8 años",
+    }
+
+    if any(x in t for x in [
+        "cuanto tengo que dar", "cuanto doy para empezar",
+        "cuanto es el enganche", "enganche"
+    ]):
+        e = enganches.get(proyecto)
+        if e:
+            return (
+                f"El enganche en este proyecto es de *{e}* 💰😊. "
+                "¿Quieres que te muestre las cuotas según el plazo que prefieras?"
+            )
+
+    if any(x in t for x in [
+        "puedo dar el enganche en pagos", "enganche en pagos",
+        "fraccionar el enganche", "pagar el enganche por partes"
+    ]):
+        if proyecto in {"buenaventura", "vista_hermosa"}:
+            return (
+                "Sí 😊 El enganche puede fraccionarse en 2 pagos mensuales. "
+                "¿Quieres que te muestre cómo quedarían las cuotas?"
+            )
+        return (
+            "Déjame revisar exactamente la condición del enganche para este proyecto "
+            "y te la confirmo en un momento 😊."
+        )
+
+    if any(x in t for x in ["trabajan con banco", "con banco", "banco"]):
+        f = financiamientos.get(proyecto)
+        return (
+            f"No necesitas banco 😊🏡 El financiamiento es propio de la empresa"
+            + (f" y se maneja {f}." if f else ".")
+        )
+
+    if any(x in t for x in ["abono a capital", "abonar a capital", "puedo abonar"]):
+        return "Sí 😊💰 Puedes realizar abonos a capital para reducir tu saldo pendiente."
+
+    if any(x in t for x in [
+        "cuando me dan las escrituras", "cuando entregan escrituras",
+        "cuando dan escritura", "cuando me dan escritura"
+    ]):
+        return (
+            "Las escrituras son registradas 📄✅ y se entregan aproximadamente "
+            "3 meses después de haber cancelado el 100% del terreno."
+        )
+
+    if any(x in t for x in [
+        "queda a mi nombre", "escritura a mi nombre", "a nombre de quien"
+    ]):
+        return "Sí 😊📄 La escritura del lote se realiza a nombre del comprador."
+
+    if any(x in t for x in [
+        "quiero comprar uno", "quiero uno", "me interesa comprar",
+        "quiero apartarlo", "quiero reservar"
+    ]):
+        return (
+            "Excelente 😊🏡 Primero revisemos cuál lote te interesa y confirmamos disponibilidad. "
+            "¿Qué medida estás buscando?"
+        )
+
+    if any(x in t for x in [
+        "lo voy a pensar", "lo pensare", "lo voy a revisar", "despues te digo"
+    ]):
+        return (
+            "Claro 😊 Revísalo con calma. Si te surge alguna duda sobre el terreno, "
+            "pagos o el proceso, con gusto te ayudo 🏡."
+        )
+
+    return None
+
+
+def pregunta_horario_para_visita(texto):
+    t = texto.lower().strip()
+
+    frases = [
+        "cuando me puede atender", "cuándo me puede atender",
+        "a que hora me puede atender", "a qué hora me puede atender",
+        "cuando me pueden atender", "cuándo me pueden atender",
+        "a que hora me pueden atender", "a qué hora me pueden atender",
+        "que horario tienen", "qué horario tienen",
+        "en que horario me atiende", "en qué horario me atiende",
+        "a que hora puedo llegar", "a qué hora puedo llegar",
+        "a que hora puedo ir", "a qué hora puedo ir"
+    ]
+
+    return any(f in t for f in frases)
 
 
 def detectar_intencion_visita(texto):
@@ -1553,7 +2148,7 @@ def detectar_intencion_visita(texto):
         "coordinar visita"
     ]
 
-    return any(f in t for f in frases)
+    return any(f in t for f in frases) or pregunta_horario_para_visita(texto)
 
 
 def extraer_dia_visita(texto):
@@ -1609,44 +2204,27 @@ def respuesta_visita(numero, texto, proyecto):
     if hora:
         estado["hora"] = hora
 
-    nombres = {
-        "palmeras": "Palmeras San Miguel",
-        "vista_hermosa": "Vista Hermosa",
-        "buenaventura": "Buenaventura Cuyotenango"
-    }
+    # Si pregunta cuándo/a qué hora podemos atenderlo, no ofrecemos otros puntos.
+    # Dejamos que el cliente elija el horario.
+    if pregunta_horario_para_visita(texto) and not hora:
+        if estado.get("dia"):
+            return "A la hora que tú dispongas 😊 ¿A qué hora te queda bien?"
+        return "A la hora que tú dispongas 😊 ¿Qué día te gustaría visitar?"
 
-    nombre = nombres.get(
-        estado.get("proyecto"),
-        "el proyecto"
-    )
-
-    # Día + hora = CITA CERRADA.
-    # No ofrecer nada más, no hacer preguntas y no agregar CTA.
+    # Día + hora = cita cerrada.
+    # El usuario pidió una confirmación mínima, sin volver a vender ni preguntar.
     if estado["dia"] and estado["hora"]:
         estado["cerrada"] = True
-
-        return (
-            f"¡Perfecto! 🙌 Queda coordinada tu visita a {nombre} "
-            f"para el {estado['dia']} a las {estado['hora']} 🏡📍. "
-            "Antes de salir, escríbeme por aquí para confirmar y estar pendiente de tu llegada."
-        )
+        return "Sí, perfecto 😊 Queda coordinado."
 
     if estado["dia"]:
-        return (
-            f"¡Perfecto! 🙌 Coordinamos la visita a {nombre} para el "
-            f"{estado['dia']} 🏡📍. ¿A qué hora te queda mejor llegar?"
-        )
+        return "Perfecto 😊 ¿A qué hora te queda bien?"
 
     if estado["hora"]:
-        return (
-            f"¡Perfecto! 🙌 Podemos coordinar la visita a {nombre} a las "
-            f"{estado['hora']} 🏡📍. ¿Qué día te queda mejor?"
-        )
+        return "Perfecto 😊 ¿Qué día te queda bien?"
 
-    return (
-        f"¡Claro! 🙌 Con gusto coordinamos una visita a {nombre} 🏡📍. "
-        "¿Qué día te gustaría ir?"
-    )
+    return "Claro 😊 ¿Qué día te gustaría visitar?"
+
 
 
 def cita_ya_cerrada(numero):
@@ -2178,6 +2756,22 @@ def enviar_ubicacion_proyecto(numero, proyecto):
 
 
 
+def marcar_multimedia_pendiente(numero):
+    estado = obtener_estado_conversacion(numero)
+    estado["multimedia_pendiente"] = True
+
+
+def limpiar_multimedia_pendiente(numero):
+    estado = obtener_estado_conversacion(numero)
+    estado["multimedia_pendiente"] = False
+
+
+def multimedia_pendiente(numero):
+    return bool(
+        obtener_estado_conversacion(numero).get("multimedia_pendiente")
+    )
+
+
 def pide_fotos(texto):
     t = texto.lower()
 
@@ -2208,7 +2802,496 @@ def pide_videos(texto):
 # ============================================================
 
 # Cada numero de WhatsApp tendra su propia conversacion.
+
 conversaciones = {}
+
+# ============================================================
+# CRM / CONTROL MANUAL
+# ============================================================
+# Esta primera versión vive en RAM junto con el bot.
+# Permite ver chats nuevos, pausar IA y responder manualmente.
+crm_mensajes = {}
+crm_modo_manual = set()
+crm_ultima_actividad = {}
+crm_evento_contador = 0
+lock_crm = Lock()
+
+# Suscripciones Web Push activadas desde tus dispositivos.
+# La RAM se mantiene como caché, pero PostgreSQL es la fuente persistente.
+crm_push_subscriptions = {}
+lock_push = Lock()
+ultimo_error_push = None
+ultimo_resultado_push = None
+_push_db_initialized = False
+lock_push_db = Lock()
+
+
+def push_db_disponible():
+    return bool(DATABASE_URL and psycopg2)
+
+
+def inicializar_push_db():
+    """Crea la tabla de suscripciones si todavía no existe."""
+    global _push_db_initialized
+
+    if not push_db_disponible():
+        return False
+
+    if _push_db_initialized:
+        return True
+
+    with lock_push_db:
+        if _push_db_initialized:
+            return True
+
+        try:
+            conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS crm_push_subscriptions (
+                            endpoint TEXT PRIMARY KEY,
+                            subscription JSONB NOT NULL,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                    """)
+                conn.commit()
+                _push_db_initialized = True
+                print("PUSH DB: tabla lista")
+                return True
+            finally:
+                conn.close()
+
+        except Exception as exc:
+            print("PUSH DB INIT ERROR:", exc)
+            return False
+
+
+def guardar_push_subscription(sub):
+    endpoint = (sub or {}).get("endpoint")
+    if not endpoint:
+        return False
+
+    # Caché RAM
+    with lock_push:
+        crm_push_subscriptions[endpoint] = sub
+
+    # Persistencia PostgreSQL
+    if not inicializar_push_db():
+        return False
+
+    try:
+        conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO crm_push_subscriptions (
+                        endpoint,
+                        subscription,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (%s, %s::jsonb, NOW(), NOW())
+                    ON CONFLICT (endpoint)
+                    DO UPDATE SET
+                        subscription = EXCLUDED.subscription,
+                        updated_at = NOW()
+                """, (
+                    endpoint,
+                    json.dumps(sub)
+                ))
+            conn.commit()
+            return True
+        finally:
+            conn.close()
+
+    except Exception as exc:
+        print("PUSH DB SAVE ERROR:", exc)
+        return False
+
+
+def cargar_push_subscriptions():
+    """
+    Devuelve todas las suscripciones conocidas.
+    Si hay PostgreSQL, siempre lee desde ahí para sobrevivir reinicios.
+    """
+    encontrados = {}
+
+    if inicializar_push_db():
+        try:
+            conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT endpoint, subscription
+                        FROM crm_push_subscriptions
+                        ORDER BY updated_at DESC
+                    """)
+                    for endpoint, subscription in cur.fetchall():
+                        # psycopg2 suele entregar JSONB como dict.
+                        if isinstance(subscription, str):
+                            try:
+                                subscription = json.loads(subscription)
+                            except Exception:
+                                continue
+
+                        if isinstance(subscription, dict):
+                            encontrados[endpoint] = subscription
+            finally:
+                conn.close()
+
+        except Exception as exc:
+            print("PUSH DB LOAD ERROR:", exc)
+
+    # Si DB está temporalmente caída, usamos la caché RAM.
+    if not encontrados:
+        with lock_push:
+            encontrados = dict(crm_push_subscriptions)
+    else:
+        with lock_push:
+            crm_push_subscriptions.clear()
+            crm_push_subscriptions.update(encontrados)
+
+    return encontrados
+
+
+def eliminar_push_subscription(endpoint):
+    if not endpoint:
+        return
+
+    with lock_push:
+        crm_push_subscriptions.pop(endpoint, None)
+
+    if inicializar_push_db():
+        try:
+            conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "DELETE FROM crm_push_subscriptions WHERE endpoint = %s",
+                        (endpoint,)
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as exc:
+            print("PUSH DB DELETE ERROR:", exc)
+
+
+def contar_push_devices():
+    return len(cargar_push_subscriptions())
+
+
+
+def preparar_vapid_private_key():
+    key = (VAPID_PRIVATE_KEY or "").strip()
+    if not key:
+        return ""
+
+    try:
+        padding = "=" * ((4 - len(key) % 4) % 4)
+        raw = base64.urlsafe_b64decode(key + padding)
+
+        if len(raw) == 32 and ec is not None and serialization is not None:
+            private_value = int.from_bytes(raw, "big")
+            private_key = ec.derive_private_key(private_value, ec.SECP256R1())
+
+            der = private_key.private_bytes(
+                encoding=serialization.Encoding.DER,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption()
+            )
+
+            return base64.urlsafe_b64encode(der).decode().rstrip("=")
+    except Exception as exc:
+        print("VAPID conversion raw->DER:", exc)
+
+    return key
+
+
+def enviar_push_crm(numero, contenido, event_id=None):
+    global ultimo_error_push, ultimo_resultado_push
+
+    ultimo_error_push = None
+    ultimo_resultado_push = None
+
+    if not webpush:
+        ultimo_error_push = "pywebpush no está disponible en el servidor."
+        return {"ok": False, "error": ultimo_error_push, "enviadas": 0}
+
+    if not VAPID_PRIVATE_KEY:
+        ultimo_error_push = "VAPID_PRIVATE_KEY no está configurada."
+        return {"ok": False, "error": ultimo_error_push, "enviadas": 0}
+
+    private_key_compatible = preparar_vapid_private_key()
+
+    proyecto = crm_nombre_proyecto(numero)
+    proyecto_txt = f" · {proyecto}" if proyecto and proyecto != "Sin proyecto" else ""
+
+    push_id = str(event_id or time.time_ns())
+
+    payload = json.dumps({
+        "title": "🏡 Nuevo mensaje de cliente",
+        "body": f"+{numero}{proyecto_txt}\n{str(contenido)[:180]}",
+        "url": f"/crm?numero={numero}",
+        # Cada mensaje de WhatsApp usa su propio tag.
+        # Así Android/Chrome no sustituye una notificación por otra.
+        "tag": f"crm-{push_id}",
+        "message_id": push_id,
+        "timestamp": int(time.time() * 1000)
+    }, ensure_ascii=False)
+
+    # Leer suscripciones persistentes en CADA envío.
+    # Así un webhook que despierta a Render puede notificar aunque
+    # el CRM no haya sido abierto después del reinicio.
+    subs = list(cargar_push_subscriptions().items())
+
+    if not subs:
+        ultimo_error_push = "No hay teléfonos suscritos actualmente."
+        print("WEB PUSH:", ultimo_error_push)
+        return {"ok": False, "error": ultimo_error_push, "enviadas": 0}
+
+    enviadas = 0
+    errores = []
+    vencidas = []
+
+    for endpoint, sub in subs:
+        try:
+            respuesta = webpush(
+                subscription_info=sub,
+                data=payload,
+                vapid_private_key=private_key_compatible,
+                vapid_claims={"sub": VAPID_SUBJECT},
+                ttl=600,
+                timeout=20,
+                headers={
+                    "Urgency": "high"
+                }
+            )
+            status = getattr(respuesta, "status_code", None)
+            print("WEB PUSH OK:", status, endpoint[:70])
+            enviadas += 1
+        except WebPushException as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            body = ""
+            try:
+                body = exc.response.text if exc.response is not None else ""
+            except Exception:
+                pass
+            msg = f"HTTP {status}: {exc}"
+            if body:
+                msg += f" | {body[:300]}"
+            print("WEB PUSH ERROR:", msg)
+            errores.append(msg)
+            if status in (404, 410):
+                vencidas.append(endpoint)
+        except Exception as exc:
+            msg = f"{type(exc).__name__}: {exc}"
+            print("WEB PUSH ERROR GENERAL:", msg)
+            errores.append(msg)
+
+    if vencidas:
+        for endpoint in vencidas:
+            eliminar_push_subscription(endpoint)
+
+    if enviadas:
+        ultimo_resultado_push = f"{enviadas} notificación(es) enviada(s)."
+    if errores:
+        ultimo_error_push = " | ".join(errores[-3:])
+
+    return {
+        "ok": enviadas > 0,
+        "enviadas": enviadas,
+        "error": ultimo_error_push
+    }
+
+
+
+def crm_hora_actual():
+    return datetime.now(
+        ZoneInfo("America/Guatemala")
+    ).strftime("%d/%m %I:%M %p")
+
+
+
+def enviar_ntfy_crm(numero, contenido, event_id=None):
+    """
+    Envía UNA notificación ntfy por CADA mensaje entrante de WhatsApp.
+    No depende de que Chrome, el CRM o una pestaña estén abiertos.
+    """
+    if not NTFY_TOPIC:
+        print("NTFY: NTFY_TOPIC no está configurado.")
+        return False
+
+    numero_txt = str(numero or "Cliente")
+    contenido_txt = str(contenido or "Nuevo mensaje").strip()
+
+    proyecto = crm_nombre_proyecto(numero)
+    proyecto_txt = (
+        f" · {proyecto}"
+        if proyecto and proyecto != "Sin proyecto"
+        else ""
+    )
+
+    # Abrir directamente la conversación del cliente en el CRM.
+    click_url = f"{CRM_PUBLIC_URL}?numero={numero_txt}"
+
+    try:
+        respuesta = requests.post(
+            f"{NTFY_SERVER}/{NTFY_TOPIC}",
+            data=contenido_txt.encode("utf-8"),
+            headers={
+                "Title": f"Nuevo mensaje - CRM Gabriel",
+                "Priority": "high",
+                "Tags": "house,phone",
+                "Click": click_url,
+                # Identificador únicamente para diagnóstico.
+                "X-Message-ID": str(event_id or time.time_ns())
+            },
+            timeout=12
+        )
+
+        print(
+            "NTFY:",
+            respuesta.status_code,
+            numero_txt,
+            proyecto_txt,
+            contenido_txt[:80]
+        )
+
+        return 200 <= respuesta.status_code < 300
+
+    except Exception as exc:
+        print("NTFY ERROR:", exc)
+        return False
+
+
+def crm_registrar_mensaje(numero, direccion, contenido, event_id=None):
+    global crm_evento_contador
+
+    if not numero:
+        return
+
+    contenido = str(contenido or "").strip()
+    if not contenido:
+        return
+
+    with lock_crm:
+        crm_evento_contador += 1
+
+        lista = crm_mensajes.setdefault(numero, [])
+        lista.append({
+            "id": crm_evento_contador,
+            "numero": numero,
+            "direccion": direccion,
+            "contenido": contenido,
+            "hora": crm_hora_actual()
+        })
+
+        # Mantener suficiente historial visual sin consumir RAM sin límite.
+        if len(lista) > 150:
+            crm_mensajes[numero] = lista[-150:]
+
+        crm_ultima_actividad[numero] = time.time()
+
+    # Solo los mensajes ENTRANTES del cliente generan push.
+    if direccion == "in":
+        # Web Push anterior (lo dejamos activo por ahora).
+        Thread(
+            target=enviar_push_crm,
+            args=(numero, contenido, event_id),
+            daemon=True
+        ).start()
+
+        # NTFY: notificación nativa en Android por CADA mensaje.
+        Thread(
+            target=enviar_ntfy_crm,
+            args=(numero, contenido, event_id),
+            daemon=True
+        ).start()
+
+
+def crm_resumen_entrante(mensaje):
+    tipo = mensaje.get("type")
+
+    if tipo == "text":
+        return mensaje.get("text", {}).get("body", "")
+
+    if tipo == "audio":
+        return "🎙️ Audio recibido"
+
+    if tipo == "image":
+        caption = mensaje.get("image", {}).get("caption", "")
+        return "📷 Imagen recibida" + (f": {caption}" if caption else "")
+
+    if tipo == "video":
+        caption = mensaje.get("video", {}).get("caption", "")
+        return "🎥 Video recibido" + (f": {caption}" if caption else "")
+
+    if tipo == "document":
+        nombre = mensaje.get("document", {}).get("filename", "")
+        return "📄 Documento recibido" + (f": {nombre}" if nombre else "")
+
+    return f"📩 Mensaje recibido ({tipo or 'desconocido'})"
+
+
+def crm_esta_manual(numero):
+    with lock_crm:
+        return numero in crm_modo_manual
+
+
+def crm_poner_manual(numero):
+    with lock_crm:
+        crm_modo_manual.add(numero)
+
+
+def crm_poner_ia(numero):
+    with lock_crm:
+        crm_modo_manual.discard(numero)
+
+
+def crm_autorizado():
+    if not CRM_PASSWORD:
+        return False
+
+    auth = request.authorization
+    return bool(
+        auth
+        and auth.username == CRM_USER
+        and auth.password == CRM_PASSWORD
+    )
+
+
+def crm_pedir_login():
+    if not CRM_PASSWORD:
+        return Response(
+            "CRM_PASSWORD no está configurado en Render.",
+            status=503,
+            content_type="text/plain; charset=utf-8"
+        )
+
+    return Response(
+        "Acceso requerido",
+        status=401,
+        headers={
+            "WWW-Authenticate": 'Basic realm="CRM Gabriel", charset="UTF-8"'
+        }
+    )
+
+
+def crm_nombre_proyecto(numero):
+    nombres = {
+        "palmeras": "Palmeras San Miguel",
+        "vista_hermosa": "Vista Hermosa",
+        "buenaventura": "Buenaventura Cuyotenango"
+    }
+    return nombres.get(
+        proyecto_activo.get(numero),
+        "Sin proyecto"
+    )
+
+
 
 # Maximo de mensajes anteriores que recordara temporalmente.
 MAX_HISTORIAL = 12
@@ -2377,6 +3460,71 @@ REGLA CRITICA: NUNCA MEZCLAR PROYECTOS
 
 
 
+
+============================================================
+REGLA CRITICA: RESPONDER COMO VENDEDOR, NO COMO MENU
+============================================================
+
+Interpreta la intención REAL del cliente usando el mensaje actual, el historial,
+el proyecto activo y lo que ya se le respondió o envió.
+
+Si el cliente hace una pregunta de seguimiento, responde ESA pregunta directamente.
+NO repitas una explicación completa que ya acabas de dar si no hace falta.
+
+Ejemplos:
+- Si ya se envió una cotización y pregunta:
+  "¿Ese es el precio de un lote plano?"
+  responde brevemente que sí: el precio mostrado corresponde a esa medida/fase
+  y la topografía no cambia el precio del lote.
+  NO vuelvas a explicar todas las ventajas de plano vs inclinado.
+  NO vuelvas a enviar cotizaciones por esa sola pregunta.
+
+- Si pregunta "¿Y uno inclinado cuesta más?"
+  responde que no, el precio del lote no cambia por la topografía.
+  Aclara solo si ayuda que el costo de construcción sí puede variar por diseño,
+  cimentación o movimiento de tierra.
+
+- Si dice "Prefiero plano" o "Prefiero inclinado",
+  reconoce la preferencia y continúa sin repetir todo lo anterior.
+
+Cuando la información disponible NO alcance para responder con certeza:
+- NO inventes;
+- NO repitas una respuesta anterior;
+- responde de forma breve:
+  "Déjame revisar exactamente lo que me solicitas y te lo envío en un momento 😊"
+  o una variante natural equivalente.
+
+============================================================
+REGLA DE TOPOGRAFIA: PLANO VS CROQUIS
+============================================================
+
+Distingue SIEMPRE:
+
+1. PLANO / CROQUIS / MAPA:
+   "mándame el plano", "plano del proyecto", "croquis",
+   "mapa de lotes", "distribución de lotes".
+   Esto se refiere al documento o PDF.
+
+2. TERRENO PLANO / LLANO:
+   "lote plano", "terreno plano", "quiero uno plano",
+   "¿ese precio es de un lote plano?", "lote inclinado",
+   "terreno quebrado", "topografía".
+   Esto se refiere a la TOPOGRAFÍA, no al PDF.
+
+Datos oficiales sobre topografía:
+- Buenaventura Cuyotenango: los lotes se manejan en topografía plana.
+- Palmeras San Miguel: los lotes se manejan en topografía plana.
+- Vista Hermosa: hay lotes planos y también lotes quebrados/inclinados.
+- El precio de venta del lote NO cambia por ser plano, inclinado o quebrado.
+- El precio depende de la medida y fase correspondiente.
+- Terreno plano: suele facilitar diseños convencionales, accesos, patios
+  y puede requerir menos adaptación inicial.
+- Terreno inclinado/quebrado: puede aprovecharse para diseños escalonados,
+  varios niveles, terrazas o arquitectura adaptada a la pendiente.
+- El costo de construcción sí puede variar según diseño, cimentación
+  y movimiento de tierra.
+- Si el cliente expresa preferencia, respóndele sobre esa preferencia sin repetir
+  información innecesaria.
 
 REGLA DE AUDIOS:
 Las notas de voz se transcriben automáticamente y el texto transcrito entra
@@ -2586,16 +3734,36 @@ Cuando ya exista día y hora definidos para una visita:
 - Si el cliente luego hace una pregunta concreta, responde únicamente esa pregunta y NO cierres con otra pregunta.
 - Si el cliente solo dice "gracias", responde breve, por ejemplo: "¡Con gusto! 🙌 Nos vemos el jueves."
 
+REGLA DE PROCESO DE COMPRA Y SEGUIMIENTOS:
+- Si el cliente pregunta "cuál es el proceso de compra", "cómo se compra", "cómo comprar",
+  "qué necesito para comprar" o equivalente, explica el proceso del PROYECTO ACTIVO.
+- Cambia automáticamente nombre del proyecto, enganche y plazo de financiamiento según el proyecto.
+- No repitas el proceso completo si después hace una pregunta puntual.
+- Responde únicamente esa duda concreta y termina con como máximo una pregunta sencilla.
+- Si dice Guatemala, responde solo requisitos de Guatemala y siguiente paso.
+- Si dice Estados Unidos/extranjero, responde solo requisitos para extranjero y siguiente paso.
+- Si pregunta por gestor, explica solo qué es un gestor.
+- Si pregunta enganche, cuotas, banco, abonos a capital, escrituras o disponibilidad,
+  responde solo ese punto.
+- Si expresa intención alta ("quiero comprar", "quiero uno", "quiero apartarlo"),
+  deja de explicar y avanza a lote/medida/disponibilidad.
+- Si dice "lo voy a pensar", no presiones.
+- Si falta un dato oficial, no inventes: di que lo revisarás y se lo enviarás en un momento.
+
 REGLA DE RESPUESTAS CORTAS Y NO REDUNDANTES:
-- Responde primero y directamente a la pregunta actual.
-- No repitas información que ya se dio en los últimos mensajes.
-- No vuelvas a explicar requisitos, financiamiento, ubicación, amenidades o precios si el cliente ya pasó a otra etapa.
-- Haz como máximo UNA pregunta de avance al final.
-- Si el cliente muestra intención de visita, deja de ofrecer información y coordina la visita.
-- Si ya tiene día de visita, pregunta únicamente la hora.
-- Si ya tiene día y hora, confirma la visita brevemente.
-- Evita párrafos largos cuando una respuesta de 1 a 3 oraciones resuelve la duda.
-- Usa emojis de forma natural, normalmente 1 a 3 por respuesta.
+- En WhatsApp prioriza respuestas MUY fáciles de leer.
+- Como regla general usa 1 a 3 oraciones cortas.
+- Da primero el dato que el cliente pidió.
+- Añade solo UN beneficio o contexto si realmente ayuda.
+- Haz como máximo UNA pregunta sencilla al final.
+- NO mandes listas largas salvo que el cliente pida varios datos a la vez.
+- NO repitas ubicación, precios, amenidades, financiamiento y requisitos en cada respuesta.
+- Si el cliente ya eligió un proyecto, NO vuelvas a preguntarle de cuál proyecto habla.
+- Si el cliente pidió fotos/videos y luego responde únicamente con el nombre del proyecto,
+  entiende que está respondiendo a tu pregunta y envía el material; no preguntes qué quiere saber.
+- Si la conversación está cerca de cerrar una visita, deja de vender y coordina únicamente día y hora.
+- Si pregunta cuándo puedes atenderlo, responde que a la hora que él disponga.
+- Cuando ya haya día y hora, confirma brevemente y termina.
 
 REGLA DE PLAZOS:
 Si el cliente menciona directamente un plazo de 1 a 8 años o su equivalente
@@ -3500,8 +4668,8 @@ Debes:
         print(error)
 
         return (
-            "Disculpa 😊 tuve un pequeño inconveniente al procesar "
-            "tu mensaje. Inténtalo nuevamente en un momento 🙌"
+            "Claro 😊 Déjame revisar exactamente lo que me solicitas "
+            "y te lo envío en un momento."
         )
 
 
@@ -3883,6 +5051,27 @@ def procesar_imagen_o_video_cliente(numero, mensaje, tipo_mensaje):
                 caption
             )
 
+        estado_topografia = obtener_estado_conversacion(numero)
+        proyecto_topografia = obtener_proyecto_actual(numero)
+
+        # Si el cliente viene de escoger topografía y manda una captura de un lote,
+        # podemos responder con la regla oficial del proyecto.
+        if estado_topografia.get("topografia_en_conversacion"):
+            if proyecto_topografia in {"palmeras", "buenaventura"} and not caption:
+                return (
+                    "Perfecto 😊 Recibí la captura. En este proyecto los lotes se "
+                    "manejan en topografía plana. Si me escribes también el número "
+                    "del lote, te ayudo a seguir revisando esa opción. 🏡"
+                )
+
+            if proyecto_topografia == "vista_hermosa" and not caption:
+                return (
+                    "Perfecto 😊 Recibí la captura. En Vista Hermosa hay lotes planos "
+                    "y quebrados, así que para darte seguridad prefiero confirmar la "
+                    "topografía exacta de esa opción. Déjame revisarlo y te lo envío "
+                    "en un momento."
+                )
+
         archivo, mime = obtener_media_whatsapp(
             media_id
         )
@@ -4008,6 +5197,9 @@ def enviar_whatsapp(numero, texto):
         print("META RESPONSE:")
         print(respuesta.text)
 
+        if 200 <= respuesta.status_code < 300:
+            crm_registrar_mensaje(numero, "out", texto)
+
 
     except Exception as error:
 
@@ -4081,6 +5273,7 @@ def enviar_planos_solicitados(numero, proyecto, texto_cliente):
         intro = f"¡Claro! 😊 Te comparto los planos disponibles de {nombre}."
 
     enviar_whatsapp(numero, intro)
+    pausa_envio(PAUSA_ENTRE_BLOQUES)
 
     enviados = 0
     for plano in planos:
@@ -4091,9 +5284,18 @@ def enviar_planos_solicitados(numero, proyecto, texto_cliente):
             caption=plano["nombre"]
         ):
             enviados += 1
+            pausa_envio(PAUSA_ENTRE_ENVIOS)
 
     # La explicación de colores debe acompañar SIEMPRE cualquier envío de planos.
+    pausa_envio(PAUSA_ENTRE_BLOQUES)
     enviar_whatsapp(numero, texto_leyenda_planos())
+
+    # Después de cualquier plano, abrimos la conversación sobre topografía
+    # y recordamos que la siguiente respuesta corta puede ser "plano" o "quebrado".
+    pausa_envio(PAUSA_ENTRE_BLOQUES)
+    enviar_whatsapp(numero, mensaje_topografia_despues_de_plano())
+    marcar_pregunta_topografia(numero)
+
     return enviados > 0
 
 
@@ -4312,11 +5514,14 @@ def enviar_multimedia_del_proyecto(
     """
 
     if not proyecto:
+        marcar_multimedia_pendiente(numero)
         enviar_whatsapp(
             numero,
-            "¡Claro! 📸🎥 ¿De cuál proyecto quieres ver el material?"
+            "Claro 😊 ¿De cuál proyecto quieres ver las fotos y videos?"
         )
         return
+
+    limpiar_multimedia_pendiente(numero)
 
     nombres = {
         "palmeras": "Palmeras San Miguel",
@@ -4431,6 +5636,7 @@ def enviar_solo_fotos_del_proyecto(numero, proyecto):
         f"Y para que conozcas mejor {nombre}, te comparto también "
         "las fotos del proyecto 🏡📸"
     )
+    pausa_envio(PAUSA_ENTRE_BLOQUES)
 
     # Después de precios enviamos máximo 4 fotos.
     for i, ruta in enumerate(fotos_disponibles[:4], start=1):
@@ -4440,6 +5646,7 @@ def enviar_solo_fotos_del_proyecto(numero, proyecto):
             ruta,
             caption=caption
         )
+        pausa_envio(PAUSA_ENTRE_ENVIOS)
 
 
 
@@ -4475,6 +5682,7 @@ def enviar_solo_videos_del_proyecto(numero, proyecto):
         f"Y para que conozcas mejor {nombre}, te comparto también "
         "videos del proyecto 🏡🎥"
     )
+    pausa_envio(PAUSA_ENTRE_BLOQUES)
 
     for i, ruta in enumerate(videos_disponibles, start=1):
         enviar_video_whatsapp(
@@ -4482,6 +5690,7 @@ def enviar_solo_videos_del_proyecto(numero, proyecto):
             ruta,
             caption=f"{nombre} 🎥🏡" if i == 1 else ""
         )
+        pausa_envio(PAUSA_ENTRE_ENVIOS)
 
 def enviar_cotizacion_del_proyecto(numero, proyecto, medida=None):
     """
@@ -4504,6 +5713,7 @@ def enviar_cotizacion_del_proyecto(numero, proyecto, medida=None):
 
     if resumen:
         enviar_whatsapp(numero, resumen)
+        pausa_envio(PAUSA_ENTRE_BLOQUES)
 
     opciones = COTIZACIONES_IMAGEN.get(proyecto, {})
     rutas_a_enviar = []
@@ -4541,23 +5751,134 @@ def enviar_cotizacion_del_proyecto(numero, proyecto, medida=None):
             ruta,
             caption=caption
         )
+        pausa_envio(PAUSA_ENTRE_ENVIOS)
 
     # FLUJO VISUAL DESPUÉS DE PRECIOS/COTIZACIONES:
     # 1) Palmeras y Buenaventura -> fotos reales del residencial.
     # 2) Vista Hermosa -> SOLO videos del residencial (sin fotos antiguas).
     # 3) Al final -> SOLO videos de amenidades, en un bloque separado.
+    pausa_envio(PAUSA_ENTRE_BLOQUES)
     if proyecto == "vista_hermosa":
         enviar_solo_videos_del_proyecto(numero, proyecto)
     else:
         enviar_solo_fotos_del_proyecto(numero, proyecto)
 
+    pausa_envio(PAUSA_ENTRE_BLOQUES)
     enviar_paquete_amenidades(numero, proyecto)
 
+    pausa_envio(PAUSA_ENTRE_BLOQUES)
     enviar_whatsapp(
         numero,
-        "Si alguna opción te interesa, dime cuál y te ayudo con el siguiente "
-        "paso o coordinamos una visita 🙌🏡"
+        "Si alguna opción te llama la atención, dime cuál 😊 y con gusto te doy "
+        "más información o resolvemos cualquier duda que tengas 🏡"
     )
+
+# ============================================================
+# SEGUIMIENTO AUTOMATICO POR INACTIVIDAD - PRUEBA
+# ============================================================
+
+# PRODUCCION: seguimiento después de 8 horas sin respuesta.
+SEGUIMIENTO_SEGUNDOS = 8 * 60 * 60
+
+SEGUIMIENTO_TEXTO = (
+    "Hola 👋😊 Solo paso por aquí.\n\n"
+    "Quizá no ha tenido tiempo de revisar con calma la información de los terrenos "
+    "que le envié 🏡. No hay problema.\n\n"
+    "Cuando pueda verla, escríbame. Si alguna opción le interesa, con gusto le ayudo "
+    "a hacer números para buscar una cuota cómoda para usted ✅\n\n"
+    "👉 ¿Qué cuota mensual le quedaría cómoda?"
+)
+
+seguimiento_version = {}
+lock_seguimiento = Lock()
+
+
+def cancelar_seguimiento(numero):
+    """Invalida cualquier seguimiento pendiente de ese cliente."""
+    if not numero:
+        return
+
+    with lock_seguimiento:
+        seguimiento_version[numero] = seguimiento_version.get(numero, 0) + 1
+
+
+
+def programar_seguimiento_inactividad(numero):
+    """
+    Programa un seguimiento. Si el cliente escribe de nuevo antes del tiempo,
+    la versión anterior queda cancelada automáticamente.
+    """
+    with lock_seguimiento:
+        version = seguimiento_version.get(numero, 0) + 1
+        seguimiento_version[numero] = version
+
+    def esperar_y_enviar():
+        time.sleep(SEGUIMIENTO_SEGUNDOS)
+
+        with lock_seguimiento:
+            if seguimiento_version.get(numero) != version:
+                return
+
+        # Si esta versión sigue vigente, el cliente no volvió a escribir
+        # durante el tiempo configurado.
+        enviar_whatsapp(numero, SEGUIMIENTO_TEXTO)
+        guardar_mensaje(numero, "assistant", SEGUIMIENTO_TEXTO)
+
+        # Marcar esta versión como consumida para que se envíe una sola vez.
+        with lock_seguimiento:
+            if seguimiento_version.get(numero) == version:
+                seguimiento_version[numero] = version + 1
+
+    Thread(target=esperar_y_enviar, daemon=True).start()
+
+
+# ============================================================
+# AGRUPAR MENSAJES SEGUIDOS DEL CLIENTE
+# ============================================================
+
+ESPERA_BLOQUE_MENSAJES_SEGUNDOS = 5
+mensajes_texto_pendientes = {}
+lock_mensajes_texto_pendientes = Lock()
+
+
+def acumular_mensaje_texto(numero, message_id, mensaje):
+    """Guarda temporalmente mensajes de texto consecutivos del mismo cliente."""
+    if not numero or not message_id or not mensaje or mensaje.get("type") != "text":
+        return
+
+    texto = (mensaje.get("text") or {}).get("body", "").strip()
+    if not texto:
+        return
+
+    with lock_mensajes_texto_pendientes:
+        lista = mensajes_texto_pendientes.setdefault(numero, [])
+        lista.append({"id": message_id, "texto": texto})
+
+        if len(lista) > 20:
+            mensajes_texto_pendientes[numero] = lista[-20:]
+
+
+def esperar_y_obtener_bloque_texto(numero, message_id):
+    """Espera 5 segundos desde el último texto y devuelve el bloque completo."""
+    time.sleep(ESPERA_BLOQUE_MENSAJES_SEGUNDOS)
+
+    if not procesamiento_sigue_vigente(numero, message_id):
+        return None
+
+    with lock_mensajes_texto_pendientes:
+        pendientes = mensajes_texto_pendientes.pop(numero, [])
+
+    textos = [
+        item.get("texto", "").strip()
+        for item in pendientes
+        if item.get("texto", "").strip()
+    ]
+
+    if not textos:
+        return None
+
+    return "\n".join(textos)
+
 
 # ============================================================
 # RECIBIR MENSAJES DE WHATSAPP
@@ -4580,14 +5901,28 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
         numero_cliente = mensaje["from"]
         tipo_mensaje = mensaje.get("type")
 
-        # Si mientras este proceso estaba trabajando llegó un mensaje más nuevo,
-        # dejamos de responder para evitar mensajes tardíos.
-        if not procesamiento_sigue_vigente(numero_cliente, message_id):
-            print("PROCESAMIENTO ANTIGUO CANCELADO:", message_id)
-            return
+        if tipo_mensaje == "text":
+            texto_agrupado = esperar_y_obtener_bloque_texto(
+                numero_cliente,
+                message_id
+            )
+
+            if texto_agrupado is None:
+                print("PROCESAMIENTO ANTIGUO CANCELADO:", message_id)
+                return
+        else:
+            if not procesamiento_sigue_vigente(numero_cliente, message_id):
+                print("PROCESAMIENTO ANTIGUO CANCELADO:", message_id)
+                return
 
         print("\nNUMERO DEL CLIENTE:")
         print(numero_cliente)
+
+        # Si Gabriel tomó el control desde el CRM, la IA no responde.
+        # El mensaje ya quedó registrado por el webhook para verlo en el CRM.
+        if crm_esta_manual(numero_cliente):
+            print("CRM: conversación en modo MANUAL. IA pausada.")
+            return
 
         if tipo_mensaje == "audio":
             # La nota de voz se convierte en texto y continúa por TODO el flujo normal.
@@ -4641,7 +5976,7 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
 
         else:
             if tipo_mensaje == "text":
-                texto_cliente = mensaje["text"]["body"]
+                texto_cliente = texto_agrupado
 
         print("\nMENSAJE DEL CLIENTE:")
         print(texto_cliente)
@@ -4675,6 +6010,89 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
             numero_cliente,
             texto_cliente
         )
+
+        # CONTINUACIÓN DE FOTOS/VIDEOS PENDIENTES
+        # Ejemplo:
+        # Cliente: "Me puede fotos"
+        # Bot: "¿De cuál proyecto?"
+        # Cliente: "Palmeras San Miguel"
+        # => enviar el material inmediatamente, sin volver a preguntar qué desea.
+        if multimedia_pendiente(numero_cliente) and proyecto:
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(
+                numero_cliente,
+                "assistant",
+                f"Se envió el material multimedia del proyecto {proyecto}."
+            )
+
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_multimedia_del_proyecto(
+                    numero_cliente,
+                    proyecto,
+                    enviar_fotos=True,
+                    enviar_videos=True
+                )
+            return
+
+        # SEGUIMIENTO DE TOPOGRAFÍA DESPUÉS DE ENVIAR PLANOS
+        # Tiene prioridad para que "plano" no vuelva a interpretarse como el PDF.
+        respuesta_pref_topografia = respuesta_preferencia_topografia(
+            numero_cliente,
+            texto_cliente,
+            proyecto
+        )
+        if respuesta_pref_topografia:
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta_pref_topografia)
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta_pref_topografia)
+            return
+
+        # Si ya estamos hablando de topografía y manda un número de lote.
+        respuesta_lote_topografia = respuesta_revision_lote_topografia(
+            numero_cliente,
+            proyecto,
+            texto_cliente
+        )
+        if respuesta_lote_topografia:
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta_lote_topografia)
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta_lote_topografia)
+            return
+
+        # Si pregunta si el lote elegido es quebrado/inclinado.
+        respuesta_quebrado = respuesta_si_pregunta_quebrado(
+            numero_cliente,
+            proyecto,
+            texto_cliente
+        )
+        if respuesta_quebrado:
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta_quebrado)
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta_quebrado)
+            return
+
+        # PROCESO DE COMPRA Y SEGUIMIENTOS DIRECTOS
+        respuesta_compra_directa = seguimiento_compra_respuesta_directa(
+            texto_cliente,
+            proyecto
+        )
+        if respuesta_compra_directa:
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta_compra_directa)
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta_compra_directa)
+            return
+
+        if pregunta_proceso_compra(texto_cliente):
+            respuesta = respuesta_proceso_compra(proyecto)
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta)
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta)
+            return
 
         # BANCO / FINANCIAMIENTO PROPIO - PRIORIDAD ABSOLUTA
         # Si la frase menciona banco + financiamiento, nunca debe caer en cotizaciones.
@@ -4744,6 +6162,25 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
 
             return
 
+        # TOPOGRAFÍA DEL TERRENO - RESPUESTA INTELIGENTE
+        # "lote plano" significa terreno llano; NO debe enviar el PDF/croquis.
+        if pregunta_topografia_terreno(texto_cliente):
+            respuesta = generar_respuesta(
+                numero_cliente,
+                texto_cliente
+            )
+
+            if not respuesta or not respuesta.strip():
+                respuesta = (
+                    "Claro 😊 Déjame revisar exactamente lo que me solicitas "
+                    "y te lo envío en un momento."
+                )
+
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta)
+
+            return
+
         # PLANOS / MAPA DE LOTES - PRIORIDAD ALTA
         # Usa los PDF públicos de GitHub Pages. Si el archivo se actualiza
         # conservando el mismo nombre, el bot seguirá enviando la versión nueva.
@@ -4765,7 +6202,7 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
             guardar_mensaje(
                 numero_cliente,
                 "assistant",
-                f"Se enviaron los planos de {nombre_proyecto_plano(proyecto)} y la leyenda de colores."
+                f"Se enviaron los planos de {nombre_proyecto_plano(proyecto)}, la leyenda de colores y la pregunta sobre topografía."
             )
 
             if procesamiento_sigue_vigente(numero_cliente, message_id):
@@ -5079,15 +6516,34 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
         print("\nERROR PROCESANDO MENSAJE:")
         print(error)
 
+    finally:
+        # El tiempo de inactividad empieza DESPUÉS de que el bot termina
+        # de responder, incluso si era el primer mensaje de la conversación.
+        # Si el cliente mandó otro mensaje mientras procesábamos, este proceso
+        # viejo no programa ningún seguimiento.
+        try:
+            if (
+                numero_cliente
+                and procesamiento_sigue_vigente(numero_cliente, message_id)
+                and not crm_esta_manual(numero_cliente)
+            ):
+                programar_seguimiento_inactividad(numero_cliente)
+        except Exception as error_seguimiento:
+            print("\nERROR PROGRAMANDO SEGUIMIENTO:")
+            print(error_seguimiento)
+
 
 @app.route("/webhook", methods=["POST"])
-def recibir_mensaje():
+def recibir_webhook():
     """
-    Webhook rápido:
-    1. valida si es un mensaje real;
-    2. bloquea duplicados por message_id;
-    3. responde 200 INMEDIATAMENTE a Meta;
-    4. procesa el contenido en segundo plano.
+    Recibe mensajes desde Meta.
+
+    IMPORTANTE:
+    Meta puede incluir MÁS DE UN mensaje dentro de value["messages"].
+    Procesamos cada elemento por separado para que cada mensaje:
+    - aparezca en el CRM;
+    - genere su propia notificación Push;
+    - sea procesado por el bot.
     """
     datos = request.get_json()
 
@@ -5103,41 +6559,1136 @@ def recibir_mensaje():
             print("Evento recibido, pero no es mensaje entrante.")
             return "EVENT_RECEIVED", 200
 
-        mensaje = value["messages"][0]
-        message_id = mensaje.get("id")
+        mensajes = value.get("messages") or []
 
-        # MUY IMPORTANTE:
-        # Si Meta reintenta el mismo mensaje, no volvemos a responder.
-        if not marcar_mensaje_como_procesado(message_id):
-            print("MENSAJE DUPLICADO IGNORADO:", message_id)
+        if not mensajes:
             return "EVENT_RECEIVED", 200
 
-        # Procesamos después, para no mantener abierto el webhook
-        # mientras se suben fotos/videos o responde OpenAI.
-        numero_cliente = mensaje.get("from")
+        print("MENSAJES EN ESTE WEBHOOK:", len(mensajes))
 
-        # Este mensaje pasa a ser el único procesamiento vigente para ese número.
-        iniciar_procesamiento(
-            numero_cliente,
-            message_id
-        )
+        for mensaje in mensajes:
+            try:
+                message_id = mensaje.get("id")
 
-        Thread(
-            target=procesar_mensaje_en_segundo_plano,
-            args=(datos, message_id),
-            daemon=True
-        ).start()
+                # Si Meta reintenta EL MISMO mensaje, no duplicamos nada.
+                if not marcar_mensaje_como_procesado(message_id):
+                    print("MENSAJE DUPLICADO IGNORADO:", message_id)
+                    continue
 
-        # Meta recibe el 200 inmediatamente.
+                numero_cliente = mensaje.get("from")
+
+                # 1) Guardar en CRM y disparar UNA notificación propia.
+                crm_registrar_mensaje(
+                    numero_cliente,
+                    "in",
+                    crm_resumen_entrante(mensaje),
+                    event_id=message_id
+                )
+
+                # 2) Cancelar seguimiento pendiente.
+                cancelar_seguimiento(numero_cliente)
+
+                # 3) Este mensaje pasa a ser el procesamiento vigente.
+                iniciar_procesamiento(
+                    numero_cliente,
+                    message_id
+                )
+
+                acumular_mensaje_texto(
+                    numero_cliente,
+                    message_id,
+                    mensaje
+                )
+
+                # Construimos un payload individual para reutilizar
+                # el procesador existente sin hacerle creer que solo
+                # existe el primer elemento de un webhook agrupado.
+                datos_individuales = {
+                    "object": datos.get("object"),
+                    "entry": [{
+                        **datos["entry"][0],
+                        "changes": [{
+                            **datos["entry"][0]["changes"][0],
+                            "value": {
+                                **value,
+                                "messages": [mensaje]
+                            }
+                        }]
+                    }]
+                }
+
+                Thread(
+                    target=procesar_mensaje_en_segundo_plano,
+                    args=(datos_individuales, message_id),
+                    daemon=True
+                ).start()
+
+            except Exception as error_mensaje:
+                print(
+                    "ERROR PROCESANDO ELEMENTO DEL WEBHOOK:",
+                    mensaje.get("id"),
+                    error_mensaje
+                )
+
+        # Meta recibe 200 inmediatamente después de despachar todos.
         return "EVENT_RECEIVED", 200
 
     except Exception as error:
         print("\nERROR DEL WEBHOOK:")
         print(error)
 
-        # Aun con un payload inesperado respondemos 200 para evitar
-        # reintentos infinitos del mismo evento.
+        # Siempre respondemos 200 para evitar reintentos infinitos.
         return "EVENT_RECEIVED", 200
+
+
+# ============================================================
+# CRM WEB - GABRIEL
+# ============================================================
+
+CRM_HTML = r"""
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CRM Gabriel</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #f4f6f8;
+            color: #17212b;
+        }
+        .top {
+            background: #111827;
+            color: white;
+            padding: 14px 18px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 5;
+        }
+        .top strong { font-size: 18px; }
+        .top a {
+            color: white;
+            text-decoration: none;
+            border: 1px solid #64748b;
+            border-radius: 8px;
+            padding: 7px 10px;
+            font-size: 13px;
+        }
+        .layout {
+            display: grid;
+            grid-template-columns: 330px 1fr;
+            min-height: calc(100vh - 55px);
+        }
+        .sidebar {
+            background: white;
+            border-right: 1px solid #dbe1e7;
+            overflow-y: auto;
+        }
+        .sidebar-title {
+            padding: 16px;
+            font-weight: bold;
+            border-bottom: 1px solid #edf0f2;
+        }
+        .chat-link {
+            display: block;
+            padding: 14px 16px;
+            color: inherit;
+            text-decoration: none;
+            border-bottom: 1px solid #edf0f2;
+        }
+        .chat-link:hover, .chat-link.active { background: #f0f7f4; }
+        .phone { font-weight: 700; }
+        .preview {
+            margin-top: 5px;
+            color: #667085;
+            font-size: 13px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .small {
+            margin-top: 5px;
+            font-size: 12px;
+            color: #84909d;
+        }
+        .status {
+            display: inline-block;
+            padding: 3px 7px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: bold;
+        }
+        .status.ai { background: #dcfce7; color: #166534; }
+        .status.manual { background: #fee2e2; color: #991b1b; }
+        .main {
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+        }
+        .chat-head {
+            background: white;
+            padding: 13px 18px;
+            border-bottom: 1px solid #dbe1e7;
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            align-items: center;
+        }
+        .chat-head h2 { margin: 0; font-size: 17px; }
+        .chat-head p { margin: 4px 0 0; color: #667085; font-size: 13px; }
+        .toggle {
+            border: 0;
+            border-radius: 9px;
+            padding: 10px 13px;
+            cursor: pointer;
+            font-weight: 700;
+        }
+        .toggle.pause { background: #fee2e2; color: #991b1b; }
+        .toggle.resume { background: #dcfce7; color: #166534; }
+        .messages {
+            flex: 1;
+            padding: 18px;
+            overflow-y: auto;
+            min-height: 60vh;
+        }
+        .row { display: flex; margin-bottom: 10px; }
+        .row.in { justify-content: flex-start; }
+        .row.out { justify-content: flex-end; }
+        .bubble {
+            max-width: 76%;
+            padding: 10px 12px;
+            border-radius: 12px;
+            white-space: pre-wrap;
+            line-height: 1.35;
+            box-shadow: 0 1px 2px rgba(0,0,0,.06);
+        }
+        .in .bubble { background: white; }
+        .out .bubble { background: #d9fdd3; }
+        .time {
+            display: block;
+            text-align: right;
+            font-size: 10px;
+            color: #6b7280;
+            margin-top: 5px;
+        }
+        .composer {
+            background: white;
+            border-top: 1px solid #dbe1e7;
+            padding: 12px;
+            position: sticky;
+            bottom: 0;
+        }
+        .composer form {
+            display: flex;
+            gap: 8px;
+        }
+        .composer textarea {
+            flex: 1;
+            min-height: 46px;
+            resize: vertical;
+            padding: 10px;
+            border: 1px solid #cfd6dd;
+            border-radius: 9px;
+            font: inherit;
+        }
+        .send {
+            border: 0;
+            background: #16a34a;
+            color: white;
+            font-weight: bold;
+            border-radius: 9px;
+            padding: 0 18px;
+            cursor: pointer;
+        }
+        .empty {
+            margin: auto;
+            color: #667085;
+            text-align: center;
+            padding: 50px;
+        }
+        .notice {
+            padding: 8px 18px;
+            background: #fff7ed;
+            border-bottom: 1px solid #fed7aa;
+            color: #9a3412;
+            font-size: 12px;
+        }
+        @media (max-width: 760px) {
+            .layout { grid-template-columns: 1fr; }
+            .sidebar {
+                max-height: 34vh;
+                border-right: 0;
+                border-bottom: 1px solid #dbe1e7;
+            }
+            .bubble { max-width: 88%; }
+            .chat-head { align-items: flex-start; }
+        }
+    </style>
+</head>
+<body>
+    <div class="top">
+        <strong>🏡 CRM Gabriel <span style="font-size:12px;color:#86efac;">● En vivo</span></strong>
+        <div style="display:flex;gap:8px;align-items:center;">
+            <button id="btn-notificaciones"
+                    type="button"
+                    style="background:#1f2937;color:white;border:1px solid #64748b;border-radius:8px;padding:7px 10px;cursor:pointer;">
+                📱 Activar notificaciones
+            </button>
+            <button id="btn-probar-push"
+                    type="button"
+                    style="background:#065f46;color:white;border:1px solid #047857;border-radius:8px;padding:7px 10px;cursor:pointer;">
+                🧪 Probar móvil
+            </button>
+            <a href="{{ url_for('crm') }}">Actualizar</a>
+        </div>
+    </div>
+
+    <div class="layout">
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-title">Conversaciones (<span id="client-count">{{ clientes|length }}</span>)</div>
+            {% if not clientes %}
+                <div style="padding:20px;color:#667085;">
+                    Todavía no han entrado mensajes desde que se inició esta versión.
+                </div>
+            {% endif %}
+
+            {% for c in clientes %}
+                <a class="chat-link {% if seleccionado == c.numero %}active{% endif %}"
+                   href="{{ url_for('crm', numero=c.numero) }}">
+                    <div>
+                        <span class="phone">+{{ c.numero }}</span>
+                        {% if c.manual %}
+                            <span class="status manual">MANUAL</span>
+                        {% else %}
+                            <span class="status ai">IA</span>
+                        {% endif %}
+                    </div>
+                    <div class="preview">{{ c.preview }}</div>
+                    <div class="small">{{ c.proyecto }}</div>
+                </a>
+            {% endfor %}
+        </aside>
+
+        <main class="main">
+        {% if seleccionado %}
+            <div class="chat-head">
+                <div>
+                    <h2>+{{ seleccionado }}</h2>
+                    <p>{{ proyecto_seleccionado }}</p>
+                </div>
+
+                <form method="post" action="{{ url_for('crm_toggle', numero=seleccionado) }}">
+                    {% if manual %}
+                        <button class="toggle resume" type="submit">▶ Activar IA</button>
+                    {% else %}
+                        <button class="toggle pause" type="submit">⏸ Pausar IA</button>
+                    {% endif %}
+                </form>
+            </div>
+
+            {% if manual %}
+                <div class="notice">
+                    ✋ Estás atendiendo esta conversación manualmente. La IA y el seguimiento automático están pausados.
+                </div>
+            {% endif %}
+
+            <div class="messages" id="messages" data-numero="{{ seleccionado or '' }}">
+                {% for m in mensajes %}
+                    <div class="row {{ m.direccion }}">
+                        <div class="bubble">
+                            {{ m.contenido }}
+                            <span class="time">{{ m.hora }}</span>
+                        </div>
+                    </div>
+                {% endfor %}
+            </div>
+
+            <div class="composer">
+                <form method="post" action="{{ url_for('crm_enviar', numero=seleccionado) }}">
+                    <textarea id="composer-text" name="mensaje" placeholder="Escribe tu respuesta manual..." required></textarea>
+                    <button class="send" type="submit">Enviar</button>
+                </form>
+            </div>
+        {% else %}
+            <div class="empty">
+                <h2>Selecciona una conversación</h2>
+                <p>Aquí podrás pausar la IA y responder tú mismo.</p>
+            </div>
+        {% endif %}
+        </main>
+    </div>
+
+    <script>
+        const box = document.getElementById("messages");
+        const composer = document.getElementById("composer-text");
+        if (box) box.scrollTop = box.scrollHeight;
+
+        let lastSignature = "";
+        let ultimoEventoEntrante = null;
+        const btnNotificaciones = document.getElementById("btn-notificaciones");
+
+        let pushRegistradoServidor = false;
+        let pushDevices = 0;
+
+        function actualizarBotonNotificaciones() {
+            if (!btnNotificaciones) return;
+
+            if (!("Notification" in window)) {
+                btnNotificaciones.textContent = "🔕 No compatible";
+                btnNotificaciones.disabled = true;
+                return;
+            }
+
+            if (Notification.permission === "denied") {
+                btnNotificaciones.textContent = "🔕 Notificaciones bloqueadas";
+                return;
+            }
+
+            if (Notification.permission === "granted" && pushRegistradoServidor) {
+                btnNotificaciones.textContent = `🔔 Activo en este teléfono (${pushDevices})`;
+                return;
+            }
+
+            if (Notification.permission === "granted") {
+                btnNotificaciones.textContent = "📱 Registrar este teléfono";
+                return;
+            }
+
+            btnNotificaciones.textContent = "🔔 Activar notificaciones";
+        }
+
+        function urlBase64ToUint8Array(base64String) {
+            const padding = "=".repeat((4 - base64String.length % 4) % 4);
+            const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+            const rawData = atob(base64);
+            return Uint8Array.from([...rawData].map(ch => ch.charCodeAt(0)));
+        }
+
+        async function sincronizarPush({
+            pedirPermiso = false,
+            mostrarMensaje = false
+        } = {}) {
+            if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+                throw new Error(
+                    "Este navegador no permite Web Push. Usa Chrome actualizado."
+                );
+            }
+
+            let permiso = Notification.permission;
+
+            if (pedirPermiso && permiso !== "granted") {
+                permiso = await Notification.requestPermission();
+            }
+
+            if (permiso !== "granted") {
+                pushRegistradoServidor = false;
+                actualizarBotonNotificaciones();
+                return {ok: false, devices: 0, permiso};
+            }
+
+            const configResp = await fetch("/crm/push/config", {
+                cache: "no-store"
+            });
+
+            if (!configResp.ok) {
+                throw new Error("No pude obtener la configuración Push del servidor.");
+            }
+
+            const config = await configResp.json();
+
+            if (!config.publicKey) {
+                throw new Error("Falta VAPID_PUBLIC_KEY en Render.");
+            }
+
+            // Registrar SW y esperar hasta que realmente esté activo.
+            await navigator.serviceWorker.register("/crm-sw.js", {
+                scope: "/"
+            });
+
+            const registro = await navigator.serviceWorker.ready;
+
+            // Recuperar una suscripción anterior si existe.
+            let sub = await registro.pushManager.getSubscription();
+
+            // Si no existe, crearla usando la llave pública VAPID.
+            if (!sub) {
+                sub = await registro.pushManager.subscribe({
+                    userVisibleOnly: true,
+                    applicationServerKey: urlBase64ToUint8Array(config.publicKey)
+                });
+            }
+
+            if (!sub || !sub.endpoint) {
+                throw new Error("Chrome no devolvió una suscripción Push válida.");
+            }
+
+            // IMPORTANTE:
+            // Aunque Chrome ya estuviera suscrito, SIEMPRE mandamos esa
+            // suscripción otra vez al servidor. Esto recupera el registro
+            // después de un deploy/reinicio de Render.
+            const resp = await fetch("/crm/push/subscribe", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Cache-Control": "no-cache"
+                },
+                body: JSON.stringify(sub.toJSON())
+            });
+
+            const data = await resp.json().catch(() => ({}));
+
+            if (!resp.ok || !data.ok) {
+                throw new Error(
+                    data.error || "No se pudo guardar el teléfono en el servidor."
+                );
+            }
+
+            pushRegistradoServidor = true;
+            pushDevices = Number(data.devices || 1);
+            actualizarBotonNotificaciones();
+
+            if (mostrarMensaje) {
+                alert(
+                    `✅ Teléfono registrado correctamente.\n\n` +
+                    `Dispositivos suscritos: ${pushDevices}`
+                );
+            }
+
+            return {
+                ok: true,
+                devices: pushDevices,
+                subscription: sub
+            };
+        }
+
+
+        async function activarPush() {
+            return sincronizarPush({
+                pedirPermiso: true,
+                mostrarMensaje: true
+            });
+        }
+
+        if (btnNotificaciones) {
+            btnNotificaciones.addEventListener("click", () => {
+                activarPush().catch(err => {
+                    console.error(err);
+                    alert("No se pudieron activar las notificaciones: " + err.message);
+                });
+            });
+        }
+
+        const btnProbarPush = document.getElementById("btn-probar-push");
+
+        if (btnProbarPush) {
+            btnProbarPush.addEventListener("click", async () => {
+                try {
+                    btnProbarPush.disabled = true;
+                    btnProbarPush.textContent = "⏳ Probando...";
+
+                    // Primero garantizamos que ESTE teléfono esté registrado
+                    // en el servidor antes de intentar el push.
+                    const sync = await sincronizarPush({
+                        pedirPermiso: true,
+                        mostrarMensaje: false
+                    });
+
+                    if (!sync.ok) {
+                        throw new Error(
+                            "No se pudo registrar este teléfono para recibir Push."
+                        );
+                    }
+
+                    const resp = await fetch("/crm/push/test", {
+                        method: "POST",
+                        headers: {"Content-Type": "application/json"}
+                    });
+
+                    const data = await resp.json();
+
+                    if (data.ok) {
+                        alert(
+                            "✅ El servidor envió la notificación.\n\n" +
+                            "Dispositivos suscritos: " + (data.devices ?? sync.devices) +
+                            "\n\nAhora revisa la barra de notificaciones del teléfono."
+                        );
+                    } else {
+                        alert(
+                            "❌ No se pudo enviar.\n\n" +
+                            (data.error || "Error desconocido") +
+                            "\n\nDispositivos suscritos: " +
+                            (data.devices ?? 0)
+                        );
+                    }
+                } catch (err) {
+                    alert("❌ Error probando push: " + err.message);
+                } finally {
+                    btnProbarPush.disabled = false;
+                    btnProbarPush.textContent = "🧪 Probar móvil";
+                }
+            });
+        }
+
+        actualizarBotonNotificaciones();
+
+        // Si este teléfono YA dio permiso anteriormente, al abrir el CRM
+        // volvemos a registrar silenciosamente su PushSubscription en Render.
+        // No muestra popups ni solicita permiso nuevo.
+        if (
+            "Notification" in window &&
+            Notification.permission === "granted" &&
+            "serviceWorker" in navigator &&
+            "PushManager" in window
+        ) {
+            sincronizarPush({
+                pedirPermiso: false,
+                mostrarMensaje: false
+            }).catch(err => {
+                pushRegistradoServidor = false;
+                actualizarBotonNotificaciones();
+                console.error("AUTO-SYNC PUSH:", err);
+            });
+        }
+
+        function procesarNotificaciones(eventos) {
+            if (!Array.isArray(eventos) || eventos.length === 0) return;
+
+            const mayorId = Math.max(...eventos.map(e => Number(e.id || 0)));
+
+            // Primera carga: establecemos la línea base.
+            // Así no recibes 30 alertas de mensajes que ya estaban antes de abrir el CRM.
+            if (ultimoEventoEntrante === null) {
+                ultimoEventoEntrante = mayorId;
+                return;
+            }
+
+            const nuevos = eventos.filter(
+                e => Number(e.id || 0) > ultimoEventoEntrante
+            );
+
+            if (
+                nuevos.length > 0 &&
+                "Notification" in window &&
+                Notification.permission === "granted"
+            ) {
+                nuevos.forEach(e => {
+                    const proyecto = e.proyecto && e.proyecto !== "Sin proyecto"
+                        ? ` · ${e.proyecto}`
+                        : "";
+
+                    const n = new Notification("🏡 Nuevo mensaje de cliente", {
+                        body: `+${e.numero}${proyecto}\n${e.contenido}`,
+                        tag: `crm-${e.id}`
+                    });
+
+                    n.onclick = () => {
+                        window.focus();
+                        window.location.href =
+                            "/crm?numero=" + encodeURIComponent(e.numero);
+                        n.close();
+                    };
+                });
+            }
+
+            ultimoEventoEntrante = Math.max(ultimoEventoEntrante, mayorId);
+        }
+
+        function escapeHtml(value) {
+            return String(value ?? "")
+                .replaceAll("&", "&amp;")
+                .replaceAll("<", "&lt;")
+                .replaceAll(">", "&gt;")
+                .replaceAll('"', "&quot;")
+                .replaceAll("'", "&#039;");
+        }
+
+        function renderMessages(messages) {
+            if (!box) return;
+
+            const signature = JSON.stringify(messages);
+            if (signature === lastSignature) return;
+            lastSignature = signature;
+
+            const nearBottom =
+                box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+
+            box.innerHTML = messages.map(m => `
+                <div class="row ${m.direccion}">
+                    <div class="bubble">
+                        ${escapeHtml(m.contenido).replaceAll("\n", "<br>")}
+                        <span class="time">${escapeHtml(m.hora)}</span>
+                    </div>
+                </div>
+            `).join("");
+
+            if (nearBottom || messages.length <= 3) {
+                box.scrollTop = box.scrollHeight;
+            }
+        }
+
+        function renderClients(clientes, seleccionado) {
+            const sidebar = document.getElementById("sidebar");
+            if (!sidebar) return;
+
+            const title = sidebar.querySelector(".sidebar-title");
+            const oldLinks = Array.from(sidebar.querySelectorAll(".chat-link"));
+            oldLinks.forEach(el => el.remove());
+
+            const empty = sidebar.querySelector(".crm-empty");
+            if (empty) empty.remove();
+
+            const count = document.getElementById("client-count");
+            if (count) count.textContent = clientes.length;
+
+            if (!clientes.length) {
+                const div = document.createElement("div");
+                div.className = "crm-empty";
+                div.style.padding = "20px";
+                div.style.color = "#667085";
+                div.textContent = "Todavía no han entrado mensajes desde que se inició esta versión.";
+                sidebar.appendChild(div);
+                return;
+            }
+
+            clientes.forEach(c => {
+                const a = document.createElement("a");
+                a.className = "chat-link" + (seleccionado === c.numero ? " active" : "");
+                a.href = "/crm?numero=" + encodeURIComponent(c.numero);
+                a.innerHTML = `
+                    <div>
+                        <span class="phone">+${escapeHtml(c.numero)}</span>
+                        <span class="status ${c.manual ? "manual" : "ai"}">
+                            ${c.manual ? "MANUAL" : "IA"}
+                        </span>
+                    </div>
+                    <div class="preview">${escapeHtml(c.preview)}</div>
+                    <div class="small">${escapeHtml(c.proyecto)}</div>
+                `;
+                sidebar.appendChild(a);
+            });
+        }
+
+        async function actualizarCRM() {
+            try {
+                const numero = box ? box.dataset.numero : "";
+                const url = numero
+                    ? "/crm/data?numero=" + encodeURIComponent(numero)
+                    : "/crm/data";
+
+                const res = await fetch(url, {
+                    method: "GET",
+                    cache: "no-store",
+                    headers: {
+                        "X-Requested-With": "XMLHttpRequest"
+                    }
+                });
+
+                if (!res.ok) return;
+
+                const data = await res.json();
+
+                procesarNotificaciones(data.eventos_entrantes || []);
+                renderClients(data.clientes || [], numero || null);
+
+                if (box && numero) {
+                    renderMessages(data.mensajes || []);
+                }
+
+                const toggle = document.querySelector(".toggle");
+                const notice = document.querySelector(".notice");
+
+                if (toggle && numero) {
+                    if (data.manual) {
+                        toggle.textContent = "▶ Activar IA";
+                        toggle.classList.remove("pause");
+                        toggle.classList.add("resume");
+                        if (notice) notice.style.display = "";
+                    } else {
+                        toggle.textContent = "⏸ Pausar IA";
+                        toggle.classList.remove("resume");
+                        toggle.classList.add("pause");
+                        if (notice) notice.style.display = "none";
+                    }
+                }
+            } catch (err) {
+                console.log("CRM polling:", err);
+            }
+        }
+
+        // Actualiza automáticamente sin interrumpir lo que estás escribiendo.
+        // No recarga la página completa.
+        actualizarCRM();
+        setInterval(actualizarCRM, 2500);
+    </script>
+</body>
+</html>
+"""
+
+
+@app.route("/crm-sw.js", methods=["GET"])
+def crm_service_worker():
+    js = r"""
+self.addEventListener('install', event => {
+    self.skipWaiting();
+});
+
+self.addEventListener('activate', event => {
+    event.waitUntil(self.clients.claim());
+});
+
+self.addEventListener('push', event => {
+    let data = {};
+
+    try {
+        data = event.data ? event.data.json() : {};
+    } catch (e) {
+        data = {};
+    }
+
+    const uniqueId =
+        data.message_id ||
+        data.tag ||
+        (Date.now().toString() + '-' + Math.random().toString(36).slice(2));
+
+    const title = data.title || '🏡 Nuevo mensaje de cliente';
+
+    const options = {
+        body: data.body || 'Tienes un mensaje nuevo.',
+        // TAG ÚNICO POR MENSAJE: no reemplazar alertas anteriores.
+        tag: 'crm-' + uniqueId,
+        renotify: true,
+        silent: false,
+        timestamp: data.timestamp || Date.now(),
+        data: {
+            url: data.url || '/crm',
+            message_id: uniqueId
+        }
+    };
+
+    event.waitUntil(
+        self.registration.showNotification(title, options)
+    );
+});
+
+self.addEventListener('notificationclick', event => {
+    event.notification.close();
+
+    const target =
+        (event.notification.data && event.notification.data.url)
+        ? event.notification.data.url
+        : '/crm';
+
+    event.waitUntil(
+        clients.matchAll({
+            type: 'window',
+            includeUncontrolled: true
+        }).then(windows => {
+            for (const client of windows) {
+                if ('navigate' in client) {
+                    client.navigate(target);
+                }
+
+                if ('focus' in client) {
+                    return client.focus();
+                }
+            }
+
+            return clients.openWindow(target);
+        })
+    );
+});
+"""
+    return Response(
+        js,
+        mimetype="application/javascript",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Service-Worker-Allowed": "/"
+        }
+    )
+
+
+@app.route("/crm/push/config", methods=["GET"])
+def crm_push_config():
+    if not crm_autorizado():
+        return crm_pedir_login()
+    return jsonify({"publicKey": VAPID_PUBLIC_KEY})
+
+
+@app.route("/crm/push/subscribe", methods=["POST"])
+def crm_push_subscribe():
+    if not crm_autorizado():
+        return crm_pedir_login()
+
+    sub = request.get_json(silent=True) or {}
+    endpoint = sub.get("endpoint")
+    keys = sub.get("keys") or {}
+    if not endpoint or not keys.get("p256dh") or not keys.get("auth"):
+        return jsonify({"ok": False, "error": "Suscripción inválida"}), 400
+
+    guardado = guardar_push_subscription(sub)
+    devices = contar_push_devices()
+
+    print(
+        "WEB PUSH SUSCRIPCION:",
+        "PERSISTENTE" if guardado else "SOLO RAM",
+        endpoint[:90],
+        "| dispositivos:",
+        devices
+    )
+
+    return jsonify({
+        "ok": True,
+        "devices": devices,
+        "persistent": bool(guardado)
+    })
+
+
+@app.route("/crm/push/devices", methods=["GET"])
+def crm_push_devices():
+    if not crm_autorizado():
+        return crm_pedir_login()
+
+    devices = contar_push_devices()
+
+    return jsonify({
+        "ok": True,
+        "devices": devices,
+        "persistent": bool(push_db_disponible())
+    })
+
+
+
+@app.route("/crm/ntfy/test", methods=["GET"])
+def crm_ntfy_test():
+    if not crm_autorizado():
+        return crm_pedir_login()
+
+    ok = enviar_ntfy_crm(
+        "PRUEBA",
+        "Prueba de ntfy: las notificaciones del CRM ya están conectadas ✅",
+        event_id=f"test-{time.time_ns()}"
+    )
+
+    return jsonify({
+        "ok": bool(ok),
+        "topic_configured": bool(NTFY_TOPIC),
+        "server": NTFY_SERVER
+    })
+
+
+@app.route("/crm/ntfy/status", methods=["GET"])
+def crm_ntfy_status():
+    if not crm_autorizado():
+        return crm_pedir_login()
+
+    return jsonify({
+        "topic_configured": bool(NTFY_TOPIC),
+        "server": NTFY_SERVER,
+        "crm_url": CRM_PUBLIC_URL
+    })
+
+
+@app.route("/crm/push/trace", methods=["GET"])
+def crm_push_trace():
+    if not crm_autorizado():
+        return crm_pedir_login()
+
+    return jsonify({
+        "devices": contar_push_devices(),
+        "last_error": ultimo_error_push,
+        "last_result": ultimo_resultado_push,
+        "database_ready": bool(inicializar_push_db())
+    })
+
+
+@app.route("/crm/push/persistence", methods=["GET"])
+def crm_push_persistence():
+    if not crm_autorizado():
+        return crm_pedir_login()
+
+    return jsonify({
+        "database_configured": bool(DATABASE_URL),
+        "psycopg2_available": bool(psycopg2),
+        "database_ready": bool(inicializar_push_db()),
+        "devices": contar_push_devices()
+    })
+
+
+@app.route("/crm/push/test", methods=["POST"])
+def crm_push_test():
+    if not crm_autorizado():
+        return crm_pedir_login()
+
+    devices = contar_push_devices()
+
+    resultado = enviar_push_crm(
+        "PRUEBA",
+        "Esta es una prueba de notificación móvil del CRM Gabriel ✅"
+    )
+
+    return jsonify({
+        "ok": bool(resultado.get("ok")),
+        "enviadas": resultado.get("enviadas", 0),
+        "error": resultado.get("error"),
+        "devices": devices,
+        "pywebpush": bool(webpush),
+        "vapid_public": bool(VAPID_PUBLIC_KEY),
+        "vapid_private": bool(VAPID_PRIVATE_KEY),
+        "database": bool(push_db_disponible())
+    })
+
+
+@app.route("/crm", methods=["GET"])
+def crm():
+    if not crm_autorizado():
+        return crm_pedir_login()
+
+    seleccionado = request.args.get("numero", "").strip() or None
+
+    with lock_crm:
+        numeros = list(crm_mensajes.keys())
+
+        numeros.sort(
+            key=lambda n: crm_ultima_actividad.get(n, 0),
+            reverse=True
+        )
+
+        clientes = []
+        for numero in numeros:
+            mensajes = crm_mensajes.get(numero, [])
+            ultimo = mensajes[-1]["contenido"] if mensajes else ""
+            clientes.append({
+                "numero": numero,
+                "preview": ultimo[:70],
+                "manual": numero in crm_modo_manual,
+                "proyecto": crm_nombre_proyecto(numero)
+            })
+
+        mensajes_seleccionados = list(
+            crm_mensajes.get(seleccionado, [])
+        ) if seleccionado else []
+
+        manual = seleccionado in crm_modo_manual if seleccionado else False
+
+    return render_template_string(
+        CRM_HTML,
+        clientes=clientes,
+        seleccionado=seleccionado,
+        mensajes=mensajes_seleccionados,
+        manual=manual,
+        proyecto_seleccionado=crm_nombre_proyecto(seleccionado) if seleccionado else ""
+    )
+
+
+
+@app.route("/crm/data", methods=["GET"])
+def crm_data():
+    if not crm_autorizado():
+        return crm_pedir_login()
+
+    seleccionado = request.args.get("numero", "").strip() or None
+
+    with lock_crm:
+        numeros = list(crm_mensajes.keys())
+        numeros.sort(
+            key=lambda n: crm_ultima_actividad.get(n, 0),
+            reverse=True
+        )
+
+        clientes = []
+        for numero in numeros:
+            mensajes = crm_mensajes.get(numero, [])
+            ultimo = mensajes[-1]["contenido"] if mensajes else ""
+            clientes.append({
+                "numero": numero,
+                "preview": ultimo[:70],
+                "manual": numero in crm_modo_manual,
+                "proyecto": crm_nombre_proyecto(numero)
+            })
+
+        mensajes = list(
+            crm_mensajes.get(seleccionado, [])
+        ) if seleccionado else []
+
+        manual = seleccionado in crm_modo_manual if seleccionado else False
+
+        # Últimos mensajes entrantes de TODAS las conversaciones.
+        # El navegador usa el ID para avisar una sola vez por cada mensaje.
+        eventos_entrantes = []
+        for numero, lista in crm_mensajes.items():
+            for m in lista:
+                if m.get("direccion") == "in":
+                    eventos_entrantes.append({
+                        "id": m.get("id", 0),
+                        "numero": numero,
+                        "contenido": m.get("contenido", ""),
+                        "hora": m.get("hora", ""),
+                        "proyecto": crm_nombre_proyecto(numero)
+                    })
+
+        eventos_entrantes.sort(key=lambda x: x.get("id", 0))
+        eventos_entrantes = eventos_entrantes[-100:]
+
+    return jsonify({
+        "clientes": clientes,
+        "mensajes": mensajes,
+        "manual": manual,
+        "seleccionado": seleccionado,
+        "eventos_entrantes": eventos_entrantes
+    })
+
+
+@app.route("/crm/toggle/<numero>", methods=["POST"])
+def crm_toggle(numero):
+    if not crm_autorizado():
+        return crm_pedir_login()
+
+    if crm_esta_manual(numero):
+        crm_poner_ia(numero)
+    else:
+        # Pausar inmediatamente cualquier respuesta IA que esté en proceso.
+        crm_poner_manual(numero)
+        cancelar_seguimiento(numero)
+        iniciar_procesamiento(
+            numero,
+            f"crm-manual-{time.time()}"
+        )
+
+    return redirect(url_for("crm", numero=numero))
+
+
+@app.route("/crm/enviar/<numero>", methods=["POST"])
+def crm_enviar(numero):
+    if not crm_autorizado():
+        return crm_pedir_login()
+
+    mensaje = request.form.get("mensaje", "").strip()
+
+    if not mensaje:
+        return redirect(url_for("crm", numero=numero))
+
+    # Si Gabriel responde manualmente, la conversación queda en manual
+    # hasta que él pulse "Activar IA".
+    crm_poner_manual(numero)
+    cancelar_seguimiento(numero)
+
+    # Invalida cualquier respuesta automática que todavía estuviera procesándose.
+    iniciar_procesamiento(
+        numero,
+        f"crm-manual-{time.time()}"
+    )
+
+    enviar_whatsapp(numero, mensaje)
+    guardar_mensaje(numero, "assistant", mensaje)
+
+    return redirect(url_for("crm", numero=numero))
 
 
 # ============================================================
