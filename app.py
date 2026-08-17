@@ -5279,8 +5279,11 @@ def enviar_planos_solicitados(numero, proyecto, texto_cliente):
     # La explicación de colores debe acompañar SIEMPRE cualquier envío de planos.
     enviar_whatsapp(numero, texto_leyenda_planos())
 
-    # No hacemos preguntas adicionales después del plano.
-    # Si el cliente pidió plano o disponibilidad, se entrega directamente.
+    # Después de cualquier plano, abrimos la conversación sobre topografía
+    # y recordamos que la siguiente respuesta corta puede ser "plano" o "quebrado".
+    enviar_whatsapp(numero, mensaje_topografia_despues_de_plano())
+    marcar_pregunta_topografia(numero)
+
     return enviados > 0
 
 
@@ -6178,7 +6181,7 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
             guardar_mensaje(
                 numero_cliente,
                 "assistant",
-                f"Se enviaron directamente los planos de {nombre_proyecto_plano(proyecto)} y la leyenda de colores."
+                f"Se enviaron los planos de {nombre_proyecto_plano(proyecto)}, la leyenda de colores y la pregunta sobre topografía."
             )
 
             if procesamiento_sigue_vigente(numero_cliente, message_id):
