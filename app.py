@@ -267,7 +267,9 @@ def construir_resumen_cotizacion(proyecto):
         f"¡Claro! 😊 Te comparto la información de {datos['nombre']}:\n\n"
         f"{datos['descripcion']}\n\n"
         f"🏊🌳 Amenidades: {datos['amenidades']}\n"
-        f"✅ Servicios: {datos['servicios']}\n\n"
+        f"✅ Servicios: {datos['servicios']}\n"
+        "🏗️ Diseño de construcción libre: puedes construir vivienda, apartamentos "
+        "o locales, siempre que sea una construcción formal con block.\n\n"
         f"{datos['cierre']}"
     )
 
@@ -879,7 +881,9 @@ def obtener_estado_conversacion(numero):
             "esperando_preferencia_topografia": False,
             "preferencia_topografia": None,
             "topografia_en_conversacion": False,
-            "multimedia_pendiente": False
+            "multimedia_pendiente": False,
+            "esperando_cantidad_descuento_contado": False,
+            "esperando_disponibilidad_desde_cta": False
         }
 
     return estado_conversacion[numero]
@@ -1119,6 +1123,193 @@ def respuesta_si_pregunta_quebrado(numero, proyecto, texto):
 
     return None
 
+
+
+# ============================================================
+# REGLAS COMERCIALES NUEVAS: CONTADO, CONSTRUCCION Y ESTADO DE AMENIDADES
+# ============================================================
+
+def normalizar_ventas(texto):
+    t = (texto or "").lower().strip()
+    reemplazos = {
+        "á": "a", "é": "e", "í": "i", "ó": "o", "ú": "u", "ü": "u", "ñ": "n"
+    }
+    for a, b in reemplazos.items():
+        t = t.replace(a, b)
+    return " ".join(t.split())
+
+
+def pregunta_descuento_contado(texto):
+    t = normalizar_ventas(texto)
+    referencias_contado = [
+        "de contado", "al contado", "pago contado", "pagar contado",
+        "pago de una vez", "pagar de una vez", "cancelar de una vez"
+    ]
+    referencias_descuento = [
+        "descuento", "rebaja", "mejor precio", "precio especial",
+        "cuanto me baja", "cuanto baja", "me descuentan"
+    ]
+    return (
+        any(x in t for x in referencias_contado)
+        and (any(x in t for x in referencias_descuento) or "contado" in t)
+    )
+
+
+def extraer_cantidad_lotes_compra(texto):
+    t = normalizar_ventas(texto)
+    palabras = {
+        "uno": 1, "un": 1, "una": 1,
+        "dos": 2, "tres": 3, "cuatro": 4, "cinco": 5,
+        "seis": 6, "siete": 7, "ocho": 8, "nueve": 9, "diez": 10
+    }
+    m = re.search(r"\b(\d{1,2})\s*(?:lotes?|terrenos?)?\b", t)
+    if m:
+        n = int(m.group(1))
+        if 1 <= n <= 50:
+            return n
+    for palabra, n in palabras.items():
+        if re.search(rf"\b{re.escape(palabra)}\s+(?:lotes?|terrenos?)\b", t):
+            return n
+    if t in palabras:
+        return palabras[t]
+    return None
+
+
+def respuesta_descuento_contado(numero, texto):
+    estado = obtener_estado_conversacion(numero)
+    cantidad = extraer_cantidad_lotes_compra(texto)
+
+    if cantidad is None:
+        estado["esperando_cantidad_descuento_contado"] = True
+        persistir_cliente(numero)
+        return (
+            "Sí 😊 Manejamos descuento por pago de contado. "
+            "Si es 1 lote aplicamos 3% de descuento y si son 2 lotes o más aplicamos 5%. 🏡💰\n\n"
+            "¿Cuántos lotes te interesan?"
+        )
+
+    estado["esperando_cantidad_descuento_contado"] = False
+    estado["esperando_disponibilidad_desde_cta"] = True
+    persistir_cliente(numero)
+
+    if cantidad == 1:
+        return (
+            "¡Perfecto! 😊 Si compras 1 lote y realizas el pago de contado, "
+            "podemos aplicarte un 3% de descuento sobre la compra. 🏡💰\n\n"
+            "Además, el diseño de construcción es libre: puedes hacer vivienda, apartamentos "
+            "o locales, siempre que sea una construcción formal con block. 🏗️\n\n"
+            "¿Quieres que te muestre las opciones disponibles? 😊"
+        )
+
+    return (
+        f"¡Excelente! 😊 Al ser {cantidad} lotes y realizar el pago de contado, "
+        "podemos aplicarte un 5% de descuento sobre la compra. 🏡💰\n\n"
+        "Además, el diseño de construcción es libre: puedes hacer vivienda, apartamentos "
+        "o locales, siempre que sea una construcción formal con block. 🏗️\n\n"
+        f"¿Quieres que te muestre la disponibilidad de {cantidad} lotes juntos? 😊"
+    )
+
+
+def respuesta_cantidad_descuento_pendiente(numero, texto):
+    estado = obtener_estado_conversacion(numero)
+    if not estado.get("esperando_cantidad_descuento_contado"):
+        return None
+    cantidad = extraer_cantidad_lotes_compra(texto)
+    if cantidad is None:
+        return None
+    return respuesta_descuento_contado(numero, texto)
+
+
+def pregunta_diseno_construccion(texto):
+    t = normalizar_ventas(texto)
+    claves = [
+        "casas iguales", "casa igual", "tienen que ser iguales", "tiene que ser igual",
+        "deben ser iguales", "mismo diseno", "diseño igual",
+        "diseno obligatorio", "diseño obligatorio", "puedo construir como quiera",
+        "puedo hacer apartamentos", "puedo hacer apartamento", "puedo hacer locales",
+        "puedo hacer local", "tipo de construccion", "reglas para construir",
+        "modelo de casa", "diseno de casa", "diseño de casa"
+    ]
+    return any(normalizar_ventas(x) in t for x in claves)
+
+
+def respuesta_diseno_construccion():
+    return (
+        "Sí 😊 El diseño de construcción es libre. Puedes construir vivienda, apartamentos "
+        "o locales en tu terreno, siempre que sea una construcción formal con block. 🏗️🏡\n\n"
+        "Así puedes adaptar el terreno al proyecto que tengas pensado."
+    )
+
+
+def pregunta_estado_amenidades_o_garita(texto):
+    t = normalizar_ventas(texto)
+    elementos = [
+        "garita", "muro perimetral", "amenidades", "piscina", "piscinas",
+        "casa club", "salon", "juegos", "areas verdes", "caminamientos"
+    ]
+    estado = [
+        "ya esta", "ya estan", "ya hicieron", "ya hicieron la", "ya hay",
+        "esta construida", "estan construidas", "esta hecha", "estan hechas",
+        "ya existe", "ya existen", "como se ve en el video", "como aparece en el video",
+        "del video", "de las fotos"
+    ]
+    return any(x in t for x in elementos) and any(x in t for x in estado)
+
+
+def respuesta_estado_amenidades(numero, proyecto):
+    estado = obtener_estado_conversacion(numero)
+    estado["esperando_disponibilidad_desde_cta"] = True
+    persistir_cliente(numero)
+
+    cta = "¿Ya vio alguna medida que le interese o quiere que le muestre cuáles tenemos disponibles? 😊"
+
+    if proyecto == "vista_hermosa":
+        return (
+            "Sí 😊 En Ciudad Vista Hermosa la garita y las amenidades ya se encuentran construidas. 🏡🌴\n\n"
+            + cta
+        )
+
+    if proyecto == "buenaventura":
+        return (
+            "Aún no 😊 Buenaventura Cuyotenango se encuentra en proceso de urbanización, "
+            "por lo que la garita y las amenidades todavía no están construidas. 🏗️\n\n"
+            "Las imágenes o videos que te mostramos sirven como referencia de nuestros otros proyectos. "
+            "Buenaventura sí contará con garita, muro perimetral y sus amenidades. 🏡🌴\n\n"
+            + cta
+        )
+
+    if proyecto == "palmeras":
+        return (
+            "En Palmeras San Miguel las amenidades todavía no están construidas, ya que actualmente "
+            "estamos en proceso de urbanización. 🏗️🌴\n\n"
+            "Las imágenes o videos sirven como referencia de nuestros otros proyectos. "
+            "En Palmeras San Miguel sí tendremos las amenidades indicadas, pero este proyecto "
+            "NO contará con garita ni muro perimetral.\n\n"
+            + cta
+        )
+
+    return (
+        "Déjame confirmar el estado exacto de esa parte del proyecto para darte la información correcta 😊"
+    )
+
+
+def confirmacion_para_mostrar_disponibilidad(numero, texto):
+    estado = obtener_estado_conversacion(numero)
+    if not estado.get("esperando_disponibilidad_desde_cta"):
+        return False
+    t = normalizar_ventas(texto)
+    afirmaciones = [
+        "si", "si por favor", "si porfa", "dale", "de una", "muestrame",
+        "muestreme", "quiero ver", "ensename", "enseneme", "mandame",
+        "enviame", "cuales", "cuales hay", "disponibles", "ver disponibilidad"
+    ]
+    return any(t == x or x in t for x in afirmaciones)
+
+
+def limpiar_confirmacion_disponibilidad(numero):
+    estado = obtener_estado_conversacion(numero)
+    estado["esperando_disponibilidad_desde_cta"] = False
+    persistir_cliente(numero)
 
 # ============================================================
 # PLANOS PUBLICADOS EN GITHUB PAGES
@@ -2972,6 +3163,8 @@ def _aplicar_snapshot(numero, snap):
     estado.setdefault("preferencia_topografia", None)
     estado.setdefault("topografia_en_conversacion", False)
     estado.setdefault("multimedia_pendiente", False)
+    estado.setdefault("esperando_cantidad_descuento_contado", False)
+    estado.setdefault("esperando_disponibilidad_desde_cta", False)
     estado_conversacion[numero] = estado
 
     if snap.get("ultima_intencion") is not None:
@@ -3069,6 +3262,8 @@ def importar_respaldo_clientes(data):
             "preferencia_topografia": None,
             "topografia_en_conversacion": False,
             "multimedia_pendiente": False,
+            "esperando_cantidad_descuento_contado": False,
+            "esperando_disponibilidad_desde_cta": False,
         }
         clientes_presentados.add(numero)
 
@@ -3783,6 +3978,22 @@ Cuando la información disponible NO alcance para responder con certeza:
 - responde de forma breve:
   "Déjame revisar exactamente lo que me solicitas y te lo envío en un momento 😊"
   o una variante natural equivalente.
+
+============================================================
+REGLAS COMERCIALES: CONTADO, CONSTRUCCION Y AMENIDADES
+============================================================
+
+- Pago de contado: 1 lote = 3% de descuento; 2 lotes o más = 5% de descuento.
+- El diseño de construcción es libre: se permiten vivienda, apartamentos o locales,
+  siempre que sea una construcción formal con block.
+- Palmeras San Miguel NO tiene ni tendrá garita ni muro perimetral. Nunca los menciones
+  como características de Palmeras.
+- Vista Hermosa: la garita y las amenidades ya están construidas.
+- Buenaventura Cuyotenango: garita y amenidades aún no están construidas; las imágenes
+  o videos pueden ser referencias de otros proyectos. Buenaventura sí contará con garita
+  y muro perimetral.
+- Palmeras San Miguel: las amenidades aún no están construidas; las imágenes o videos
+  pueden ser referencias de otros proyectos.
 
 ============================================================
 REGLA DE TOPOGRAFIA: PLANO VS CROQUIS
@@ -6442,6 +6653,69 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
             if procesamiento_sigue_vigente(numero_cliente, message_id):
                 enviar_whatsapp(numero_cliente, respuesta)
 
+            return
+
+        # DESCUENTO POR PAGO DE CONTADO - REGLA EXACTA
+        respuesta_desc_pendiente = respuesta_cantidad_descuento_pendiente(
+            numero_cliente,
+            texto_cliente
+        )
+        if respuesta_desc_pendiente:
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta_desc_pendiente)
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta_desc_pendiente)
+            return
+
+        if pregunta_descuento_contado(texto_cliente):
+            respuesta = respuesta_descuento_contado(numero_cliente, texto_cliente)
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta)
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta)
+            return
+
+        # DISEÑO DE CONSTRUCCION LIBRE
+        if pregunta_diseno_construccion(texto_cliente):
+            respuesta = respuesta_diseno_construccion()
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta)
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta)
+            return
+
+        # ESTADO REAL DE GARITA / AMENIDADES SEGUN PROYECTO
+        if pregunta_estado_amenidades_o_garita(texto_cliente):
+            respuesta = respuesta_estado_amenidades(numero_cliente, proyecto)
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta)
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta)
+            return
+
+        # CONFIRMACION AL CTA "QUIERE QUE LE MUESTRE CUALES TENEMOS DISPONIBLES"
+        # Envia directamente el/los planos, leyenda de colores y seguimiento de topografia.
+        if confirmacion_para_mostrar_disponibilidad(numero_cliente, texto_cliente):
+            if not proyecto:
+                respuesta = (
+                    "Claro 😊 ¿De qué proyecto deseas que te muestre la disponibilidad: "
+                    "Palmeras San Miguel, Vista Hermosa o Buenaventura Cuyotenango?"
+                )
+                guardar_mensaje(numero_cliente, "user", texto_cliente)
+                guardar_mensaje(numero_cliente, "assistant", respuesta)
+                if procesamiento_sigue_vigente(numero_cliente, message_id):
+                    enviar_whatsapp(numero_cliente, respuesta)
+                return
+
+            limpiar_confirmacion_disponibilidad(numero_cliente)
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(
+                numero_cliente,
+                "assistant",
+                f"Se enviaron los planos de {nombre_proyecto_plano(proyecto)}, la leyenda de colores y la pregunta sobre topografía."
+            )
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_planos_solicitados(numero_cliente, proyecto, "disponibilidad")
             return
 
         # TOPOGRAFÍA DEL TERRENO - RESPUESTA INTELIGENTE
