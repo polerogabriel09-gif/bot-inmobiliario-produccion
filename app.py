@@ -62,6 +62,10 @@ CRM_PUBLIC_URL = os.getenv(
 CRM_USER = os.getenv("CRM_USER", "gabriel")
 CRM_PASSWORD = os.getenv("CRM_PASSWORD")
 
+# Número interno que recibirá, por WhatsApp, un resumen separado por cada lead.
+# Puede cambiarse luego desde Render > Environment sin tocar el código.
+CRM_SEGUIMIENTO_NUMERO = os.getenv("CRM_SEGUIMIENTO_NUMERO", "50245484935").strip().replace("+", "").replace(" ", "")
+
 # Web Push para notificaciones reales en computadora y teléfono.
 VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY", "")
 VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "")
@@ -7311,6 +7315,190 @@ def recibir_webhook():
 # CRM WEB - GABRIEL
 # ============================================================
 
+# ============================================================
+# RESUMENES DE LEADS PARA SEGUIMIENTO TELEFONICO
+# ============================================================
+
+lock_resumen_seguimiento = Lock()
+ultimo_resultado_resumen = {"enviados": 0, "fallidos": 0, "fecha": None}
+
+
+def _texto_conversacion_para_resumen(numero):
+    """Construye un transcript factual del CRM; no agrega ni interpreta datos."""
+    with lock_crm:
+        lista = list(crm_mensajes.get(numero, []))
+
+    lineas = []
+    for m in lista[-120:]:
+        contenido = str(m.get("contenido") or "").strip()
+        if not contenido:
+            continue
+        # Los marcadores de fotos sirven como contexto, pero no intentamos inferir su contenido.
+        rol = "CLIENTE" if m.get("direccion") == "in" else "ASESOR/BOT"
+        lineas.append(f"{rol}: {contenido}")
+
+    return "\n".join(lineas)
+
+
+def generar_resumen_lead(numero):
+    """Resume únicamente datos explícitos del historial. Si no existe un dato, lo omite."""
+    transcript = _texto_conversacion_para_resumen(numero)
+    proyecto = crm_nombre_proyecto(numero)
+
+    if not transcript:
+        return None
+
+    instrucciones = """
+Eres un asistente que prepara un resumen factual para una persona que llamará a un prospecto inmobiliario.
+
+REGLAS OBLIGATORIAS:
+- Usa ÚNICAMENTE información explícita del transcript que se te entrega.
+- NO inventes ni deduzcas nombre, edad, profesión, presupuesto, motivo de compra, cantidad de lotes,
+  forma de pago, país, disponibilidad, intención, parentescos ni ningún otro dato.
+- NO conviertas una respuesta del asesor/bot en un dato afirmado por el cliente.
+- Sí puedes indicar hechos de la conversación como: "se le envió el plano", "preguntó por precios",
+  "consultó por financiamiento" o "dejó de responder después de...", solo si eso se observa en el transcript.
+- Si no hay nombre, NO escribas un campo de nombre.
+- Si no hay suficiente información para un campo, omítelo por completo. No escribas "No proporcionado".
+- No agregues recomendaciones inventadas ni opiniones sobre qué tan interesado está.
+- Sé breve pero conserva todos los detalles útiles para una llamada de seguimiento.
+- No menciones que eres IA ni expliques estas reglas.
+
+FORMATO:
+📞 Teléfono: +[número]
+🏡 Proyecto: [solo si hay proyecto identificado]
+📌 Datos relevantes: [hechos explícitos del cliente]
+📝 Último punto: [último punto real de la conversación]
+
+Puedes añadir una línea adicional únicamente si existe un dato explícito importante que no encaje arriba.
+"""
+
+    entrada = f"""NUMERO: +{numero}\nPROYECTO REGISTRADO EN CRM: {proyecto}\n\nTRANSCRIPT:\n{transcript}"""
+
+    try:
+        respuesta = client.responses.create(
+            model="gpt-5-mini",
+            instructions=instrucciones,
+            input=entrada
+        )
+        texto = str(respuesta.output_text or "").strip()
+        return texto or None
+    except Exception as exc:
+        print("ERROR GENERANDO RESUMEN LEAD:", numero, exc)
+        # Fallback 100% factual si OpenAI falla.
+        ultimos_cliente = []
+        with lock_crm:
+            for m in crm_mensajes.get(numero, [])[-30:]:
+                if m.get("direccion") == "in" and str(m.get("contenido") or "").strip():
+                    ultimos_cliente.append(str(m.get("contenido")).strip())
+        if not ultimos_cliente:
+            return f"📞 Teléfono: +{numero}\n🏡 Proyecto: {proyecto}"
+        return (
+            f"📞 Teléfono: +{numero}\n"
+            + (f"🏡 Proyecto: {proyecto}\n" if proyecto != "Sin proyecto" else "")
+            + "📌 Mensajes recientes del cliente: " + " | ".join(ultimos_cliente[-5:])
+        )
+
+
+def enviar_texto_whatsapp_con_estado(numero, texto):
+    """Envía texto y devuelve (ok, detalle). Registra en CRM únicamente si Meta lo acepta."""
+    url = f"https://graph.facebook.com/v26.0/{PHONE_NUMBER_ID}/messages"
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": numero,
+        "type": "text",
+        "text": {"preview_url": False, "body": texto}
+    }
+    try:
+        r = requests.post(url, headers=headers, json=payload, timeout=25)
+        if 200 <= r.status_code < 300:
+            crm_registrar_mensaje(numero, "out", texto)
+            return True, "ok"
+        print("RESUMEN META ERROR:", r.status_code, r.text)
+        return False, f"Meta {r.status_code}: {r.text[:300]}"
+    except Exception as exc:
+        print("RESUMEN ENVIO ERROR:", exc)
+        return False, str(exc)
+
+
+def _numeros_para_resumen():
+    cargar_memoria_persistente()
+    with lock_crm:
+        numeros = [n for n in crm_mensajes.keys() if str(n) != str(CRM_SEGUIMIENTO_NUMERO)]
+        numeros.sort(key=lambda n: crm_ultima_actividad.get(n, 0), reverse=True)
+    return numeros
+
+
+@app.route("/crm/resumen-seguimiento", methods=["GET", "POST"])
+def crm_resumen_seguimiento():
+    global ultimo_resultado_resumen
+    if not crm_autorizado():
+        return crm_pedir_login()
+
+    numeros = _numeros_para_resumen()
+
+    if request.method == "POST":
+        if not lock_resumen_seguimiento.acquire(blocking=False):
+            return Response(
+                "<h2>Ya hay un envío de resúmenes en proceso.</h2><p><a href='/crm'>Volver al CRM</a></p>",
+                status=409,
+                content_type="text/html; charset=utf-8"
+            )
+        enviados = 0
+        fallidos = 0
+        errores = []
+        try:
+            for numero in numeros:
+                resumen = generar_resumen_lead(numero)
+                if not resumen:
+                    continue
+                ok, detalle = enviar_texto_whatsapp_con_estado(CRM_SEGUIMIENTO_NUMERO, resumen)
+                if ok:
+                    enviados += 1
+                else:
+                    fallidos += 1
+                    errores.append(f"+{numero}: {detalle}")
+                time.sleep(0.35)
+        finally:
+            lock_resumen_seguimiento.release()
+
+        ultimo_resultado_resumen = {
+            "enviados": enviados,
+            "fallidos": fallidos,
+            "fecha": datetime.now(ZoneInfo("America/Guatemala")).strftime("%d/%m/%Y %I:%M %p")
+        }
+        detalle_html = "".join(f"<li>{e}</li>" for e in errores[:10])
+        return Response(f"""
+        <!doctype html><html lang='es'><head><meta charset='utf-8'><title>Resumen enviado</title></head>
+        <body style='font-family:Arial,sans-serif;max-width:760px;margin:40px auto;padding:0 20px'>
+          <h1>📞 Resumen de seguimiento</h1>
+          <p><strong>{enviados}</strong> resúmenes enviados a <strong>+{CRM_SEGUIMIENTO_NUMERO}</strong>.</p>
+          <p><strong>{fallidos}</strong> envíos fallaron.</p>
+          {('<ul>'+detalle_html+'</ul>') if detalle_html else ''}
+          <p><a href='/crm'>← Volver al CRM</a></p>
+        </body></html>
+        """, content_type="text/html; charset=utf-8")
+
+    return Response(f"""
+    <!doctype html><html lang='es'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Resumen de leads</title></head>
+    <body style='font-family:Arial,sans-serif;max-width:760px;margin:40px auto;padding:0 20px'>
+      <h1>📞 Enviar resumen de leads</h1>
+      <p>Se encontraron <strong>{len(numeros)}</strong> conversaciones para resumir.</p>
+      <p>Cada cliente se enviará como <strong>un mensaje separado</strong> al número <strong>+{CRM_SEGUIMIENTO_NUMERO}</strong>.</p>
+      <p>La IA tiene la instrucción de usar solo datos explícitos del historial y omitir cualquier dato que no exista.</p>
+      <form method='post' onsubmit="return confirm('¿Enviar ahora un mensaje separado por cada cliente a +{CRM_SEGUIMIENTO_NUMERO}?');">
+        <button type='submit' style='background:#065f46;color:white;border:0;border-radius:9px;padding:11px 16px;font-weight:700;cursor:pointer'>📤 Enviar resúmenes ahora</button>
+      </form>
+      <p style='margin-top:22px'><a href='/crm'>← Volver al CRM</a></p>
+    </body></html>
+    """, content_type="text/html; charset=utf-8")
+
+
 CRM_HTML = r"""
 <!doctype html>
 <html lang="es">
@@ -7516,6 +7704,7 @@ CRM_HTML = r"""
                     style="background:#065f46;color:white;border:1px solid #047857;border-radius:8px;padding:7px 10px;cursor:pointer;">
                 🧪 Probar móvil
             </button>
+            <a href="{{ url_for('crm_resumen_seguimiento') }}" style="background:#1d4ed8;border-color:#2563eb;">📞 Resumen leads</a>
             <a href="{{ url_for('crm') }}">Actualizar</a>
         </div>
     </div>
