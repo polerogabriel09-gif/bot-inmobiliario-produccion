@@ -7362,16 +7362,22 @@ REGLAS OBLIGATORIAS:
 - Si no hay nombre, NO escribas un campo de nombre.
 - Si no hay suficiente información para un campo, omítelo por completo. No escribas "No proporcionado".
 - No agregues recomendaciones inventadas ni opiniones sobre qué tan interesado está.
-- Sé breve pero conserva todos los detalles útiles para una llamada de seguimiento.
+- Sé MUY breve: el resumen debe poder leerse rápidamente antes de una llamada.
+- Prioriza únicamente lo que el CLIENTE preguntó, pidió, confirmó o mostró interés en conocer.
+- No repitas listas largas de amenidades, servicios, precios o explicaciones que haya dado el asesor/bot, salvo que el cliente haya reaccionado específicamente a ese dato.
+- Resume Datos relevantes en 1 o 2 frases cortas.
+- El Último punto debe ser una sola frase corta.
+- Agrega un Seguimiento sugerido breve, basado SOLO en el punto donde quedó la conversación; no inventes necesidades ni interés.
 - No menciones que eres IA ni expliques estas reglas.
 
 FORMATO:
 📞 Teléfono: +[número]
 🏡 Proyecto: [solo si hay proyecto identificado]
-📌 Datos relevantes: [hechos explícitos del cliente]
-📝 Último punto: [último punto real de la conversación]
+📌 Datos relevantes: [1-2 frases cortas con lo más importante que expresó/preguntó el cliente]
+📝 Último punto: [1 frase corta]
+☎️ Seguimiento: [1 frase corta y práctica para retomar la conversación]
 
-Puedes añadir una línea adicional únicamente si existe un dato explícito importante que no encaje arriba.
+No añadas otros campos.
 """
 
     entrada = f"""NUMERO: +{numero}\nPROYECTO REGISTRADO EN CRM: {proyecto}\n\nTRANSCRIPT:\n{transcript}"""
@@ -7438,11 +7444,17 @@ REGLAS OBLIGATORIAS:
   recibió cotizaciones, consultó financiamiento, dejó de responder después de cierto punto, etc.
 - Si un dato no existe, omítelo. NO escribas 'No proporcionado'.
 - No agregues opiniones sobre qué tan interesado está.
-- Conserva todos los detalles útiles y explícitos para una llamada de seguimiento.
+- Sé MUY breve: cada resumen debe poder leerse rápidamente antes de una llamada.
+- Prioriza únicamente lo que el CLIENTE preguntó, pidió, confirmó o mostró interés en conocer.
+- NO repitas listas largas de amenidades, servicios, precios, ubicaciones o explicaciones dadas por el asesor/bot, salvo que el cliente haya reaccionado específicamente a ese dato.
+- "Datos relevantes" debe ocupar como máximo 1 o 2 frases cortas.
+- "Último punto" debe ser una sola frase corta.
+- Incluye "Seguimiento" con una sola frase práctica para retomar la conversación, basada SOLO en el punto real donde quedó; no inventes necesidades ni nivel de interés.
 - Cada resumen debe incluir el teléfono y, si existe, el proyecto registrado.
+- No añadas otros campos.
 
 Devuelve SOLAMENTE JSON válido, sin markdown ni texto adicional, con esta forma exacta:
-[{"numero":"50200000000","resumen":"📞 Teléfono: +50200000000\n🏡 Proyecto: ...\n📌 Datos relevantes: ...\n📝 Último punto: ..."}]
+[{"numero":"50200000000","resumen":"📞 Teléfono: +50200000000\n🏡 Proyecto: ...\n📌 Datos relevantes: ...\n📝 Último punto: ...\n☎️ Seguimiento: ..."}]
 """
 
     entrada = "\n\n".join(bloques)
