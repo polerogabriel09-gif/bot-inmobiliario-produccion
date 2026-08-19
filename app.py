@@ -7401,6 +7401,96 @@ Puedes añadir una línea adicional únicamente si existe un dato explícito imp
         )
 
 
+def generar_resumenes_leads_en_lote(numeros):
+    """Genera los resúmenes seleccionados en una sola llamada a OpenAI."""
+    numeros = [str(n) for n in numeros]
+    if not numeros:
+        return {}
+
+    bloques = []
+    for numero in numeros:
+        transcript = _texto_conversacion_para_resumen(numero)
+        proyecto = crm_nombre_proyecto(numero)
+        if not transcript:
+            continue
+        if len(transcript) > 9000:
+            transcript = transcript[-9000:]
+        bloques.append(
+            f"=== CLIENTE {numero} ===\n"
+            f"PROYECTO REGISTRADO EN CRM: {proyecto}\n"
+            f"TRANSCRIPT:\n{transcript}\n"
+        )
+
+    if not bloques:
+        return {}
+
+    instrucciones = """
+Prepara resúmenes factuales para seguimiento telefónico de prospectos inmobiliarios.
+Recibirás varios clientes en una sola petición.
+
+REGLAS OBLIGATORIAS:
+- Usa ÚNICAMENTE información explícita del transcript de CADA cliente.
+- NO mezcles información entre clientes.
+- NO inventes ni deduzcas nombre, edad, profesión, presupuesto, motivo de compra,
+  cantidad de lotes, forma de pago, país, disponibilidad, intención, parentescos ni otros datos.
+- NO conviertas una respuesta del asesor/bot en un dato afirmado por el cliente.
+- Sí puedes indicar hechos observables de la conversación: preguntó por precios, pidió plano,
+  recibió cotizaciones, consultó financiamiento, dejó de responder después de cierto punto, etc.
+- Si un dato no existe, omítelo. NO escribas 'No proporcionado'.
+- No agregues opiniones sobre qué tan interesado está.
+- Conserva todos los detalles útiles y explícitos para una llamada de seguimiento.
+- Cada resumen debe incluir el teléfono y, si existe, el proyecto registrado.
+
+Devuelve SOLAMENTE JSON válido, sin markdown ni texto adicional, con esta forma exacta:
+[{"numero":"50200000000","resumen":"📞 Teléfono: +50200000000\n🏡 Proyecto: ...\n📌 Datos relevantes: ...\n📝 Último punto: ..."}]
+"""
+
+    entrada = "\n\n".join(bloques)
+    try:
+        respuesta = client.responses.create(
+            model="gpt-5-mini",
+            instructions=instrucciones,
+            input=entrada
+        )
+        bruto = str(respuesta.output_text or "").strip()
+        if bruto.startswith("```"):
+            bruto = re.sub(r"^```(?:json)?\s*", "", bruto, flags=re.I)
+            bruto = re.sub(r"\s*```$", "", bruto)
+        data = json.loads(bruto)
+        resultado = {}
+        if isinstance(data, list):
+            for item in data:
+                if not isinstance(item, dict):
+                    continue
+                numero = str(item.get("numero") or "").strip().lstrip("+")
+                resumen = str(item.get("resumen") or "").strip()
+                if numero in numeros and resumen:
+                    resultado[numero] = resumen
+        if resultado:
+            return resultado
+        raise ValueError("OpenAI no devolvió resúmenes utilizables")
+    except Exception as exc:
+        print("ERROR GENERANDO RESUMENES EN LOTE:", exc)
+        resultado = {}
+        for numero in numeros:
+            proyecto = crm_nombre_proyecto(numero)
+            with lock_crm:
+                mensajes = list(crm_mensajes.get(numero, []))
+            entrantes = [
+                str(m.get("contenido") or "").strip()
+                for m in mensajes[-40:]
+                if m.get("direccion") == "in" and str(m.get("contenido") or "").strip()
+            ]
+            if not entrantes:
+                continue
+            lineas = [f"📞 Teléfono: +{numero}"]
+            if proyecto and proyecto != "Sin proyecto":
+                lineas.append(f"🏡 Proyecto: {proyecto}")
+            lineas.append("📌 Mensajes relevantes del cliente: " + " | ".join(entrantes[-8:]))
+            resultado[numero] = "\n".join(lineas)
+        return resultado
+
+
 def enviar_texto_whatsapp_con_estado(numero, texto):
     """Envía texto y devuelve (ok, detalle). Registra en CRM únicamente si Meta lo acepta."""
     url = f"https://graph.facebook.com/v26.0/{PHONE_NUMBER_ID}/messages"
@@ -7474,9 +7564,10 @@ def crm_resumen_seguimiento():
             if not seleccionados:
                 return Response("<h2>No seleccionaste ningún cliente.</h2><p><a href='/crm/resumen-seguimiento'>Volver</a></p>", status=400, content_type="text/html; charset=utf-8")
 
+            resumenes = generar_resumenes_leads_en_lote(seleccionados)
             previews = []
             for numero in seleccionados:
-                resumen = generar_resumen_lead(numero)
+                resumen = resumenes.get(str(numero))
                 if not resumen:
                     continue
                 proyecto = crm_nombre_proyecto(numero) or "Sin proyecto"
