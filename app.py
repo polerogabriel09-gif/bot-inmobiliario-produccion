@@ -3646,7 +3646,7 @@ def enviar_ntfy_crm(numero, contenido, event_id=None):
         return False
 
 
-def crm_registrar_mensaje(numero, direccion, contenido, event_id=None):
+def crm_registrar_mensaje(numero, direccion, contenido, event_id=None, media_url=None, media_tipo=None):
     global crm_evento_contador
 
     if not numero:
@@ -3665,7 +3665,9 @@ def crm_registrar_mensaje(numero, direccion, contenido, event_id=None):
             "numero": numero,
             "direccion": direccion,
             "contenido": contenido,
-            "hora": crm_hora_actual()
+            "hora": crm_hora_actual(),
+            "media_url": media_url,
+            "media_tipo": media_tipo
         })
 
         # Mantener suficiente historial visual sin consumir RAM sin límite.
@@ -3692,6 +3694,104 @@ def crm_registrar_mensaje(numero, direccion, contenido, event_id=None):
             daemon=True
         ).start()
 
+
+
+_media_db_initialized = False
+lock_media_db = Lock()
+
+
+def inicializar_media_db():
+    """Crea almacenamiento persistente para fotos recibidas por WhatsApp."""
+    global _media_db_initialized
+    if not DATABASE_URL or not psycopg2:
+        return False
+    if _media_db_initialized:
+        return True
+    with lock_media_db:
+        if _media_db_initialized:
+            return True
+        try:
+            conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS crm_media (
+                            media_key TEXT PRIMARY KEY,
+                            numero TEXT NOT NULL,
+                            mime_type TEXT NOT NULL,
+                            contenido BYTEA NOT NULL,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                    """)
+                conn.commit()
+                _media_db_initialized = True
+                print("MEDIA DB: tabla lista")
+                return True
+            finally:
+                conn.close()
+        except Exception as exc:
+            print("MEDIA DB INIT ERROR:", exc)
+            return False
+
+
+def guardar_imagen_crm(numero, mensaje):
+    """Descarga una foto de Meta y la conserva en PostgreSQL para verla en el CRM."""
+    if (mensaje or {}).get("type") != "image":
+        return None
+    media = (mensaje or {}).get("image") or {}
+    media_id = str(media.get("id") or "").strip()
+    if not media_id or not inicializar_media_db():
+        return None
+    archivo, mime = obtener_media_whatsapp(media_id)
+    if not archivo:
+        return None
+    mime = mime or "image/jpeg"
+    try:
+        conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO crm_media (media_key, numero, mime_type, contenido, created_at)
+                    VALUES (%s, %s, %s, %s, NOW())
+                    ON CONFLICT (media_key) DO NOTHING
+                """, (media_id, str(numero), mime, psycopg2.Binary(archivo)))
+            conn.commit()
+        finally:
+            conn.close()
+        return f"/crm/media/{media_id}"
+    except Exception as exc:
+        print("MEDIA DB SAVE ERROR:", exc)
+        return None
+
+
+@app.route("/crm/media/<media_key>", methods=["GET"])
+def crm_media(media_key):
+    """Sirve una foto únicamente a usuarios autenticados del CRM."""
+    if not crm_autorizado():
+        return crm_pedir_login()
+    if not inicializar_media_db():
+        return Response("Imagen no disponible", status=404)
+    try:
+        conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT mime_type, contenido FROM crm_media WHERE media_key = %s",
+                    (str(media_key),)
+                )
+                fila = cur.fetchone()
+        finally:
+            conn.close()
+        if not fila:
+            return Response("Imagen no encontrada", status=404)
+        mime, contenido = fila
+        return Response(bytes(contenido), content_type=mime or "image/jpeg", headers={
+            "Cache-Control": "private, max-age=3600",
+            "X-Content-Type-Options": "nosniff"
+        })
+    except Exception as exc:
+        print("MEDIA CRM READ ERROR:", exc)
+        return Response("No se pudo abrir la imagen", status=500)
 
 def crm_resumen_entrante(mensaje):
     tipo = mensaje.get("type")
@@ -7134,11 +7234,21 @@ def recibir_webhook():
                 numero_cliente = mensaje.get("from")
 
                 # 1) Guardar en CRM y disparar UNA notificación propia.
+                # Si es una foto, también la conservamos de forma persistente
+                # para poder verla luego dentro del CRM.
+                media_url_crm = None
+                media_tipo_crm = None
+                if mensaje.get("type") == "image":
+                    media_url_crm = guardar_imagen_crm(numero_cliente, mensaje)
+                    media_tipo_crm = "image" if media_url_crm else None
+
                 crm_registrar_mensaje(
                     numero_cliente,
                     "in",
                     crm_resumen_entrante(mensaje),
-                    event_id=message_id
+                    event_id=message_id,
+                    media_url=media_url_crm,
+                    media_tipo=media_tipo_crm
                 )
 
                 # 2) Cancelar seguimiento pendiente.
@@ -7326,6 +7436,11 @@ CRM_HTML = r"""
         }
         .in .bubble { background: white; }
         .out .bubble { background: #d9fdd3; }
+        .crm-photo-link { display:block; margin-bottom:7px; }
+        .crm-photo {
+            display:block; max-width:100%; width:min(340px, 70vw); max-height:420px;
+            object-fit:contain; border-radius:9px; cursor:zoom-in; background:#f3f4f6;
+        }
         .time {
             display: block;
             text-align: right;
@@ -7777,6 +7892,11 @@ CRM_HTML = r"""
             box.innerHTML = messages.map(m => `
                 <div class="row ${m.direccion}">
                     <div class="bubble">
+                        ${m.media_tipo === "image" && m.media_url ? `
+                            <a class="crm-photo-link" href="${escapeHtml(m.media_url)}" target="_blank" rel="noopener">
+                                <img class="crm-photo" src="${escapeHtml(m.media_url)}" alt="Foto enviada por el cliente" loading="lazy">
+                            </a>
+                        ` : ""}
                         ${escapeHtml(m.contenido).replaceAll("\n", "<br>")}
                         <span class="time">${escapeHtml(m.hora)}</span>
                     </div>
