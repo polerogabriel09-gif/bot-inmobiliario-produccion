@@ -9,6 +9,7 @@ from threading import Thread, Lock
 import time
 import re
 import json
+import html
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -7442,60 +7443,167 @@ def crm_resumen_seguimiento():
 
     numeros = _numeros_para_resumen()
 
+    def tarjeta_cliente(numero, checked=True):
+        proyecto = crm_nombre_proyecto(numero) or "Sin proyecto"
+        with lock_crm:
+            mensajes = list(crm_mensajes.get(numero, []))
+        ultimos = []
+        for m in mensajes[-12:]:
+            contenido = str(m.get("contenido") or "").strip()
+            if not contenido:
+                continue
+            prefijo = "Cliente" if m.get("direccion") == "in" else "Bot"
+            ultimos.append(f"{prefijo}: {contenido}")
+        preview = " | ".join(ultimos[-4:]) or "Sin mensajes de texto para mostrar."
+        return f"""
+        <label class='card'>
+          <div class='check'><input type='checkbox' name='numeros' value='{html.escape(str(numero))}' {'checked' if checked else ''}></div>
+          <div class='contenido'>
+            <div class='numero'>📞 +{html.escape(str(numero))}</div>
+            <div class='proyecto'>🏡 {html.escape(str(proyecto))}</div>
+            <div class='preview'>{html.escape(preview)}</div>
+          </div>
+        </label>
+        """
+
     if request.method == "POST":
-        if not lock_resumen_seguimiento.acquire(blocking=False):
-            return Response(
-                "<h2>Ya hay un envío de resúmenes en proceso.</h2><p><a href='/crm'>Volver al CRM</a></p>",
-                status=409,
-                content_type="text/html; charset=utf-8"
-            )
-        enviados = 0
-        fallidos = 0
-        errores = []
-        try:
-            for numero in numeros:
+        accion = request.form.get("accion", "").strip()
+
+        if accion == "previsualizar":
+            seleccionados = [n for n in request.form.getlist("numeros") if n in numeros]
+            if not seleccionados:
+                return Response("<h2>No seleccionaste ningún cliente.</h2><p><a href='/crm/resumen-seguimiento'>Volver</a></p>", status=400, content_type="text/html; charset=utf-8")
+
+            previews = []
+            for numero in seleccionados:
                 resumen = generar_resumen_lead(numero)
                 if not resumen:
                     continue
-                ok, detalle = enviar_texto_whatsapp_con_estado(CRM_SEGUIMIENTO_NUMERO, resumen)
-                if ok:
-                    enviados += 1
-                else:
-                    fallidos += 1
-                    errores.append(f"+{numero}: {detalle}")
-                time.sleep(0.35)
-        finally:
-            lock_resumen_seguimiento.release()
+                proyecto = crm_nombre_proyecto(numero) or "Sin proyecto"
+                previews.append((numero, proyecto, resumen))
 
-        ultimo_resultado_resumen = {
-            "enviados": enviados,
-            "fallidos": fallidos,
-            "fecha": datetime.now(ZoneInfo("America/Guatemala")).strftime("%d/%m/%Y %I:%M %p")
-        }
-        detalle_html = "".join(f"<li>{e}</li>" for e in errores[:10])
-        return Response(f"""
-        <!doctype html><html lang='es'><head><meta charset='utf-8'><title>Resumen enviado</title></head>
-        <body style='font-family:Arial,sans-serif;max-width:760px;margin:40px auto;padding:0 20px'>
-          <h1>📞 Resumen de seguimiento</h1>
-          <p><strong>{enviados}</strong> resúmenes enviados a <strong>+{CRM_SEGUIMIENTO_NUMERO}</strong>.</p>
-          <p><strong>{fallidos}</strong> envíos fallaron.</p>
-          {('<ul>'+detalle_html+'</ul>') if detalle_html else ''}
-          <p><a href='/crm'>← Volver al CRM</a></p>
-        </body></html>
-        """, content_type="text/html; charset=utf-8")
+            cards = []
+            for numero, proyecto, resumen in previews:
+                n = html.escape(str(numero))
+                r = html.escape(resumen)
+                p = html.escape(str(proyecto))
+                cards.append(f"""
+                <label class='card resumen-card'>
+                  <div class='check'><input type='checkbox' name='seleccion' value='{n}' checked></div>
+                  <div class='contenido'>
+                    <div class='numero'>📞 +{n}</div>
+                    <div class='proyecto'>🏡 {p}</div>
+                    <pre>{r}</pre>
+                    <textarea name='resumen_{n}' hidden>{r}</textarea>
+                  </div>
+                </label>
+                """)
 
+            return Response(f"""
+            <!doctype html><html lang='es'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Vista previa de resúmenes</title>
+            <style>
+              body{{font-family:Arial,sans-serif;background:#f4f6f8;margin:0;color:#17212b}}
+              .wrap{{max-width:980px;margin:28px auto;padding:0 18px 60px}}
+              .topbar{{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}}
+              .card{{display:flex;gap:14px;background:white;border:1px solid #dfe5eb;border-radius:14px;padding:16px;margin:12px 0;box-shadow:0 2px 8px rgba(0,0,0,.04)}}
+              .check input{{width:22px;height:22px;margin-top:3px}}
+              .contenido{{flex:1;min-width:0}}
+              .numero{{font-weight:800;font-size:18px}}
+              .proyecto{{color:#52606d;margin-top:4px}}
+              pre{{white-space:pre-wrap;font-family:Arial,sans-serif;background:#f8fafc;border-radius:10px;padding:12px;margin:12px 0 0;line-height:1.45}}
+              .acciones{{position:sticky;bottom:0;background:rgba(244,246,248,.96);padding:14px 0;display:flex;gap:10px;flex-wrap:wrap}}
+              button,.btn{{border:0;border-radius:9px;padding:12px 16px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-block}}
+              .send{{background:#065f46;color:white}} .back{{background:#e5e7eb;color:#111827}}
+            </style></head><body><div class='wrap'>
+              <div class='topbar'><div><h1>👀 Vista previa de resúmenes</h1><p>Desmarca cualquier cliente que <strong>NO</strong> quieras enviar. Lo que ves aquí es exactamente el mensaje que se enviará.</p></div></div>
+              <form method='post' onsubmit="return confirm('¿Enviar únicamente los resúmenes que dejaste seleccionados?');">
+                <input type='hidden' name='accion' value='enviar_seleccionados'>
+                {''.join(cards)}
+                <div class='acciones'>
+                  <button class='send' type='submit'>📤 Enviar seleccionados</button>
+                  <a class='btn back' href='/crm/resumen-seguimiento'>← Cambiar selección</a>
+                  <a class='btn back' href='/crm'>Volver al CRM</a>
+                </div>
+              </form>
+            </div></body></html>
+            """, content_type="text/html; charset=utf-8")
+
+        if accion == "enviar_seleccionados":
+            seleccionados = request.form.getlist("seleccion")
+            if not seleccionados:
+                return Response("<h2>No dejaste ningún resumen seleccionado.</h2><p><a href='/crm/resumen-seguimiento'>Volver</a></p>", status=400, content_type="text/html; charset=utf-8")
+
+            if not lock_resumen_seguimiento.acquire(blocking=False):
+                return Response("<h2>Ya hay un envío de resúmenes en proceso.</h2><p><a href='/crm'>Volver al CRM</a></p>", status=409, content_type="text/html; charset=utf-8")
+
+            enviados = 0
+            fallidos = 0
+            errores = []
+            try:
+                for numero in seleccionados:
+                    if numero not in numeros:
+                        continue
+                    resumen = request.form.get(f"resumen_{numero}", "").strip()
+                    if not resumen:
+                        continue
+                    ok, detalle = enviar_texto_whatsapp_con_estado(CRM_SEGUIMIENTO_NUMERO, resumen)
+                    if ok:
+                        enviados += 1
+                    else:
+                        fallidos += 1
+                        errores.append(f"+{numero}: {detalle}")
+                    time.sleep(0.35)
+            finally:
+                lock_resumen_seguimiento.release()
+
+            ultimo_resultado_resumen = {
+                "enviados": enviados,
+                "fallidos": fallidos,
+                "fecha": datetime.now(ZoneInfo("America/Guatemala")).strftime("%d/%m/%Y %I:%M %p")
+            }
+            detalle_html = "".join(f"<li>{html.escape(e)}</li>" for e in errores[:10])
+            return Response(f"""
+            <!doctype html><html lang='es'><head><meta charset='utf-8'><title>Resumen enviado</title></head>
+            <body style='font-family:Arial,sans-serif;max-width:760px;margin:40px auto;padding:0 20px'>
+              <h1>📞 Resumen de seguimiento</h1>
+              <p><strong>{enviados}</strong> resúmenes enviados a <strong>+{CRM_SEGUIMIENTO_NUMERO}</strong>.</p>
+              <p><strong>{fallidos}</strong> envíos fallaron.</p>
+              {('<ul>'+detalle_html+'</ul>') if detalle_html else ''}
+              <p><a href='/crm/resumen-seguimiento'>Preparar otro envío</a> · <a href='/crm'>Volver al CRM</a></p>
+            </body></html>
+            """, content_type="text/html; charset=utf-8")
+
+    tarjetas = "".join(tarjeta_cliente(n) for n in numeros)
     return Response(f"""
-    <!doctype html><html lang='es'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Resumen de leads</title></head>
-    <body style='font-family:Arial,sans-serif;max-width:760px;margin:40px auto;padding:0 20px'>
-      <h1>📞 Enviar resumen de leads</h1>
-      <p>Se encontraron <strong>{len(numeros)}</strong> conversaciones para resumir.</p>
-      <p>Cada cliente se enviará como <strong>un mensaje separado</strong> al número <strong>+{CRM_SEGUIMIENTO_NUMERO}</strong>.</p>
-      <p>La IA tiene la instrucción de usar solo datos explícitos del historial y omitir cualquier dato que no exista.</p>
-      <form method='post' onsubmit="return confirm('¿Enviar ahora un mensaje separado por cada cliente a +{CRM_SEGUIMIENTO_NUMERO}?');">
-        <button type='submit' style='background:#065f46;color:white;border:0;border-radius:9px;padding:11px 16px;font-weight:700;cursor:pointer'>📤 Enviar resúmenes ahora</button>
+    <!doctype html><html lang='es'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Resumen de leads</title>
+    <style>
+      body{{font-family:Arial,sans-serif;background:#f4f6f8;margin:0;color:#17212b}}
+      .wrap{{max-width:980px;margin:28px auto;padding:0 18px 60px}}
+      .card{{display:flex;gap:14px;background:white;border:1px solid #dfe5eb;border-radius:14px;padding:15px;margin:10px 0;cursor:pointer}}
+      .card:hover{{border-color:#9ca3af}}
+      .check input{{width:22px;height:22px;margin-top:3px}}
+      .contenido{{min-width:0;flex:1}}
+      .numero{{font-weight:800;font-size:17px}}
+      .proyecto{{color:#52606d;margin-top:3px}}
+      .preview{{color:#475569;margin-top:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
+      .acciones{{position:sticky;bottom:0;background:rgba(244,246,248,.96);padding:14px 0;display:flex;gap:10px;flex-wrap:wrap}}
+      button,.btn{{border:0;border-radius:9px;padding:12px 16px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-block}}
+      .previewbtn{{background:#065f46;color:white}} .secondary{{background:#e5e7eb;color:#111827}}
+    </style></head><body><div class='wrap'>
+      <h1>📞 Preparar resumen de leads</h1>
+      <p>Se encontraron <strong>{len(numeros)}</strong> conversaciones. Desmarca desde ahora las que no quieras incluir.</p>
+      <p>Después verás una <strong>vista previa exacta de cada resumen</strong> y podrás volver a eliminar clientes antes de enviar nada a <strong>+{CRM_SEGUIMIENTO_NUMERO}</strong>.</p>
+      <form method='post'>
+        <input type='hidden' name='accion' value='previsualizar'>
+        {tarjetas}
+        <div class='acciones'>
+          <button class='previewbtn' type='submit'>👀 Generar vista previa</button>
+          <button class='secondary' type='button' onclick="document.querySelectorAll('input[name=numeros]').forEach(x=>x.checked=true)">Seleccionar todos</button>
+          <button class='secondary' type='button' onclick="document.querySelectorAll('input[name=numeros]').forEach(x=>x.checked=false)">Quitar todos</button>
+          <a class='btn secondary' href='/crm'>← Volver al CRM</a>
+        </div>
       </form>
-      <p style='margin-top:22px'><a href='/crm'>← Volver al CRM</a></p>
-    </body></html>
+    </div></body></html>
     """, content_type="text/html; charset=utf-8")
 
 
