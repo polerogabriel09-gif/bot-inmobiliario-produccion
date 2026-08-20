@@ -891,7 +891,8 @@ def obtener_estado_conversacion(numero):
             "topografia_en_conversacion": False,
             "multimedia_pendiente": False,
             "esperando_cantidad_descuento_contado": False,
-            "esperando_disponibilidad_desde_cta": False
+            "esperando_disponibilidad_desde_cta": False,
+            "esperando_proyecto_despues_tres": False
         }
 
     return estado_conversacion[numero]
@@ -2272,28 +2273,118 @@ def pide_info_todos_proyectos(texto):
     return pide_info and any(x in t for x in referencias_tres)
 
 
-def respuesta_info_todos_proyectos():
-    """Resumen comercial breve de los tres proyectos, sin obligar al cliente a escoger antes."""
-    return (
-        "¡Claro! 😊 Te comparto un resumen de las 3 opciones:\n\n"
-        "🏡 *Buenaventura Cuyotenango*\n"
-        "• 8x16 desde Q83,200 | enganche Q6,000\n"
-        "• 8x18 Q93,600 | enganche Q8,000\n"
-        "• 9x20 Q117,000 | enganche Q10,000\n"
-        "• Financiamiento propio de 2 a 8 años y abonos a capital.\n\n"
-        "🌴 *Palmeras San Miguel*\n"
-        "• 8x16 Q67,200 | enganche Q6,000\n"
-        "• 8x18 Q79,200 | enganche Q8,000\n"
-        "• Financiamiento propio de 1 a 8 años y abonos a capital.\n"
-        "• Este proyecto no cuenta con garita ni muro perimetral.\n\n"
-        "🏘️ *Vista Hermosa*\n"
-        "• 8x16 Fase F Q83,200 | enganche Q6,000\n"
-        "• 8x16 Fase G Q89,600 | enganche Q6,000\n"
-        "• Financiamiento propio de 1 a 8 años y abonos a capital.\n\n"
-        "En los 3 proyectos el diseño de construcción es libre, siempre que sea una construcción formal con block. 🏗️\n\n"
-        "¿Cuál de los 3 te interesa más para enviarte cotización y plano? 😊"
+def marcar_espera_proyecto_despues_tres(numero):
+    estado = obtener_estado_conversacion(numero)
+    estado["esperando_proyecto_despues_tres"] = True
+    # Evita reutilizar por error un proyecto viejo mientras el cliente compara los 3.
+    estado["proyecto_actual"] = None
+    proyecto_activo.pop(numero, None)
+    persistir_cliente(numero)
+
+
+def limpiar_espera_proyecto_despues_tres(numero):
+    estado = obtener_estado_conversacion(numero)
+    estado["esperando_proyecto_despues_tres"] = False
+    persistir_cliente(numero)
+
+
+def esperando_proyecto_despues_tres(numero):
+    return bool(obtener_estado_conversacion(numero).get("esperando_proyecto_despues_tres"))
+
+
+def proyecto_elegido_despues_tres(texto):
+    detectado = detectar_proyecto_en_texto(texto)
+    if detectado:
+        return detectado
+
+    t = normalizar_texto_topografia(texto)
+    # Atajos opcionales por orden del mensaje: 1 Buenaventura, 2 Palmeras, 3 Vista Hermosa.
+    if t in {"1", "el 1", "primero", "la primera", "buenaventura"}:
+        return "buenaventura"
+    if t in {"2", "el 2", "segundo", "la segunda", "palmeras"}:
+        return "palmeras"
+    if t in {"3", "el 3", "tercero", "la tercera", "vista"}:
+        return "vista_hermosa"
+    return None
+
+
+def enviar_ubicacion_breve(numero, proyecto):
+    datos = UBICACIONES_PROYECTOS.get(proyecto)
+    if not datos:
+        return
+    enviar_whatsapp(
+        numero,
+        f"📍 *Ubicación:* {datos['texto']}\n{datos['maps']}"
     )
 
+
+def enviar_info_completa_proyecto(numero, proyecto, cierre=True):
+    """
+    Envía la información comercial completa de un proyecto usando el mismo material
+    que el flujo normal: resumen, ubicación, cotizaciones, fotos/videos y amenidades.
+    """
+    if not proyecto:
+        return
+
+    resumen = construir_resumen_cotizacion(proyecto)
+    if resumen:
+        enviar_whatsapp(numero, resumen)
+
+    enviar_ubicacion_breve(numero, proyecto)
+
+    # Cotizaciones oficiales del proyecto.
+    opciones = COTIZACIONES_IMAGEN.get(proyecto, {})
+    for medida_nombre, rutas in opciones.items():
+        for ruta in rutas:
+            if not os.path.exists(ruta):
+                continue
+            caption = ETIQUETAS_COTIZACIONES.get(proyecto, {}).get(
+                ruta, f"Cotización {medida_nombre} 💰"
+            )
+            enviar_imagen_whatsapp(numero, ruta, caption=caption)
+
+    # Material real del proyecto + videos de amenidades.
+    if proyecto == "vista_hermosa":
+        enviar_solo_videos_del_proyecto(numero, proyecto)
+    else:
+        enviar_solo_fotos_del_proyecto(numero, proyecto)
+
+    enviar_paquete_amenidades(numero, proyecto)
+
+    if cierre:
+        enviar_whatsapp(
+            numero,
+            "Si alguna opción te llama la atención, dime cuál 😊 y con gusto seguimos "
+            "con disponibilidad, plano, cuota o visita. 🏡"
+        )
+
+
+def enviar_info_todos_proyectos(numero):
+    """Envía los 3 proyectos completos y después deja al bot esperando una elección."""
+    enviar_whatsapp(
+        numero,
+        "¡Claro! 😊 Te comparto la información completa de nuestros 3 proyectos para que puedas compararlos con calma. 🏡"
+    )
+
+    for proyecto in ("buenaventura", "palmeras", "vista_hermosa"):
+        enviar_info_completa_proyecto(numero, proyecto, cierre=False)
+
+    marcar_espera_proyecto_despues_tres(numero)
+    enviar_whatsapp(
+        numero,
+        "Ya tienes la información de los 3 😊 ¿Cuál te interesa más: Buenaventura Cuyotenango, "
+        "Palmeras San Miguel o Vista Hermosa?"
+    )
+
+
+def respuesta_info_todos_proyectos():
+    # Se conserva para la acción rápida del CRM, pero el flujo automático usa
+    # enviar_info_todos_proyectos() para adjuntar también material y cotizaciones.
+    return (
+        "¡Claro! 😊 Puedo enviarte la información completa de Buenaventura Cuyotenango, "
+        "Palmeras San Miguel y Vista Hermosa, incluyendo ubicación, precios, financiamiento, "
+        "fotos/videos y amenidades. 🏡"
+    )
 
 def seguimiento_compra_respuesta_directa(texto, proyecto):
     """
@@ -6663,12 +6754,53 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
         # INFORMACIÓN DE LOS TRES PROYECTOS EN UNA SOLA CONSULTA
         # No obligamos al cliente a escoger antes si pidió explícitamente las 3 opciones.
         if pide_info_todos_proyectos(texto_cliente):
-            respuesta = respuesta_info_todos_proyectos()
             guardar_mensaje(numero_cliente, "user", texto_cliente)
-            guardar_mensaje(numero_cliente, "assistant", respuesta)
+            guardar_mensaje(
+                numero_cliente,
+                "assistant",
+                "Se envió la información completa de los 3 proyectos con ubicación, cotizaciones y multimedia."
+            )
             if procesamiento_sigue_vigente(numero_cliente, message_id):
-                enviar_whatsapp(numero_cliente, respuesta)
+                enviar_info_todos_proyectos(numero_cliente)
             return
+
+        # Si justo antes recibió la información de los 3 proyectos y ahora elige uno,
+        # tratamos esa elección como si hubiera pedido información completa de ese proyecto
+        # desde el inicio. A partir de ahí queda fijado como proyecto activo y sigue el
+        # algoritmo normal de precios, planos, cuotas, fotos, ubicación, etc.
+        if esperando_proyecto_despues_tres(numero_cliente):
+            elegido = proyecto_elegido_despues_tres(texto_cliente)
+            if elegido:
+                estado = obtener_estado_conversacion(numero_cliente)
+                estado["proyecto_actual"] = elegido
+                proyecto_activo[numero_cliente] = elegido
+                estado["esperando_proyecto_despues_tres"] = False
+                persistir_cliente(numero_cliente)
+
+                guardar_mensaje(numero_cliente, "user", texto_cliente)
+                guardar_mensaje(
+                    numero_cliente,
+                    "assistant",
+                    f"Se envió la información completa del proyecto {elegido}."
+                )
+
+                if procesamiento_sigue_vigente(numero_cliente, message_id):
+                    enviar_info_completa_proyecto(numero_cliente, elegido, cierre=True)
+                return
+
+            # No reutilizar un proyecto viejo si el cliente todavía no eligió cuál de los 3.
+            if any(x in normalizar_texto_topografia(texto_cliente) for x in [
+                "cotizacion", "cotización", "plano", "precio", "precios", "cuota", "financiamiento"
+            ]):
+                respuesta = (
+                    "¡Claro! 😊 Te lo envío. Solo dime de cuál de los 3 proyectos lo quieres: "
+                    "Buenaventura Cuyotenango, Palmeras San Miguel o Vista Hermosa. 🏡"
+                )
+                guardar_mensaje(numero_cliente, "user", texto_cliente)
+                guardar_mensaje(numero_cliente, "assistant", respuesta)
+                if procesamiento_sigue_vigente(numero_cliente, message_id):
+                    enviar_whatsapp(numero_cliente, respuesta)
+                return
 
         # CONTINUACIÓN DE FOTOS/VIDEOS PENDIENTES
         # Ejemplo:
@@ -7959,6 +8091,23 @@ CRM_HTML = r"""
             font-weight: bold;
             border-bottom: 1px solid #edf0f2;
         }
+        .sidebar-search {
+            padding: 10px 12px;
+            border-bottom: 1px solid #edf0f2;
+            position: sticky;
+            top: 0;
+            background: white;
+            z-index: 2;
+        }
+        .sidebar-search input {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #cfd6dd;
+            border-radius: 9px;
+            font: inherit;
+            outline: none;
+        }
+        .sidebar-search input:focus { border-color: #2563eb; }
         .chat-link {
             display: block;
             padding: 14px 16px;
@@ -8015,6 +8164,16 @@ CRM_HTML = r"""
         }
         .toggle.pause { background: #fee2e2; color: #991b1b; }
         .toggle.resume { background: #dcfce7; color: #166534; }
+        .quick-action {
+            border: 0;
+            border-radius: 9px;
+            padding: 10px 13px;
+            cursor: pointer;
+            font-weight: 700;
+            background: #2563eb;
+            color: white;
+        }
+        .head-actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
         .messages {
             flex: 1;
             padding: 18px;
@@ -8130,6 +8289,9 @@ CRM_HTML = r"""
     <div class="layout">
         <aside class="sidebar" id="sidebar">
             <div class="sidebar-title">Conversaciones (<span id="client-count">{{ clientes|length }}</span>)</div>
+            <div class="sidebar-search">
+                <input id="crm-search-number" type="search" inputmode="numeric" placeholder="🔎 Buscar por número..." autocomplete="off">
+            </div>
             {% if not clientes %}
                 <div style="padding:20px;color:#667085;">
                     Todavía no han entrado mensajes desde que se inició esta versión.
@@ -8138,6 +8300,7 @@ CRM_HTML = r"""
 
             {% for c in clientes %}
                 <a class="chat-link {% if seleccionado == c.numero %}active{% endif %}"
+                   data-number="{{ c.numero }}"
                    href="{{ url_for('crm', numero=c.numero) }}">
                     <div>
                         <span class="phone">+{{ c.numero }}</span>
@@ -8161,13 +8324,19 @@ CRM_HTML = r"""
                     <p>{{ proyecto_seleccionado }}</p>
                 </div>
 
-                <form method="post" action="{{ url_for('crm_toggle', numero=seleccionado) }}">
-                    {% if manual %}
-                        <button class="toggle resume" type="submit">▶ Activar IA</button>
-                    {% else %}
-                        <button class="toggle pause" type="submit">⏸ Pausar IA</button>
-                    {% endif %}
-                </form>
+                <div class="head-actions">
+                    <form method="post" action="{{ url_for('crm_accion_info_tres_proyectos', numero=seleccionado) }}"
+                          onsubmit="return confirm('¿Enviar al cliente el resumen oficial de los 3 proyectos?');">
+                        <button class="quick-action" type="submit">🤖 Info 3 proyectos</button>
+                    </form>
+                    <form method="post" action="{{ url_for('crm_toggle', numero=seleccionado) }}">
+                        {% if manual %}
+                            <button class="toggle resume" type="submit">▶ Activar IA</button>
+                        {% else %}
+                            <button class="toggle pause" type="submit">⏸ Pausar IA</button>
+                        {% endif %}
+                    </form>
+                </div>
             </div>
 
             {% if manual %}
@@ -8213,6 +8382,17 @@ CRM_HTML = r"""
         const box = document.getElementById("messages");
         const composer = document.getElementById("composer-text");
         if (box) box.scrollTop = box.scrollHeight;
+
+        const crmSearchNumber = document.getElementById("crm-search-number");
+        function filtrarConversacionesPorNumero() {
+            if (!crmSearchNumber) return;
+            const q = (crmSearchNumber.value || "").replace(/\D/g, "");
+            document.querySelectorAll("#sidebar .chat-link").forEach(link => {
+                const n = (link.dataset.number || "").replace(/\D/g, "");
+                link.style.display = (!q || n.includes(q)) ? "block" : "none";
+            });
+        }
+        if (crmSearchNumber) crmSearchNumber.addEventListener("input", filtrarConversacionesPorNumero);
 
         let lastSignature = "";
         let ultimoEventoEntrante = null;
@@ -8557,6 +8737,7 @@ CRM_HTML = r"""
             clientes.forEach(c => {
                 const a = document.createElement("a");
                 a.className = "chat-link" + (seleccionado === c.numero ? " active" : "");
+                a.dataset.number = c.numero || "";
                 a.href = "/crm?numero=" + encodeURIComponent(c.numero);
                 a.innerHTML = `
                     <div>
@@ -8570,6 +8751,7 @@ CRM_HTML = r"""
                 `;
                 sidebar.appendChild(a);
             });
+            filtrarConversacionesPorNumero();
         }
 
         async function actualizarCRM() {
@@ -8958,6 +9140,31 @@ def crm_toggle(numero):
             numero,
             f"crm-manual-{time.time()}"
         )
+
+    return redirect(url_for("crm", numero=numero))
+
+
+@app.route("/crm/accion/info-3-proyectos/<numero>", methods=["POST"])
+def crm_accion_info_tres_proyectos(numero):
+    """Envía desde el CRM la respuesta oficial del bot con información de los 3 proyectos."""
+    if not crm_autorizado():
+        return crm_pedir_login()
+
+    # Esta acción rápida reproduce el mismo paquete completo que usaría el bot:
+    # ubicación, cotizaciones, fotos/videos y amenidades de los 3 proyectos.
+    cancelar_seguimiento(numero)
+    iniciar_procesamiento(numero, f"crm-accion-3-proyectos-{time.time()}")
+
+    try:
+        enviar_info_todos_proyectos(numero)
+        guardar_mensaje(
+            numero,
+            "assistant",
+            "Se envió desde el CRM la información completa de los 3 proyectos."
+        )
+    except Exception as exc:
+        print("ERROR ACCION INFO 3 PROYECTOS:", exc)
+        crm_registrar_mensaje(numero, "out", "⚠️ No pude enviar la información completa de los 3 proyectos.")
 
     return redirect(url_for("crm", numero=numero))
 
