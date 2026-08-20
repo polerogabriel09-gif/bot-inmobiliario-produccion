@@ -6,10 +6,13 @@ import os
 import base64
 import tempfile
 from threading import Thread, Lock
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 import re
 import json
 import html
+import mimetypes
+import uuid
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -1546,6 +1549,17 @@ def pide_plano(texto):
     ]
 
     if "plano" in t or "planos" in t:
+        # Peticiones directas como "plano vista hermosa", "plano palmeras"
+        # o "plano buenaventura" deben enviar el documento sin caer en IA.
+        if any(x in t for x in [
+            "vista hermosa", "palmeras", "san miguel",
+            "buenaventura", "cuyotenango", "km 188", "km 168"
+        ]):
+            return True
+
+        if t.startswith("plano") or t.startswith("planos"):
+            return True
+
         if any(v in t for v in verbos_documento):
             return True
 
@@ -2241,6 +2255,43 @@ def respuesta_proceso_compra(proyecto):
         f"🌎 Extranjero: DPI o pasaporte, un gestor en Guatemala y copia de remesa "
         f"o comprobante de la forma de pago.\n\n"
         f"😊 ¿Estás en Guatemala o en el extranjero?"
+    )
+
+
+def pide_info_todos_proyectos(texto):
+    """Detecta cuando el cliente pide información/comparación de los tres proyectos."""
+    t = normalizar_texto_topografia(texto)
+    referencias_tres = [
+        "los 3", "las 3", "los tres", "las tres", "3 opciones", "tres opciones",
+        "3 proyectos", "tres proyectos", "todos los proyectos", "todas las opciones"
+    ]
+    pide_info = any(x in t for x in [
+        "info", "informacion", "precios", "precio", "financiamiento",
+        "como funciona", "opciones", "terrenos", "lotes"
+    ])
+    return pide_info and any(x in t for x in referencias_tres)
+
+
+def respuesta_info_todos_proyectos():
+    """Resumen comercial breve de los tres proyectos, sin obligar al cliente a escoger antes."""
+    return (
+        "¡Claro! 😊 Te comparto un resumen de las 3 opciones:\n\n"
+        "🏡 *Buenaventura Cuyotenango*\n"
+        "• 8x16 desde Q83,200 | enganche Q6,000\n"
+        "• 8x18 Q93,600 | enganche Q8,000\n"
+        "• 9x20 Q117,000 | enganche Q10,000\n"
+        "• Financiamiento propio de 2 a 8 años y abonos a capital.\n\n"
+        "🌴 *Palmeras San Miguel*\n"
+        "• 8x16 Q67,200 | enganche Q6,000\n"
+        "• 8x18 Q79,200 | enganche Q8,000\n"
+        "• Financiamiento propio de 1 a 8 años y abonos a capital.\n"
+        "• Este proyecto no cuenta con garita ni muro perimetral.\n\n"
+        "🏘️ *Vista Hermosa*\n"
+        "• 8x16 Fase F Q83,200 | enganche Q6,000\n"
+        "• 8x16 Fase G Q89,600 | enganche Q6,000\n"
+        "• Financiamiento propio de 1 a 8 años y abonos a capital.\n\n"
+        "En los 3 proyectos el diseño de construcción es libre, siempre que sea una construcción formal con block. 🏗️\n\n"
+        "¿Cuál de los 3 te interesa más para enviarte cotización y plano? 😊"
     )
 
 
@@ -6609,6 +6660,16 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
             texto_cliente
         )
 
+        # INFORMACIÓN DE LOS TRES PROYECTOS EN UNA SOLA CONSULTA
+        # No obligamos al cliente a escoger antes si pidió explícitamente las 3 opciones.
+        if pide_info_todos_proyectos(texto_cliente):
+            respuesta = respuesta_info_todos_proyectos()
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta)
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta)
+            return
+
         # CONTINUACIÓN DE FOTOS/VIDEOS PENDIENTES
         # Ejemplo:
         # Cliente: "Me puede fotos"
@@ -7407,20 +7468,48 @@ No añadas otros campos.
         )
 
 
-def generar_resumenes_leads_en_lote(numeros):
-    """Genera los resúmenes seleccionados en una sola llamada a OpenAI."""
-    numeros = [str(n) for n in numeros]
-    if not numeros:
-        return {}
+def _fallback_resumen_corto(numero):
+    """Fallback breve y 100% factual si una llamada de IA falla."""
+    proyecto = crm_nombre_proyecto(numero)
+    with lock_crm:
+        mensajes = list(crm_mensajes.get(numero, []))
 
+    entrantes = [
+        str(m.get("contenido") or "").strip()
+        for m in mensajes[-40:]
+        if m.get("direccion") == "in" and str(m.get("contenido") or "").strip()
+    ]
+
+    if not entrantes:
+        return None
+
+    # No interpreta ni inventa: usa únicamente frases reales del cliente.
+    recientes = entrantes[-3:]
+    resumen_cliente = " / ".join(recientes)
+    if len(resumen_cliente) > 320:
+        resumen_cliente = resumen_cliente[:317].rstrip() + "..."
+
+    lineas = [f"📞 +{numero}"]
+    if proyecto and proyecto != "Sin proyecto":
+        lineas.append(f"🏡 {proyecto}")
+    lineas.append(f"📝 Resumen: {resumen_cliente}")
+    lineas.append("☎️ Seguimiento: Retomar desde la última consulta del cliente.")
+    return "\n".join(lineas)
+
+
+def _generar_resumenes_chunk(numeros_chunk):
+    """Genera un grupo pequeño de resúmenes en una sola llamada a OpenAI."""
+    numeros_chunk = [str(n) for n in numeros_chunk]
     bloques = []
-    for numero in numeros:
+
+    for numero in numeros_chunk:
         transcript = _texto_conversacion_para_resumen(numero)
         proyecto = crm_nombre_proyecto(numero)
         if not transcript:
             continue
-        if len(transcript) > 9000:
-            transcript = transcript[-9000:]
+        # Limitamos contexto por lead para poder procesar muchos clientes sin saturar la petición.
+        if len(transcript) > 5500:
+            transcript = transcript[-5500:]
         bloques.append(
             f"=== CLIENTE {numero} ===\n"
             f"PROYECTO REGISTRADO EN CRM: {proyecto}\n"
@@ -7431,30 +7520,34 @@ def generar_resumenes_leads_en_lote(numeros):
         return {}
 
     instrucciones = """
-Prepara resúmenes factuales para seguimiento telefónico de prospectos inmobiliarios.
-Recibirás varios clientes en una sola petición.
+Eres un asistente que prepara resúmenes MUY CORTOS para una persona que llamará a prospectos inmobiliarios.
+Redacta cada resumen con tus propias palabras, de forma natural, clara y útil para una llamada.
 
 REGLAS OBLIGATORIAS:
 - Usa ÚNICAMENTE información explícita del transcript de CADA cliente.
+- NO inventes ni deduzcas datos que el cliente no haya dicho o que no estén registrados.
 - NO mezcles información entre clientes.
-- NO inventes ni deduzcas nombre, edad, profesión, presupuesto, motivo de compra,
-  cantidad de lotes, forma de pago, país, disponibilidad, intención, parentescos ni otros datos.
-- NO conviertas una respuesta del asesor/bot en un dato afirmado por el cliente.
-- Sí puedes indicar hechos observables de la conversación: preguntó por precios, pidió plano,
-  recibió cotizaciones, consultó financiamiento, dejó de responder después de cierto punto, etc.
-- Si un dato no existe, omítelo. NO escribas 'No proporcionado'.
-- No agregues opiniones sobre qué tan interesado está.
-- Sé MUY breve: cada resumen debe poder leerse rápidamente antes de una llamada.
-- Prioriza únicamente lo que el CLIENTE preguntó, pidió, confirmó o mostró interés en conocer.
-- NO repitas listas largas de amenidades, servicios, precios, ubicaciones o explicaciones dadas por el asesor/bot, salvo que el cliente haya reaccionado específicamente a ese dato.
-- "Datos relevantes" debe ocupar como máximo 1 o 2 frases cortas.
-- "Último punto" debe ser una sola frase corta.
-- Incluye "Seguimiento" con una sola frase práctica para retomar la conversación, basada SOLO en el punto real donde quedó; no inventes necesidades ni nivel de interés.
-- Cada resumen debe incluir el teléfono y, si existe, el proyecto registrado.
-- No añadas otros campos.
+- NO conviertas una respuesta del asesor/bot en una afirmación hecha por el cliente.
+- Prioriza lo que el CLIENTE preguntó, pidió, confirmó, eligió o mostró interés en conocer.
+- Omite listas largas de amenidades, servicios, precios y explicaciones del bot.
+- Si un dato del asesor es necesario para entender dónde quedó la conversación, resúmelo en pocas palabras.
+- No escribas 'No proporcionado'. Si un dato no existe, omítelo.
+- NO opines sobre qué tan interesado está el cliente.
+- El resumen debe ser rápido de leer antes de marcarle por teléfono.
+- "Resumen" debe tener máximo 2 frases y aproximadamente 45 palabras.
+- "Último punto" debe ser 1 frase muy corta.
+- "Seguimiento" debe ser 1 frase práctica para retomar exactamente desde donde quedó.
+- Usa tus propias palabras; NO copies párrafos completos del chat.
 
-Devuelve SOLAMENTE JSON válido, sin markdown ni texto adicional, con esta forma exacta:
-[{"numero":"50200000000","resumen":"📞 Teléfono: +50200000000\n🏡 Proyecto: ...\n📌 Datos relevantes: ...\n📝 Último punto: ...\n☎️ Seguimiento: ..."}]
+FORMATO EXACTO DE CADA MENSAJE:
+📞 +[número]
+🏡 [proyecto, solo si existe]
+📝 Resumen: [máximo 2 frases]
+📌 Último punto: [1 frase]
+☎️ Seguimiento: [1 frase]
+
+Devuelve SOLAMENTE JSON válido, sin markdown ni texto adicional, con esta forma:
+[{"numero":"50200000000","resumen":"📞 +50200000000\n🏡 Vista Hermosa\n📝 Resumen: ...\n📌 Último punto: ...\n☎️ Seguimiento: ..."}]
 """
 
     entrada = "\n\n".join(bloques)
@@ -7468,6 +7561,7 @@ Devuelve SOLAMENTE JSON válido, sin markdown ni texto adicional, con esta forma
         if bruto.startswith("```"):
             bruto = re.sub(r"^```(?:json)?\s*", "", bruto, flags=re.I)
             bruto = re.sub(r"\s*```$", "", bruto)
+
         data = json.loads(bruto)
         resultado = {}
         if isinstance(data, list):
@@ -7476,32 +7570,64 @@ Devuelve SOLAMENTE JSON válido, sin markdown ni texto adicional, con esta forma
                     continue
                 numero = str(item.get("numero") or "").strip().lstrip("+")
                 resumen = str(item.get("resumen") or "").strip()
-                if numero in numeros and resumen:
+                if numero in numeros_chunk and resumen:
                     resultado[numero] = resumen
-        if resultado:
-            return resultado
-        raise ValueError("OpenAI no devolvió resúmenes utilizables")
-    except Exception as exc:
-        print("ERROR GENERANDO RESUMENES EN LOTE:", exc)
-        resultado = {}
-        for numero in numeros:
-            proyecto = crm_nombre_proyecto(numero)
-            with lock_crm:
-                mensajes = list(crm_mensajes.get(numero, []))
-            entrantes = [
-                str(m.get("contenido") or "").strip()
-                for m in mensajes[-40:]
-                if m.get("direccion") == "in" and str(m.get("contenido") or "").strip()
-            ]
-            if not entrantes:
-                continue
-            lineas = [f"📞 Teléfono: +{numero}"]
-            if proyecto and proyecto != "Sin proyecto":
-                lineas.append(f"🏡 Proyecto: {proyecto}")
-            lineas.append("📌 Mensajes relevantes del cliente: " + " | ".join(entrantes[-8:]))
-            resultado[numero] = "\n".join(lineas)
+
+        # Completa únicamente los faltantes con fallback factual.
+        for numero in numeros_chunk:
+            if numero not in resultado:
+                fallback = _fallback_resumen_corto(numero)
+                if fallback:
+                    resultado[numero] = fallback
         return resultado
 
+    except Exception as exc:
+        print("ERROR GENERANDO CHUNK DE RESUMENES:", numeros_chunk, exc)
+        resultado = {}
+        for numero in numeros_chunk:
+            fallback = _fallback_resumen_corto(numero)
+            if fallback:
+                resultado[numero] = fallback
+        return resultado
+
+
+def generar_resumenes_leads_en_lote(numeros):
+    """
+    Genera todos los resúmenes seleccionados sin obligar al usuario a hacerlo uno por uno.
+    Internamente divide los leads en grupos pequeños y procesa hasta 4 grupos en paralelo,
+    evitando una sola petición gigantesca que pueda provocar timeout en Render.
+    """
+    numeros = [str(n) for n in numeros]
+    if not numeros:
+        return {}
+
+    # 6 leads por llamada. Con 24 chats son 4 llamadas en paralelo.
+    tamano_chunk = 6
+    chunks = [numeros[i:i + tamano_chunk] for i in range(0, len(numeros), tamano_chunk)]
+    resultado = {}
+
+    max_workers = min(4, len(chunks)) or 1
+    try:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futuros = {executor.submit(_generar_resumenes_chunk, chunk): chunk for chunk in chunks}
+            for futuro in as_completed(futuros):
+                chunk = futuros[futuro]
+                try:
+                    resultado.update(futuro.result())
+                except Exception as exc:
+                    print("ERROR EN GRUPO DE RESUMENES:", chunk, exc)
+                    for numero in chunk:
+                        fallback = _fallback_resumen_corto(numero)
+                        if fallback:
+                            resultado[numero] = fallback
+    except Exception as exc:
+        print("ERROR GENERAL RESUMENES PARALELOS:", exc)
+        for numero in numeros:
+            fallback = _fallback_resumen_corto(numero)
+            if fallback:
+                resultado[numero] = fallback
+
+    return resultado
 
 def enviar_texto_whatsapp_con_estado(numero, texto):
     """Envía texto y devuelve (ok, detalle). Registra en CRM únicamente si Meta lo acepta."""
@@ -7710,6 +7836,79 @@ def crm_resumen_seguimiento():
     """, content_type="text/html; charset=utf-8")
 
 
+def guardar_media_crm_bytes(numero, contenido, mime_type):
+    """Guarda un archivo enviado manualmente desde el CRM para poder volver a verlo."""
+    if not contenido or not inicializar_media_db():
+        return None
+    media_key = f"manual-{uuid.uuid4().hex}"
+    try:
+        conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO crm_media (media_key, numero, mime_type, contenido, created_at)
+                    VALUES (%s, %s, %s, %s, NOW())
+                    """,
+                    (media_key, str(numero), mime_type or "application/octet-stream", psycopg2.Binary(contenido))
+                )
+            conn.commit()
+        finally:
+            conn.close()
+        return f"/crm/media/{media_key}"
+    except Exception as exc:
+        print("MEDIA MANUAL DB SAVE ERROR:", exc)
+        return None
+
+
+def subir_media_bytes_a_meta(contenido, nombre_archivo, mime_type):
+    """Sube bytes recibidos desde el navegador del CRM a WhatsApp Cloud API."""
+    url = f"https://graph.facebook.com/v26.0/{PHONE_NUMBER_ID}/media"
+    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
+    data = {"messaging_product": "whatsapp", "type": mime_type}
+    try:
+        respuesta = requests.post(
+            url, headers=headers, data=data,
+            files={"file": (nombre_archivo, contenido, mime_type)}, timeout=120
+        )
+        print("CRM MEDIA UPLOAD STATUS:", respuesta.status_code)
+        print("CRM MEDIA UPLOAD RESPONSE:", respuesta.text)
+        if 200 <= respuesta.status_code < 300:
+            return respuesta.json().get("id")
+    except Exception as exc:
+        print("CRM MEDIA UPLOAD ERROR:", exc)
+    return None
+
+
+def enviar_media_id_whatsapp(numero, media_id, tipo, nombre_archivo, caption=""):
+    """Envía una imagen, video o PDF ya subido a Meta."""
+    url = f"https://graph.facebook.com/v26.0/{PHONE_NUMBER_ID}/messages"
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    objeto = {"id": media_id}
+    if caption:
+        objeto["caption"] = caption[:1024]
+    if tipo == "document":
+        objeto["filename"] = nombre_archivo
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": numero,
+        "type": tipo,
+        tipo: objeto
+    }
+    try:
+        respuesta = requests.post(url, headers=headers, json=payload, timeout=60)
+        print("CRM MEDIA SEND STATUS:", respuesta.status_code)
+        print("CRM MEDIA SEND RESPONSE:", respuesta.text)
+        return 200 <= respuesta.status_code < 300
+    except Exception as exc:
+        print("CRM MEDIA SEND ERROR:", exc)
+        return False
+
+
 CRM_HTML = r"""
 <!doctype html>
 <html lang="es">
@@ -7858,6 +8057,14 @@ CRM_HTML = r"""
             display: flex;
             gap: 8px;
         }
+        .composer-stack { display:flex; flex-direction:column; gap:8px; }
+        .media-form { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+        .media-form input[type=file] {
+            flex:1; min-width:220px; border:1px solid #cfd6dd; border-radius:9px; padding:9px; background:white;
+        }
+        .media-send {
+            border:0; background:#2563eb; color:white; font-weight:bold; border-radius:9px; padding:11px 16px; cursor:pointer;
+        }
         .composer textarea {
             flex: 1;
             min-height: 46px;
@@ -7981,10 +8188,17 @@ CRM_HTML = r"""
             </div>
 
             <div class="composer">
-                <form method="post" action="{{ url_for('crm_enviar', numero=seleccionado) }}">
-                    <textarea id="composer-text" name="mensaje" placeholder="Escribe tu respuesta manual..." required></textarea>
-                    <button class="send" type="submit">Enviar</button>
-                </form>
+                <div class="composer-stack">
+                    <form method="post" action="{{ url_for('crm_enviar', numero=seleccionado) }}">
+                        <textarea id="composer-text" name="mensaje" placeholder="Escribe tu respuesta manual..." required></textarea>
+                        <button class="send" type="submit">Enviar</button>
+                    </form>
+                    <form class="media-form" method="post" enctype="multipart/form-data" action="{{ url_for('crm_enviar_archivo', numero=seleccionado) }}">
+                        <input type="file" name="archivo" accept="image/jpeg,image/png,video/mp4,application/pdf" required>
+                        <input type="text" name="caption" placeholder="Texto opcional para acompañar el archivo" style="flex:1;min-width:220px;padding:10px;border:1px solid #cfd6dd;border-radius:9px;">
+                        <button class="media-send" type="submit">📎 Enviar archivo</button>
+                    </form>
+                </div>
             </div>
         {% else %}
             <div class="empty">
@@ -8294,8 +8508,16 @@ CRM_HTML = r"""
                     <div class="bubble">
                         ${m.media_tipo === "image" && m.media_url ? `
                             <a class="crm-photo-link" href="${escapeHtml(m.media_url)}" target="_blank" rel="noopener">
-                                <img class="crm-photo" src="${escapeHtml(m.media_url)}" alt="Foto enviada por el cliente" loading="lazy">
+                                <img class="crm-photo" src="${escapeHtml(m.media_url)}" alt="Imagen del chat" loading="lazy">
                             </a>
+                        ` : ""}
+                        ${m.media_tipo === "video" && m.media_url ? `
+                            <video controls preload="metadata" style="display:block;max-width:100%;width:min(420px,70vw);max-height:420px;border-radius:9px;margin-bottom:7px;">
+                                <source src="${escapeHtml(m.media_url)}" type="video/mp4">
+                            </video>
+                        ` : ""}
+                        ${m.media_tipo === "document" && m.media_url ? `
+                            <a href="${escapeHtml(m.media_url)}" target="_blank" rel="noopener" style="display:inline-block;margin-bottom:7px;font-weight:700;">📄 Abrir PDF</a><br>
                         ` : ""}
                         ${escapeHtml(m.contenido).replaceAll("\n", "<br>")}
                         <span class="time">${escapeHtml(m.hora)}</span>
@@ -8763,6 +8985,56 @@ def crm_enviar(numero):
 
     enviar_whatsapp(numero, mensaje)
     guardar_mensaje(numero, "assistant", mensaje)
+
+    return redirect(url_for("crm", numero=numero))
+
+
+@app.route("/crm/enviar-archivo/<numero>", methods=["POST"])
+def crm_enviar_archivo(numero):
+    if not crm_autorizado():
+        return crm_pedir_login()
+
+    archivo = request.files.get("archivo")
+    caption = request.form.get("caption", "").strip()
+    if not archivo or not archivo.filename:
+        return redirect(url_for("crm", numero=numero))
+
+    nombre = os.path.basename(archivo.filename)
+    mime = (archivo.mimetype or mimetypes.guess_type(nombre)[0] or "").lower()
+    permitidos = {
+        "image/jpeg": "image",
+        "image/png": "image",
+        "video/mp4": "video",
+        "application/pdf": "document"
+    }
+    tipo = permitidos.get(mime)
+    if not tipo:
+        crm_registrar_mensaje(numero, "out", "⚠️ No se envió el archivo: formato no permitido.")
+        return redirect(url_for("crm", numero=numero))
+
+    contenido = archivo.read()
+    if not contenido:
+        return redirect(url_for("crm", numero=numero))
+
+    # Al enviar manualmente cualquier archivo, Gabriel toma control de la conversación.
+    crm_poner_manual(numero)
+    cancelar_seguimiento(numero)
+    iniciar_procesamiento(numero, f"crm-manual-media-{time.time()}")
+
+    media_id = subir_media_bytes_a_meta(contenido, nombre, mime)
+    if not media_id:
+        crm_registrar_mensaje(numero, "out", f"⚠️ No pude subir {nombre} a WhatsApp.")
+        return redirect(url_for("crm", numero=numero))
+
+    ok = enviar_media_id_whatsapp(numero, media_id, tipo, nombre, caption)
+    if ok:
+        media_url = guardar_media_crm_bytes(numero, contenido, mime)
+        etiqueta = {"image": "🖼️ Imagen enviada", "video": "🎥 Video enviado", "document": "📄 PDF enviado"}[tipo]
+        texto_crm = f"{etiqueta}: {nombre}" + (f"\n{caption}" if caption else "")
+        crm_registrar_mensaje(numero, "out", texto_crm, media_url=media_url, media_tipo=tipo)
+        guardar_mensaje(numero, "assistant", texto_crm)
+    else:
+        crm_registrar_mensaje(numero, "out", f"⚠️ WhatsApp rechazó el envío de {nombre}.")
 
     return redirect(url_for("crm", numero=numero))
 
