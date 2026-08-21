@@ -7892,6 +7892,72 @@ def _numeros_para_resumen():
     return numeros
 
 
+# Jobs temporales para generar vistas previas sin bloquear la petición web.
+# Así Render no devuelve 502 aunque se seleccionen muchos clientes.
+resumen_preview_jobs = {}
+lock_resumen_preview_jobs = Lock()
+
+
+def _limpiar_jobs_resumen_preview():
+    ahora = time.time()
+    with lock_resumen_preview_jobs:
+        viejos = [
+            job_id for job_id, job in resumen_preview_jobs.items()
+            if ahora - float(job.get("created_at", ahora)) > 3600
+        ]
+        for job_id in viejos:
+            resumen_preview_jobs.pop(job_id, None)
+
+
+def _iniciar_job_preview_resumenes(seleccionados):
+    _limpiar_jobs_resumen_preview()
+    job_id = f"preview-{time.time_ns()}"
+    with lock_resumen_preview_jobs:
+        resumen_preview_jobs[job_id] = {
+            "estado": "procesando",
+            "created_at": time.time(),
+            "total": len(seleccionados),
+            "seleccionados": list(seleccionados),
+            "resumenes": {},
+            "error": "",
+        }
+
+    def trabajar():
+        try:
+            resumenes = generar_resumenes_leads_en_lote(seleccionados)
+            with lock_resumen_preview_jobs:
+                job = resumen_preview_jobs.get(job_id)
+                if job is not None:
+                    job["resumenes"] = resumenes
+                    job["estado"] = "listo"
+        except Exception as exc:
+            print("ERROR JOB PREVIEW RESUMENES:", exc)
+            with lock_resumen_preview_jobs:
+                job = resumen_preview_jobs.get(job_id)
+                if job is not None:
+                    job["estado"] = "error"
+                    job["error"] = str(exc)
+
+    Thread(target=trabajar, daemon=True).start()
+    return job_id
+
+
+@app.route("/crm/resumen-seguimiento/estado/<job_id>", methods=["GET"])
+def crm_resumen_seguimiento_estado(job_id):
+    if not crm_autorizado():
+        return jsonify({"ok": False, "error": "no_autorizado"}), 401
+    with lock_resumen_preview_jobs:
+        job = resumen_preview_jobs.get(job_id)
+        if not job:
+            return jsonify({"ok": False, "estado": "no_encontrado"}), 404
+        return jsonify({
+            "ok": True,
+            "estado": job.get("estado"),
+            "total": job.get("total", 0),
+            "error": job.get("error", ""),
+        })
+
+
 @app.route("/crm/resumen-seguimiento", methods=["GET", "POST"])
 def crm_resumen_seguimiento():
     global ultimo_resultado_resumen
@@ -7923,6 +7989,124 @@ def crm_resumen_seguimiento():
         </label>
         """
 
+    def pagina_espera(job_id, total):
+        job_js = json.dumps(job_id)
+        return Response(f"""
+        <!doctype html><html lang='es'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
+        <title>Generando resúmenes</title>
+        <style>
+          body{{font-family:Arial,sans-serif;background:#f4f6f8;color:#17212b;margin:0}}
+          .box{{max-width:650px;margin:80px auto;background:white;border-radius:16px;padding:28px;box-shadow:0 4px 18px rgba(0,0,0,.08)}}
+          .spinner{{width:42px;height:42px;border:5px solid #dbe4ea;border-top-color:#047857;border-radius:50%;animation:g 1s linear infinite;margin:22px auto}}
+          @keyframes g{{to{{transform:rotate(360deg)}}}}
+          .small{{color:#64748b}}
+        </style></head><body><div class='box'>
+          <h1>🧠 Preparando {total} resúmenes</h1>
+          <div class='spinner'></div>
+          <p>La IA está resumiendo todos los clientes en segundo plano.</p>
+          <p class='small'>Puedes esperar aquí. Esta página ya no mantiene una petición larga abierta, por lo que Render no debería devolver 502.</p>
+          <p id='estado'>Procesando…</p>
+          <p><a href='/crm'>Volver al CRM</a></p>
+        </div>
+        <script>
+        const job = {job_js};
+        async function revisar() {{
+          try {{
+            const r = await fetch('/crm/resumen-seguimiento/estado/' + encodeURIComponent(job), {{cache:'no-store'}});
+            const d = await r.json();
+            if (d.estado === 'listo') {{
+              location.href = '/crm/resumen-seguimiento?job=' + encodeURIComponent(job);
+              return;
+            }}
+            if (d.estado === 'error') {{
+              document.getElementById('estado').textContent = 'Ocurrió un error: ' + (d.error || 'desconocido');
+              return;
+            }}
+            document.getElementById('estado').textContent = 'Procesando ' + (d.total || {total}) + ' clientes…';
+          }} catch(e) {{
+            document.getElementById('estado').textContent = 'El servidor sigue trabajando. Reintentando…';
+          }}
+          setTimeout(revisar, 1500);
+        }}
+        revisar();
+        </script></body></html>
+        """, content_type="text/html; charset=utf-8")
+
+    def render_preview(previews):
+        cards = []
+        for numero, proyecto, resumen in previews:
+            n = html.escape(str(numero))
+            r = html.escape(resumen)
+            p = html.escape(str(proyecto))
+            cards.append(f"""
+            <label class='card resumen-card'>
+              <div class='check'><input type='checkbox' name='seleccion' value='{n}' checked></div>
+              <div class='contenido'>
+                <div class='numero'>📞 +{n}</div>
+                <div class='proyecto'>🏡 {p}</div>
+                <pre>{r}</pre>
+                <textarea name='resumen_{n}' hidden>{r}</textarea>
+              </div>
+            </label>
+            """)
+
+        return Response(f"""
+        <!doctype html><html lang='es'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Vista previa de resúmenes</title>
+        <style>
+          body{{font-family:Arial,sans-serif;background:#f4f6f8;margin:0;color:#17212b}}
+          .wrap{{max-width:980px;margin:28px auto;padding:0 18px 60px}}
+          .card{{display:flex;gap:14px;background:white;border:1px solid #dfe5eb;border-radius:14px;padding:16px;margin:12px 0;box-shadow:0 2px 8px rgba(0,0,0,.04)}}
+          .check input{{width:22px;height:22px;margin-top:3px}}
+          .contenido{{flex:1;min-width:0}}
+          .numero{{font-weight:800;font-size:18px}}
+          .proyecto{{color:#52606d;margin-top:4px}}
+          pre{{white-space:pre-wrap;font-family:Arial,sans-serif;background:#f8fafc;border-radius:10px;padding:12px;margin:12px 0 0;line-height:1.45}}
+          .acciones{{position:sticky;bottom:0;background:rgba(244,246,248,.96);padding:14px 0;display:flex;gap:10px;flex-wrap:wrap}}
+          button,.btn{{border:0;border-radius:9px;padding:12px 16px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-block}}
+          .send{{background:#065f46;color:white}} .back{{background:#e5e7eb;color:#111827}}
+        </style></head><body><div class='wrap'>
+          <div class='topbar'><div><h1>👀 Vista previa de resúmenes</h1><p>Desmarca cualquier cliente que <strong>NO</strong> quieras enviar. Puedes enviar todos los seleccionados de una sola vez.</p></div></div>
+          <form method='post' onsubmit="return confirm('¿Enviar TODOS los resúmenes que dejaste seleccionados? El envío continuará en segundo plano.');">
+            <input type='hidden' name='accion' value='enviar_seleccionados'>
+            {''.join(cards)}
+            <div class='acciones'>
+              <button class='send' type='submit'>📤 Enviar todos los seleccionados</button>
+              <a class='btn back' href='/crm/resumen-seguimiento'>← Cambiar selección</a>
+              <a class='btn back' href='/crm'>Volver al CRM</a>
+            </div>
+          </form>
+        </div></body></html>
+        """, content_type="text/html; charset=utf-8")
+
+    # Al volver desde la página de espera, mostrar el resultado ya calculado.
+    job_id_get = request.args.get("job", "").strip() if request.method == "GET" else ""
+    if job_id_get:
+        with lock_resumen_preview_jobs:
+            job = resumen_preview_jobs.get(job_id_get)
+            if job:
+                estado = job.get("estado")
+                seleccionados_job = list(job.get("seleccionados") or [])
+                resumenes_job = dict(job.get("resumenes") or {})
+                error_job = job.get("error", "")
+            else:
+                estado = None
+                seleccionados_job = []
+                resumenes_job = {}
+                error_job = ""
+        if estado == "procesando":
+            return pagina_espera(job_id_get, len(seleccionados_job))
+        if estado == "error":
+            return Response(f"<h2>Error generando resúmenes</h2><p>{html.escape(error_job)}</p><p><a href='/crm/resumen-seguimiento'>Volver</a></p>", status=500, content_type="text/html; charset=utf-8")
+        if estado == "listo":
+            previews = []
+            for numero in seleccionados_job:
+                resumen = resumenes_job.get(str(numero))
+                if not resumen:
+                    continue
+                proyecto = crm_nombre_proyecto(numero) or "Sin proyecto"
+                previews.append((numero, proyecto, resumen))
+            return render_preview(previews)
+
     if request.method == "POST":
         accion = request.form.get("accion", "").strip()
 
@@ -7931,68 +8115,16 @@ def crm_resumen_seguimiento():
             if not seleccionados:
                 return Response("<h2>No seleccionaste ningún cliente.</h2><p><a href='/crm/resumen-seguimiento'>Volver</a></p>", status=400, content_type="text/html; charset=utf-8")
 
-            resumenes = generar_resumenes_leads_en_lote(seleccionados)
-            previews = []
-            for numero in seleccionados:
-                resumen = resumenes.get(str(numero))
-                if not resumen:
-                    continue
-                proyecto = crm_nombre_proyecto(numero) or "Sin proyecto"
-                previews.append((numero, proyecto, resumen))
-
-            cards = []
-            for numero, proyecto, resumen in previews:
-                n = html.escape(str(numero))
-                r = html.escape(resumen)
-                p = html.escape(str(proyecto))
-                cards.append(f"""
-                <label class='card resumen-card'>
-                  <div class='check'><input type='checkbox' name='seleccion' value='{n}' checked></div>
-                  <div class='contenido'>
-                    <div class='numero'>📞 +{n}</div>
-                    <div class='proyecto'>🏡 {p}</div>
-                    <pre>{r}</pre>
-                    <textarea name='resumen_{n}' hidden>{r}</textarea>
-                  </div>
-                </label>
-                """)
-
-            return Response(f"""
-            <!doctype html><html lang='es'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Vista previa de resúmenes</title>
-            <style>
-              body{{font-family:Arial,sans-serif;background:#f4f6f8;margin:0;color:#17212b}}
-              .wrap{{max-width:980px;margin:28px auto;padding:0 18px 60px}}
-              .topbar{{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}}
-              .card{{display:flex;gap:14px;background:white;border:1px solid #dfe5eb;border-radius:14px;padding:16px;margin:12px 0;box-shadow:0 2px 8px rgba(0,0,0,.04)}}
-              .check input{{width:22px;height:22px;margin-top:3px}}
-              .contenido{{flex:1;min-width:0}}
-              .numero{{font-weight:800;font-size:18px}}
-              .proyecto{{color:#52606d;margin-top:4px}}
-              pre{{white-space:pre-wrap;font-family:Arial,sans-serif;background:#f8fafc;border-radius:10px;padding:12px;margin:12px 0 0;line-height:1.45}}
-              .acciones{{position:sticky;bottom:0;background:rgba(244,246,248,.96);padding:14px 0;display:flex;gap:10px;flex-wrap:wrap}}
-              button,.btn{{border:0;border-radius:9px;padding:12px 16px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-block}}
-              .send{{background:#065f46;color:white}} .back{{background:#e5e7eb;color:#111827}}
-            </style></head><body><div class='wrap'>
-              <div class='topbar'><div><h1>👀 Vista previa de resúmenes</h1><p>Desmarca cualquier cliente que <strong>NO</strong> quieras enviar. Lo que ves aquí es exactamente el mensaje que se enviará.</p></div></div>
-              <form method='post' onsubmit="return confirm('¿Enviar TODOS los resúmenes que dejaste seleccionados? El envío continuará en segundo plano.');">
-                <input type='hidden' name='accion' value='enviar_seleccionados'>
-                {''.join(cards)}
-                <div class='acciones'>
-                  <button class='send' type='submit'>📤 Enviar todos los seleccionados</button>
-                  <a class='btn back' href='/crm/resumen-seguimiento'>← Cambiar selección</a>
-                  <a class='btn back' href='/crm'>Volver al CRM</a>
-                </div>
-              </form>
-            </div></body></html>
-            """, content_type="text/html; charset=utf-8")
+            # La generación masiva ya no ocurre dentro de esta petición HTTP.
+            # Se lanza en un hilo y el navegador consulta el estado cada 1.5 s.
+            job_id = _iniciar_job_preview_resumenes(seleccionados)
+            return pagina_espera(job_id, len(seleccionados))
 
         if accion == "enviar_seleccionados":
             seleccionados = request.form.getlist("seleccion")
             if not seleccionados:
                 return Response("<h2>No dejaste ningún resumen seleccionado.</h2><p><a href='/crm/resumen-seguimiento'>Volver</a></p>", status=400, content_type="text/html; charset=utf-8")
 
-            # No hay un límite artificial de cantidad: se prepara TODO lo seleccionado
-            # y se envía en segundo plano para evitar timeouts de Render.
             paquetes = []
             for numero in seleccionados:
                 if numero not in numeros:
@@ -8022,7 +8154,6 @@ def crm_resumen_seguimiento():
                         else:
                             fallidos += 1
                             errores.append(f"+{numero_origen}: {detalle}")
-                        # Pausa corta para no golpear la API de Meta con una ráfaga excesiva.
                         time.sleep(0.20)
                 finally:
                     ultimo_resultado_resumen = {
@@ -8034,19 +8165,14 @@ def crm_resumen_seguimiento():
                     }
                     lock_resumen_seguimiento.release()
 
-            Thread(
-                target=enviar_lote_background,
-                args=(list(paquetes),),
-                daemon=True
-            ).start()
+            Thread(target=enviar_lote_background, args=(list(paquetes),), daemon=True).start()
 
             return Response(f"""
             <!doctype html><html lang='es'><head><meta charset='utf-8'><title>Envío iniciado</title></head>
             <body style='font-family:Arial,sans-serif;max-width:760px;margin:40px auto;padding:0 20px'>
               <h1>📤 Envío iniciado</h1>
               <p>Se están enviando <strong>{len(paquetes)}</strong> resúmenes a <strong>+{CRM_SEGUIMIENTO_NUMERO}</strong>.</p>
-              <p>El proceso continúa en segundo plano, así que ya puedes volver al CRM sin esperar a que terminen todos.</p>
-              <p><strong>No hay límite artificial de clientes en el CRM:</strong> puedes seleccionar todos los que tengas.</p>
+              <p>El proceso continúa en segundo plano. Puedes volver al CRM inmediatamente.</p>
               <p><a href='/crm'>Volver al CRM</a> · <a href='/crm/resumen-seguimiento'>Preparar otro envío</a></p>
             </body></html>
             """, content_type="text/html; charset=utf-8")
@@ -8069,8 +8195,8 @@ def crm_resumen_seguimiento():
       .previewbtn{{background:#065f46;color:white}} .secondary{{background:#e5e7eb;color:#111827}}
     </style></head><body><div class='wrap'>
       <h1>📞 Preparar resumen de leads</h1>
-      <p>Se encontraron <strong>{len(numeros)}</strong> conversaciones. Desmarca desde ahora las que no quieras incluir.</p>
-      <p>Después verás una <strong>vista previa exacta de cada resumen</strong> y podrás volver a eliminar clientes antes de enviar nada a <strong>+{CRM_SEGUIMIENTO_NUMERO}</strong>.</p>
+      <p>Se encontraron <strong>{len(numeros)}</strong> conversaciones. Puedes seleccionar todas las que quieras.</p>
+      <p>La vista previa se genera en segundo plano para evitar errores 502 aunque haya muchos chats.</p>
       <form method='post'>
         <input type='hidden' name='accion' value='previsualizar'>
         {tarjetas}
