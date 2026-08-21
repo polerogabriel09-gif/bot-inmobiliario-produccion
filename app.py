@@ -1250,6 +1250,31 @@ def respuesta_diseno_construccion():
     )
 
 
+def pregunta_por_que_sin_garita_palmeras(texto, proyecto=None):
+    """Solo activa la explicación comercial cuando preguntan POR QUÉ Palmeras no tiene garita."""
+    t = normalizar_ventas(texto)
+    if proyecto != "palmeras" and "palmeras" not in t and "san miguel" not in t:
+        return False
+
+    menciona_garita = "garita" in t or "muro perimetral" in t
+    pregunta_motivo = any(x in t for x in [
+        "por que", "porque", "por qué", "cual es la razon", "cuál es la razón",
+        "por que no tiene", "porque no tiene", "por que no cuenta", "porque no cuenta",
+        "por que es abierta", "porque es abierta"
+    ])
+    return menciona_garita and pregunta_motivo
+
+
+def respuesta_por_que_sin_garita_palmeras():
+    return (
+        "Claro 😊 Palmeras San Miguel se desarrolló como una *lotificación abierta*, por eso no cuenta con garita ni muro perimetral.\n\n"
+        "Esto también tiene algunas ventajas 🏡: el acceso al proyecto es más directo y no tendrá un cobro adicional relacionado específicamente con seguridad o funcionamiento de garita.\n\n"
+        "Además, mantiene las principales características del proyecto, como calles pavimentadas, agua potable, energía eléctrica, drenajes con planta de tratamiento y sus áreas de amenidades. 🌳🏊\n\n"
+        "Es una opción pensada para quien busca tener su terreno con mayor libertad de acceso y sin ese costo adicional. 😊\n\n"
+        "¿Le gustaría que le muestre las medidas y precios disponibles en Palmeras San Miguel?"
+    )
+
+
 def pregunta_estado_amenidades_o_garita(texto):
     t = normalizar_ventas(texto)
     elementos = [
@@ -2359,31 +2384,94 @@ def enviar_info_completa_proyecto(numero, proyecto, cierre=True):
         )
 
 
-def enviar_info_todos_proyectos(numero):
-    """Envía los 3 proyectos completos y después deja al bot esperando una elección."""
+def enviar_fotos_amenidades_comparacion(numero):
+    """Envía solo fotos de amenidades como referencia al comparar los 3 proyectos."""
+    rutas = [
+        "media/amenidades/amenidades_1.jpg",
+        "media/amenidades/amenidades_2.jpg",
+        "media/amenidades/amenidades_4.jpg",
+        "media/amenidades/amenidades_5.jpg",
+    ]
+
+    disponibles = []
+    for ruta in rutas:
+        if ruta not in disponibles and os.path.exists(ruta):
+            disponibles.append(ruta)
+
+    if not disponibles:
+        return
+
     enviar_whatsapp(
         numero,
-        "¡Claro! 😊 Te comparto la información completa de nuestros 3 proyectos para que puedas compararlos con calma. 🏡"
+        "🏊🌳 *Amenidades*\n\n"
+        "Nuestros proyectos cuentan con espacios pensados para disfrutar en familia, "
+        "como casa club, piscinas, áreas verdes, juegos para niños y caminamientos. 😊\n\n"
+        "Te comparto algunas imágenes de referencia 👇📸"
     )
 
-    for proyecto in ("buenaventura", "palmeras", "vista_hermosa"):
-        enviar_info_completa_proyecto(numero, proyecto, cierre=False)
+    for i, ruta in enumerate(disponibles[:4], start=1):
+        enviar_imagen_whatsapp(
+            numero,
+            ruta,
+            caption="Amenidades de nuestros proyectos 🏡📸" if i == 1 else ""
+        )
+
+
+def enviar_info_todos_proyectos(numero):
+    """
+    Envía un resumen comparativo de los 3 proyectos + fotos de amenidades.
+    Después espera que el cliente elija un proyecto y, desde ahí, continúa
+    con el flujo completo normal de ese proyecto como proyecto raíz.
+    """
+    resumen = (
+        "¡Claro! 😊 Te comparto un resumen de nuestras 3 opciones para que puedas compararlas:\n\n"
+        "🏡 *Buenaventura Cuyotenango*\n"
+        "📍 Km 168 de la carretera hacia la playa de Tulate, Cuyotenango.\n"
+        "📌 https://maps.app.goo.gl/4wTj52Ez32rdigXk8\n"
+        "• 8x16 desde Q83,200 | enganche Q6,000\n"
+        "• 8x18 Q93,600 | enganche Q8,000\n"
+        "• 9x20 Q117,000 | enganche Q10,000\n"
+        "• Financiamiento propio de 2 a 8 años + abonos a capital.\n"
+        "• Amenidades: casa club, piscinas, áreas verdes, juegos para niños y caminamientos.\n"
+        "• Servicios: garita, muro perimetral, calles pavimentadas, agua potable, energía eléctrica y drenajes con planta de tratamiento.\n\n"
+        "🌴 *Palmeras San Miguel*\n"
+        "📍 Zona 5 de Retalhuleu, camino a La Verde / carretera hacia Las Pilas.\n"
+        "📌 https://maps.app.goo.gl/pBUyn98n8NCkGW8o6\n"
+        "• 8x16 Q67,200 | enganche Q6,000\n"
+        "• 8x18 Q79,200 | enganche Q8,000\n"
+        "• Financiamiento propio de 1 a 8 años + abonos a capital.\n"
+        "• Amenidades: casa club, piscinas, áreas verdes y caminamientos.\n"
+        "• Servicios: calles pavimentadas, agua potable, energía eléctrica y drenajes con planta de tratamiento.\n\n"
+        "🏘️ *Ciudad Vista Hermosa*\n"
+        "📍 CA-2, km 188, Retalhuleu.\n"
+        "📌 https://maps.app.goo.gl/DCckHh97SMMPiLFS9\n"
+        "• 8x16 Fase F Q83,200 | enganche Q6,000\n"
+        "• 8x16 Fase G Q89,600 | enganche Q6,000\n"
+        "• Financiamiento propio de 1 a 8 años + abonos a capital.\n"
+        "• Amenidades: casa club, piscinas, áreas verdes, juegos para niños y caminamientos.\n"
+        "• Servicios: garita, muro perimetral, calles pavimentadas, agua potable, energía eléctrica y drenajes con planta de tratamiento.\n\n"
+        "🏗️ En los 3 proyectos el diseño de construcción es libre: puedes construir vivienda, apartamentos o locales, siempre que sea una construcción formal con block."
+    )
+    enviar_whatsapp(numero, resumen)
+
+    enviar_fotos_amenidades_comparacion(numero)
+
+    enviar_whatsapp(
+        numero,
+        "Estas son algunas de las amenidades que podrás disfrutar 😊🏡\n\n"
+        "Le informamos que *Palmeras San Miguel es una lotificación abierta, por lo que no cuenta con garita ni muro perimetral*. "
+        "Buenaventura Cuyotenango y Vista Hermosa sí cuentan con estos servicios.\n\n"
+        "¿Cuál de los 3 proyectos le interesa más para enviarle toda la información? 😊"
+    )
 
     marcar_espera_proyecto_despues_tres(numero)
-    enviar_whatsapp(
-        numero,
-        "Ya tienes la información de los 3 😊 ¿Cuál te interesa más: Buenaventura Cuyotenango, "
-        "Palmeras San Miguel o Vista Hermosa?"
-    )
 
 
 def respuesta_info_todos_proyectos():
-    # Se conserva para la acción rápida del CRM, pero el flujo automático usa
-    # enviar_info_todos_proyectos() para adjuntar también material y cotizaciones.
     return (
-        "¡Claro! 😊 Puedo enviarte la información completa de Buenaventura Cuyotenango, "
-        "Palmeras San Miguel y Vista Hermosa, incluyendo ubicación, precios, financiamiento, "
-        "fotos/videos y amenidades. 🏡"
+        "¡Claro! 😊 Te puedo compartir un resumen comparativo de Buenaventura Cuyotenango, "
+        "Palmeras San Miguel y Vista Hermosa con ubicación, precios, financiamiento, "
+        "servicios y fotos de amenidades. 🏡"
     )
 
 def seguimiento_compra_respuesta_directa(texto, proyecto):
@@ -6758,7 +6846,7 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
             guardar_mensaje(
                 numero_cliente,
                 "assistant",
-                "Se envió la información completa de los 3 proyectos con ubicación, cotizaciones y multimedia."
+                "Se envió el resumen comparativo de los 3 proyectos con ubicación, servicios y fotos de amenidades."
             )
             if procesamiento_sigue_vigente(numero_cliente, message_id):
                 enviar_info_todos_proyectos(numero_cliente)
@@ -6976,6 +7064,15 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
         # DISEÑO DE CONSTRUCCION LIBRE
         if pregunta_diseno_construccion(texto_cliente):
             respuesta = respuesta_diseno_construccion()
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta)
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta)
+            return
+
+        # PALMERAS: explicar POR QUÉ no hay garita únicamente si el cliente lo pregunta.
+        if pregunta_por_que_sin_garita_palmeras(texto_cliente, proyecto):
+            respuesta = respuesta_por_que_sin_garita_palmeras()
             guardar_mensaje(numero_cliente, "user", texto_cliente)
             guardar_mensaje(numero_cliente, "assistant", respuesta)
             if procesamiento_sigue_vigente(numero_cliente, message_id):
@@ -9144,27 +9241,43 @@ def crm_toggle(numero):
     return redirect(url_for("crm", numero=numero))
 
 
-@app.route("/crm/accion/info-3-proyectos/<numero>", methods=["POST"])
-def crm_accion_info_tres_proyectos(numero):
-    """Envía desde el CRM la respuesta oficial del bot con información de los 3 proyectos."""
-    if not crm_autorizado():
-        return crm_pedir_login()
-
-    # Esta acción rápida reproduce el mismo paquete completo que usaría el bot:
-    # ubicación, cotizaciones, fotos/videos y amenidades de los 3 proyectos.
-    cancelar_seguimiento(numero)
-    iniciar_procesamiento(numero, f"crm-accion-3-proyectos-{time.time()}")
-
+def _crm_worker_info_tres_proyectos(numero):
+    """Envía el resumen de los 3 proyectos y las fotos de amenidades fuera de la petición HTTP del CRM.
+    Así el navegador no queda esperando mientras se suben las imágenes.
+    """
     try:
         enviar_info_todos_proyectos(numero)
         guardar_mensaje(
             numero,
             "assistant",
-            "Se envió desde el CRM la información completa de los 3 proyectos."
+            "Se envió desde el CRM el resumen comparativo de los 3 proyectos y las fotos de amenidades."
         )
     except Exception as exc:
         print("ERROR ACCION INFO 3 PROYECTOS:", exc)
-        crm_registrar_mensaje(numero, "out", "⚠️ No pude enviar la información completa de los 3 proyectos.")
+        try:
+            crm_registrar_mensaje(
+                numero,
+                "out",
+                "⚠️ No pude completar el envío de la información de los 3 proyectos."
+            )
+        except Exception as exc2:
+            print("ERROR REGISTRANDO FALLO INFO 3 PROYECTOS:", exc2)
+
+
+@app.route("/crm/accion/info-3-proyectos/<numero>", methods=["POST"])
+def crm_accion_info_tres_proyectos(numero):
+    """Dispara el envío completo en segundo plano y vuelve al CRM de inmediato."""
+    if not crm_autorizado():
+        return crm_pedir_login()
+
+    cancelar_seguimiento(numero)
+    iniciar_procesamiento(numero, f"crm-accion-3-proyectos-{time.time()}")
+
+    Thread(
+        target=_crm_worker_info_tres_proyectos,
+        args=(numero,),
+        daemon=True
+    ).start()
 
     return redirect(url_for("crm", numero=numero))
 
