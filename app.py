@@ -68,7 +68,7 @@ CRM_PASSWORD = os.getenv("CRM_PASSWORD")
 
 # Número interno que recibirá, por WhatsApp, un resumen separado por cada lead.
 # Puede cambiarse luego desde Render > Environment sin tocar el código.
-CRM_SEGUIMIENTO_NUMERO = os.getenv("CRM_SEGUIMIENTO_NUMERO", "50245484935").strip().replace("+", "").replace(" ", "")
+CRM_SEGUIMIENTO_NUMERO = os.getenv("CRM_SEGUIMIENTO_NUMERO", "50236676447").strip().replace("+", "").replace(" ", "")
 
 # Web Push para notificaciones reales en computadora y teléfono.
 VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY", "")
