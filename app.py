@@ -7974,11 +7974,11 @@ def crm_resumen_seguimiento():
               .send{{background:#065f46;color:white}} .back{{background:#e5e7eb;color:#111827}}
             </style></head><body><div class='wrap'>
               <div class='topbar'><div><h1>👀 Vista previa de resúmenes</h1><p>Desmarca cualquier cliente que <strong>NO</strong> quieras enviar. Lo que ves aquí es exactamente el mensaje que se enviará.</p></div></div>
-              <form method='post' onsubmit="return confirm('¿Enviar únicamente los resúmenes que dejaste seleccionados?');">
+              <form method='post' onsubmit="return confirm('¿Enviar TODOS los resúmenes que dejaste seleccionados? El envío continuará en segundo plano.');">
                 <input type='hidden' name='accion' value='enviar_seleccionados'>
                 {''.join(cards)}
                 <div class='acciones'>
-                  <button class='send' type='submit'>📤 Enviar seleccionados</button>
+                  <button class='send' type='submit'>📤 Enviar todos los seleccionados</button>
                   <a class='btn back' href='/crm/resumen-seguimiento'>← Cambiar selección</a>
                   <a class='btn back' href='/crm'>Volver al CRM</a>
                 </div>
@@ -7991,43 +7991,63 @@ def crm_resumen_seguimiento():
             if not seleccionados:
                 return Response("<h2>No dejaste ningún resumen seleccionado.</h2><p><a href='/crm/resumen-seguimiento'>Volver</a></p>", status=400, content_type="text/html; charset=utf-8")
 
-            if not lock_resumen_seguimiento.acquire(blocking=False):
-                return Response("<h2>Ya hay un envío de resúmenes en proceso.</h2><p><a href='/crm'>Volver al CRM</a></p>", status=409, content_type="text/html; charset=utf-8")
+            # No hay un límite artificial de cantidad: se prepara TODO lo seleccionado
+            # y se envía en segundo plano para evitar timeouts de Render.
+            paquetes = []
+            for numero in seleccionados:
+                if numero not in numeros:
+                    continue
+                resumen = request.form.get(f"resumen_{numero}", "").strip()
+                if resumen:
+                    paquetes.append((str(numero), resumen))
 
-            enviados = 0
-            fallidos = 0
-            errores = []
-            try:
-                for numero in seleccionados:
-                    if numero not in numeros:
-                        continue
-                    resumen = request.form.get(f"resumen_{numero}", "").strip()
-                    if not resumen:
-                        continue
-                    ok, detalle = enviar_texto_whatsapp_con_estado(CRM_SEGUIMIENTO_NUMERO, resumen)
-                    if ok:
-                        enviados += 1
-                    else:
-                        fallidos += 1
-                        errores.append(f"+{numero}: {detalle}")
-                    time.sleep(0.35)
-            finally:
-                lock_resumen_seguimiento.release()
+            if not paquetes:
+                return Response("<h2>No había resúmenes válidos para enviar.</h2><p><a href='/crm/resumen-seguimiento'>Volver</a></p>", status=400, content_type="text/html; charset=utf-8")
 
-            ultimo_resultado_resumen = {
-                "enviados": enviados,
-                "fallidos": fallidos,
-                "fecha": datetime.now(ZoneInfo("America/Guatemala")).strftime("%d/%m/%Y %I:%M %p")
-            }
-            detalle_html = "".join(f"<li>{html.escape(e)}</li>" for e in errores[:10])
+            if lock_resumen_seguimiento.locked():
+                return Response("<h2>Ya hay un envío de resúmenes en proceso.</h2><p>Espera a que termine antes de iniciar otro.</p><p><a href='/crm'>Volver al CRM</a></p>", status=409, content_type="text/html; charset=utf-8")
+
+            def enviar_lote_background(paquetes_copia):
+                global ultimo_resultado_resumen
+                if not lock_resumen_seguimiento.acquire(blocking=False):
+                    return
+                enviados = 0
+                fallidos = 0
+                errores = []
+                try:
+                    for numero_origen, resumen in paquetes_copia:
+                        ok, detalle = enviar_texto_whatsapp_con_estado(CRM_SEGUIMIENTO_NUMERO, resumen)
+                        if ok:
+                            enviados += 1
+                        else:
+                            fallidos += 1
+                            errores.append(f"+{numero_origen}: {detalle}")
+                        # Pausa corta para no golpear la API de Meta con una ráfaga excesiva.
+                        time.sleep(0.20)
+                finally:
+                    ultimo_resultado_resumen = {
+                        "enviados": enviados,
+                        "fallidos": fallidos,
+                        "errores": errores[:20],
+                        "total": len(paquetes_copia),
+                        "fecha": datetime.now(ZoneInfo("America/Guatemala")).strftime("%d/%m/%Y %I:%M %p")
+                    }
+                    lock_resumen_seguimiento.release()
+
+            Thread(
+                target=enviar_lote_background,
+                args=(list(paquetes),),
+                daemon=True
+            ).start()
+
             return Response(f"""
-            <!doctype html><html lang='es'><head><meta charset='utf-8'><title>Resumen enviado</title></head>
+            <!doctype html><html lang='es'><head><meta charset='utf-8'><title>Envío iniciado</title></head>
             <body style='font-family:Arial,sans-serif;max-width:760px;margin:40px auto;padding:0 20px'>
-              <h1>📞 Resumen de seguimiento</h1>
-              <p><strong>{enviados}</strong> resúmenes enviados a <strong>+{CRM_SEGUIMIENTO_NUMERO}</strong>.</p>
-              <p><strong>{fallidos}</strong> envíos fallaron.</p>
-              {('<ul>'+detalle_html+'</ul>') if detalle_html else ''}
-              <p><a href='/crm/resumen-seguimiento'>Preparar otro envío</a> · <a href='/crm'>Volver al CRM</a></p>
+              <h1>📤 Envío iniciado</h1>
+              <p>Se están enviando <strong>{len(paquetes)}</strong> resúmenes a <strong>+{CRM_SEGUIMIENTO_NUMERO}</strong>.</p>
+              <p>El proceso continúa en segundo plano, así que ya puedes volver al CRM sin esperar a que terminen todos.</p>
+              <p><strong>No hay límite artificial de clientes en el CRM:</strong> puedes seleccionar todos los que tengas.</p>
+              <p><a href='/crm'>Volver al CRM</a> · <a href='/crm/resumen-seguimiento'>Preparar otro envío</a></p>
             </body></html>
             """, content_type="text/html; charset=utf-8")
 
