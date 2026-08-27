@@ -929,6 +929,67 @@ def detectar_proyecto_en_texto(texto):
     return None
 
 
+def es_seleccion_simple_de_proyecto(texto):
+    """
+    Detecta cuando el cliente únicamente está indicando qué proyecto le interesa.
+
+    Ejemplos:
+    - "Buenaventura"
+    - "De Buenaventura"
+    - "Me interesa Palmeras San Miguel"
+    - "Información de Vista Hermosa"
+
+    No intercepta preguntas concretas como precio, ubicación, cuotas, fotos,
+    planos, amenidades, etc.; esas siguen pasando por sus flujos existentes.
+    """
+    proyecto = detectar_proyecto_en_texto(texto)
+    if not proyecto:
+        return False
+
+    t = normalizar_texto_topografia(texto)
+    t = re.sub(r"[^a-z0-9ñ\s]", " ", t)
+    t = " ".join(t.split())
+
+    aliases = {
+        "buenaventura": {
+            "buenaventura",
+            "buenaventura cuyotenango",
+            "cuyotenango",
+        },
+        "palmeras": {
+            "palmeras",
+            "palmeras san miguel",
+            "san miguel",
+        },
+        "vista_hermosa": {
+            "vista hermosa",
+        },
+    }
+
+    prefijos = [
+        "",
+        "de ",
+        "el de ",
+        "quiero el de ",
+        "me interesa ",
+        "me interesa el de ",
+        "informacion de ",
+        "info de ",
+        "quiero informacion de ",
+        "quiero info de ",
+        "quiero saber de ",
+        "sobre ",
+        "del proyecto ",
+    ]
+
+    candidatos = set()
+    for alias in aliases.get(proyecto, set()):
+        for prefijo in prefijos:
+            candidatos.add((prefijo + alias).strip())
+
+    return t in candidatos
+
+
 def actualizar_proyecto_activo(numero, texto):
     """
     Si el cliente menciona un proyecto explícitamente, lo fija.
@@ -7436,6 +7497,29 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
                 enviar_fotos=True,
                 enviar_videos=True
             )
+            return
+
+        # SELECCIÓN SIMPLE DE PROYECTO -> INFORMACIÓN COMPLETA DIRECTA
+        # Si el cliente únicamente responde con el nombre del proyecto (por ejemplo
+        # "De Buenaventura"), no lo hacemos elegir entre cotización, ubicación,
+        # requisitos o visita. Enviamos de una vez el paquete completo que ya existe
+        # en este app.py: resumen, ubicación, cotizaciones, fotos/videos y amenidades.
+        # Este bloque está justo antes de la IA para NO alterar ningún flujo específico
+        # que ya se trabajó anteriormente.
+        if proyecto and es_seleccion_simple_de_proyecto(texto_cliente):
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(
+                numero_cliente,
+                "assistant",
+                f"Se envió la información completa del proyecto {proyecto}."
+            )
+
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_info_completa_proyecto(
+                    numero_cliente,
+                    proyecto,
+                    cierre=True
+                )
             return
 
         # RESPUESTA NORMAL CON IA
