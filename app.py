@@ -6689,7 +6689,8 @@ def cancelar_seguimiento(numero):
 
 def programar_seguimiento_inactividad(numero):
     """
-    Programa un seguimiento. Si el cliente escribe de nuevo antes del tiempo,
+    Programa dos seguimientos automáticos: a las 8 y 16 horas de inactividad.
+    Si el cliente escribe de nuevo antes de cualquiera de los dos envíos,
     la versión anterior queda cancelada automáticamente.
     """
     with lock_seguimiento:
@@ -6697,18 +6698,28 @@ def programar_seguimiento_inactividad(numero):
         seguimiento_version[numero] = version
 
     def esperar_y_enviar():
+        # Primer recordatorio: 8 horas después del último mensaje del cliente.
         time.sleep(SEGUIMIENTO_SEGUNDOS)
 
         with lock_seguimiento:
             if seguimiento_version.get(numero) != version:
                 return
 
-        # Si esta versión sigue vigente, el cliente no volvió a escribir
-        # durante el tiempo configurado.
         enviar_whatsapp(numero, SEGUIMIENTO_TEXTO)
         guardar_mensaje(numero, "assistant", SEGUIMIENTO_TEXTO)
 
-        # Marcar esta versión como consumida para que se envíe una sola vez.
+        # Segundo recordatorio: otras 8 horas después (16 horas en total).
+        time.sleep(SEGUIMIENTO_SEGUNDOS)
+
+        with lock_seguimiento:
+            if seguimiento_version.get(numero) != version:
+                return
+
+        enviar_whatsapp(numero, SEGUIMIENTO_TEXTO)
+        guardar_mensaje(numero, "assistant", SEGUIMIENTO_TEXTO)
+
+        # Después del segundo recordatorio damos esta secuencia por terminada.
+        # Si el cliente vuelve a escribir, el flujo normal creará una nueva secuencia.
         with lock_seguimiento:
             if seguimiento_version.get(numero) == version:
                 seguimiento_version[numero] = version + 1
