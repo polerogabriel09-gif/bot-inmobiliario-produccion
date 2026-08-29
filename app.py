@@ -4171,6 +4171,156 @@ def crm_nombre_proyecto(numero):
     )
 
 
+# ============================================================
+# CRM - EMBUDO DE VENTAS Y PROXIMA ACCION
+# ============================================================
+# Esta metadata es independiente de la memoria conversacional del bot.
+# Se guarda en PostgreSQL para sobrevivir reinicios y deploys de Render.
+CRM_ETAPAS = [
+    "Nuevo lead",
+    "Información enviada",
+    "Interesado",
+    "Cotización enviada",
+    "Visita pendiente",
+    "Visita realizada",
+    "Reserva",
+    "Venta",
+    "Perdido",
+]
+
+crm_lead_meta = {}
+_crm_lead_meta_cargada = False
+_crm_lead_meta_db_inicializada = False
+lock_crm_lead_meta = Lock()
+
+
+def inicializar_crm_lead_meta_db():
+    global _crm_lead_meta_db_inicializada
+    if not DATABASE_URL or not psycopg2:
+        return False
+    if _crm_lead_meta_db_inicializada:
+        return True
+
+    with lock_crm_lead_meta:
+        if _crm_lead_meta_db_inicializada:
+            return True
+        try:
+            conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS crm_lead_meta (
+                            numero TEXT PRIMARY KEY,
+                            etapa TEXT NOT NULL DEFAULT 'Nuevo lead',
+                            proxima_accion TEXT NOT NULL DEFAULT '',
+                            proxima_accion_fecha TEXT NOT NULL DEFAULT '',
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                    """)
+                conn.commit()
+                _crm_lead_meta_db_inicializada = True
+                print("CRM LEADS DB: tabla lista")
+                return True
+            finally:
+                conn.close()
+        except Exception as exc:
+            print("CRM LEADS DB INIT ERROR:", exc)
+            return False
+
+
+def cargar_crm_lead_meta():
+    global _crm_lead_meta_cargada
+    if _crm_lead_meta_cargada:
+        return
+    if not inicializar_crm_lead_meta_db():
+        _crm_lead_meta_cargada = True
+        return
+
+    try:
+        conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT numero, etapa, proxima_accion, proxima_accion_fecha
+                    FROM crm_lead_meta
+                """)
+                filas = cur.fetchall()
+        finally:
+            conn.close()
+
+        with lock_crm_lead_meta:
+            for numero, etapa, accion, fecha in filas:
+                crm_lead_meta[str(numero)] = {
+                    "etapa": etapa if etapa in CRM_ETAPAS else "Nuevo lead",
+                    "proxima_accion": accion or "",
+                    "proxima_accion_fecha": fecha or "",
+                }
+            _crm_lead_meta_cargada = True
+    except Exception as exc:
+        print("CRM LEADS DB LOAD ERROR:", exc)
+        _crm_lead_meta_cargada = True
+
+
+def crm_obtener_meta(numero):
+    numero = str(numero or "").strip()
+    cargar_crm_lead_meta()
+    if not numero:
+        return {
+            "etapa": "Nuevo lead",
+            "proxima_accion": "",
+            "proxima_accion_fecha": "",
+        }
+    with lock_crm_lead_meta:
+        meta = crm_lead_meta.get(numero) or {}
+        return {
+            "etapa": meta.get("etapa") if meta.get("etapa") in CRM_ETAPAS else "Nuevo lead",
+            "proxima_accion": str(meta.get("proxima_accion") or ""),
+            "proxima_accion_fecha": str(meta.get("proxima_accion_fecha") or ""),
+        }
+
+
+def crm_guardar_meta(numero, etapa, proxima_accion, proxima_accion_fecha):
+    numero = str(numero or "").strip()
+    if not numero:
+        return False
+
+    etapa = etapa if etapa in CRM_ETAPAS else "Nuevo lead"
+    proxima_accion = str(proxima_accion or "").strip()[:180]
+    proxima_accion_fecha = str(proxima_accion_fecha or "").strip()[:40]
+
+    with lock_crm_lead_meta:
+        crm_lead_meta[numero] = {
+            "etapa": etapa,
+            "proxima_accion": proxima_accion,
+            "proxima_accion_fecha": proxima_accion_fecha,
+        }
+
+    if not inicializar_crm_lead_meta_db():
+        return False
+
+    try:
+        conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO crm_lead_meta (
+                        numero, etapa, proxima_accion, proxima_accion_fecha, updated_at
+                    ) VALUES (%s, %s, %s, %s, NOW())
+                    ON CONFLICT (numero) DO UPDATE SET
+                        etapa = EXCLUDED.etapa,
+                        proxima_accion = EXCLUDED.proxima_accion,
+                        proxima_accion_fecha = EXCLUDED.proxima_accion_fecha,
+                        updated_at = NOW()
+                """, (numero, etapa, proxima_accion, proxima_accion_fecha))
+            conn.commit()
+        finally:
+            conn.close()
+        return True
+    except Exception as exc:
+        print("CRM LEADS DB SAVE ERROR:", exc)
+        return False
+
+
 
 # Maximo de mensajes anteriores que recordara temporalmente.
 MAX_HISTORIAL = 12
@@ -8593,6 +8743,52 @@ CRM_HTML = r"""
             color: #9a3412;
             font-size: 12px;
         }
+        .stage-badge {
+            display:inline-block; margin-top:6px; padding:3px 7px; border-radius:999px;
+            font-size:10px; font-weight:700; background:#eef2ff; color:#4338ca;
+        }
+        .sidebar-search { display:grid; gap:7px; }
+        .sidebar-search select {
+            width:100%; padding:9px 10px; border:1px solid #cfd6dd; border-radius:9px;
+            background:white; font:inherit; color:#344054;
+        }
+        .lead-management {
+            background:#ffffff; border-bottom:1px solid #dbe1e7; padding:12px 18px;
+            display:grid; gap:10px;
+        }
+        .lead-management-title { font-weight:800; font-size:13px; color:#344054; }
+        .lead-form {
+            display:grid; grid-template-columns:minmax(150px,1fr) minmax(210px,2fr) minmax(190px,1fr) auto;
+            gap:8px; align-items:end;
+        }
+        .lead-field { display:flex; flex-direction:column; gap:5px; min-width:0; }
+        .lead-field label { font-size:11px; font-weight:700; color:#667085; }
+        .lead-field input, .lead-field select {
+            width:100%; padding:9px 10px; border:1px solid #cfd6dd; border-radius:9px;
+            font:inherit; background:white; min-height:39px;
+        }
+        .save-lead {
+            border:0; border-radius:9px; padding:10px 14px; background:#111827; color:white;
+            font-weight:800; cursor:pointer; min-height:39px;
+        }
+        .quick-tools {
+            background:#f8fafc; border-bottom:1px solid #dbe1e7; padding:10px 18px;
+        }
+        .quick-tools-title { font-size:11px; font-weight:800; color:#667085; margin-bottom:8px; }
+        .quick-grid { display:flex; flex-wrap:wrap; gap:7px; }
+        .quick-grid form { margin:0; }
+        .quick-chip {
+            border:1px solid #c7d2fe; background:#eef2ff; color:#3730a3; border-radius:9px;
+            padding:8px 10px; font-size:12px; font-weight:800; cursor:pointer;
+        }
+        .quick-chip:hover { background:#e0e7ff; }
+        .quick-chip.secondary { border-color:#d1d5db; background:white; color:#374151; }
+        .quick-chip:disabled { opacity:.42; cursor:not-allowed; }
+        .next-mini { margin-top:5px; font-size:11px; color:#b45309; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        @media (max-width: 980px) {
+            .lead-form { grid-template-columns:1fr 1fr; }
+            .save-lead { width:100%; }
+        }
         @media (max-width: 760px) {
             .layout { grid-template-columns: 1fr; }
             .sidebar {
@@ -8629,6 +8825,12 @@ CRM_HTML = r"""
             <div class="sidebar-title">Conversaciones (<span id="client-count">{{ clientes|length }}</span>)</div>
             <div class="sidebar-search">
                 <input id="crm-search-number" type="search" inputmode="numeric" placeholder="🔎 Buscar por número..." autocomplete="off">
+                <select id="crm-filter-stage" aria-label="Filtrar por etapa">
+                    <option value="">Todas las etapas</option>
+                    {% for etapa in etapas %}
+                        <option value="{{ etapa }}">{{ etapa }}</option>
+                    {% endfor %}
+                </select>
             </div>
             {% if not clientes %}
                 <div style="padding:20px;color:#667085;">
@@ -8639,6 +8841,7 @@ CRM_HTML = r"""
             {% for c in clientes %}
                 <a class="chat-link {% if seleccionado == c.numero %}active{% endif %}"
                    data-number="{{ c.numero }}"
+                   data-stage="{{ c.etapa }}"
                    href="{{ url_for('crm', numero=c.numero) }}">
                     <div>
                         <span class="phone">+{{ c.numero }}</span>
@@ -8650,6 +8853,10 @@ CRM_HTML = r"""
                     </div>
                     <div class="preview">{{ c.preview }}</div>
                     <div class="small">{{ c.proyecto }}</div>
+                    <span class="stage-badge">{{ c.etapa }}</span>
+                    {% if c.proxima_accion %}
+                        <div class="next-mini">⏰ {{ c.proxima_accion }}{% if c.proxima_accion_fecha %} · {{ c.proxima_accion_fecha|replace('T',' ') }}{% endif %}</div>
+                    {% endif %}
                 </a>
             {% endfor %}
         </aside>
@@ -8677,6 +8884,45 @@ CRM_HTML = r"""
                 </div>
             </div>
 
+            <div class="lead-management">
+                <div class="lead-management-title">📌 Gestión del lead</div>
+                <form class="lead-form" method="post" action="{{ url_for('crm_guardar_gestion', numero=seleccionado) }}">
+                    <div class="lead-field">
+                        <label>Etapa del embudo</label>
+                        <select name="etapa">
+                            {% for etapa in etapas %}
+                                <option value="{{ etapa }}" {% if meta_seleccionada.etapa == etapa %}selected{% endif %}>{{ etapa }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="lead-field">
+                        <label>Próxima acción</label>
+                        <input type="text" name="proxima_accion" maxlength="180" value="{{ meta_seleccionada.proxima_accion }}" placeholder="Ej. Llamar, enviar plano, confirmar visita...">
+                    </div>
+                    <div class="lead-field">
+                        <label>Fecha y hora</label>
+                        <input type="datetime-local" name="proxima_accion_fecha" value="{{ meta_seleccionada.proxima_accion_fecha }}">
+                    </div>
+                    <button class="save-lead" type="submit">💾 Guardar</button>
+                </form>
+            </div>
+
+            <div class="quick-tools">
+                <div class="quick-tools-title">⚡ MENSAJES Y ENVÍOS RÁPIDOS · usan el proyecto activo: {{ proyecto_seleccionado }}</div>
+                <div class="quick-grid">
+                    <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='info-completa') }}"><button class="quick-chip" type="submit" {% if not proyecto_clave_seleccionado %}disabled title="Primero debe existir un proyecto activo"{% endif %}>🏡 Info completa</button></form>
+                    <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='cotizaciones') }}"><button class="quick-chip" type="submit" {% if not proyecto_clave_seleccionado %}disabled{% endif %}>💰 Cotizaciones</button></form>
+                    <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='ubicacion') }}"><button class="quick-chip" type="submit" {% if not proyecto_clave_seleccionado %}disabled{% endif %}>📍 Ubicación</button></form>
+                    <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='plano') }}"><button class="quick-chip" type="submit" {% if not proyecto_clave_seleccionado %}disabled{% endif %}>🗺️ Plano</button></form>
+                    <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='fotos') }}"><button class="quick-chip" type="submit" {% if not proyecto_clave_seleccionado %}disabled{% endif %}>📸 Fotos</button></form>
+                    <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='videos') }}"><button class="quick-chip" type="submit" {% if not proyecto_clave_seleccionado %}disabled{% endif %}>🎥 Videos</button></form>
+                    <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='requisitos') }}"><button class="quick-chip secondary" type="submit">📋 Requisitos</button></form>
+                    <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='gastos') }}"><button class="quick-chip secondary" type="submit" {% if not proyecto_clave_seleccionado %}disabled{% endif %}>💧 Gastos</button></form>
+                    <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='visita') }}"><button class="quick-chip secondary" type="submit">📅 Proponer visita</button></form>
+                    <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='seguimiento') }}"><button class="quick-chip secondary" type="submit">☎️ Seguimiento</button></form>
+                </div>
+            </div>
+
             {% if manual %}
                 <div class="notice">
                     ✋ Estás atendiendo esta conversación manualmente. La IA y el seguimiento automático están pausados.
@@ -8687,6 +8933,17 @@ CRM_HTML = r"""
                 {% for m in mensajes %}
                     <div class="row {{ m.direccion }}">
                         <div class="bubble">
+                            {% if m.media_tipo == 'image' and m.media_url %}
+                                <a class="crm-photo-link" href="{{ m.media_url }}" target="_blank" rel="noopener">
+                                    <img class="crm-photo" src="{{ m.media_url }}" alt="Imagen del chat" loading="lazy">
+                                </a>
+                            {% elif m.media_tipo == 'video' and m.media_url %}
+                                <video controls preload="metadata" style="display:block;max-width:100%;width:min(420px,70vw);max-height:420px;border-radius:9px;margin-bottom:7px;">
+                                    <source src="{{ m.media_url }}" type="video/mp4">
+                                </video>
+                            {% elif m.media_tipo == 'document' and m.media_url %}
+                                <a href="{{ m.media_url }}" target="_blank" rel="noopener" style="display:inline-block;margin-bottom:7px;font-weight:700;">📄 Abrir PDF</a><br>
+                            {% endif %}
                             {{ m.contenido }}
                             <span class="time">{{ m.hora }}</span>
                         </div>
@@ -8722,15 +8979,20 @@ CRM_HTML = r"""
         if (box) box.scrollTop = box.scrollHeight;
 
         const crmSearchNumber = document.getElementById("crm-search-number");
+        const crmFilterStage = document.getElementById("crm-filter-stage");
         function filtrarConversacionesPorNumero() {
-            if (!crmSearchNumber) return;
-            const q = (crmSearchNumber.value || "").replace(/\D/g, "");
+            const q = crmSearchNumber ? (crmSearchNumber.value || "").replace(/\D/g, "") : "";
+            const etapa = crmFilterStage ? (crmFilterStage.value || "") : "";
             document.querySelectorAll("#sidebar .chat-link").forEach(link => {
                 const n = (link.dataset.number || "").replace(/\D/g, "");
-                link.style.display = (!q || n.includes(q)) ? "block" : "none";
+                const etapaLink = link.dataset.stage || "";
+                const coincideNumero = !q || n.includes(q);
+                const coincideEtapa = !etapa || etapaLink === etapa;
+                link.style.display = (coincideNumero && coincideEtapa) ? "block" : "none";
             });
         }
         if (crmSearchNumber) crmSearchNumber.addEventListener("input", filtrarConversacionesPorNumero);
+        if (crmFilterStage) crmFilterStage.addEventListener("change", filtrarConversacionesPorNumero);
 
         let lastSignature = "";
         let ultimoEventoEntrante = null;
@@ -9076,7 +9338,11 @@ CRM_HTML = r"""
                 const a = document.createElement("a");
                 a.className = "chat-link" + (seleccionado === c.numero ? " active" : "");
                 a.dataset.number = c.numero || "";
+                a.dataset.stage = c.etapa || "Nuevo lead";
                 a.href = "/crm?numero=" + encodeURIComponent(c.numero);
+                const prox = c.proxima_accion
+                    ? `<div class="next-mini">⏰ ${escapeHtml(c.proxima_accion)}${c.proxima_accion_fecha ? " · " + escapeHtml(String(c.proxima_accion_fecha).replace("T", " ")) : ""}</div>`
+                    : "";
                 a.innerHTML = `
                     <div>
                         <span class="phone">+${escapeHtml(c.numero)}</span>
@@ -9086,6 +9352,8 @@ CRM_HTML = r"""
                     </div>
                     <div class="preview">${escapeHtml(c.preview)}</div>
                     <div class="small">${escapeHtml(c.proyecto)}</div>
+                    <span class="stage-badge">${escapeHtml(c.etapa || "Nuevo lead")}</span>
+                    ${prox}
                 `;
                 sidebar.appendChild(a);
             });
@@ -9369,6 +9637,7 @@ def crm():
         return crm_pedir_login()
 
     seleccionado = request.args.get("numero", "").strip() or None
+    cargar_crm_lead_meta()
 
     with lock_crm:
         numeros = list(crm_mensajes.keys())
@@ -9382,11 +9651,15 @@ def crm():
         for numero in numeros:
             mensajes = crm_mensajes.get(numero, [])
             ultimo = mensajes[-1]["contenido"] if mensajes else ""
+            meta = crm_obtener_meta(numero)
             clientes.append({
                 "numero": numero,
                 "preview": ultimo[:70],
                 "manual": numero in crm_modo_manual,
-                "proyecto": crm_nombre_proyecto(numero)
+                "proyecto": crm_nombre_proyecto(numero),
+                "etapa": meta["etapa"],
+                "proxima_accion": meta["proxima_accion"],
+                "proxima_accion_fecha": meta["proxima_accion_fecha"],
             })
 
         mensajes_seleccionados = list(
@@ -9395,13 +9668,19 @@ def crm():
 
         manual = seleccionado in crm_modo_manual if seleccionado else False
 
+    meta_seleccionada = crm_obtener_meta(seleccionado) if seleccionado else crm_obtener_meta(None)
+    proyecto_clave_seleccionado = proyecto_activo.get(seleccionado) if seleccionado else None
+
     return render_template_string(
         CRM_HTML,
         clientes=clientes,
         seleccionado=seleccionado,
         mensajes=mensajes_seleccionados,
         manual=manual,
-        proyecto_seleccionado=crm_nombre_proyecto(seleccionado) if seleccionado else ""
+        proyecto_seleccionado=crm_nombre_proyecto(seleccionado) if seleccionado else "",
+        proyecto_clave_seleccionado=proyecto_clave_seleccionado,
+        etapas=CRM_ETAPAS,
+        meta_seleccionada=meta_seleccionada,
     )
 
 
@@ -9424,11 +9703,15 @@ def crm_data():
         for numero in numeros:
             mensajes = crm_mensajes.get(numero, [])
             ultimo = mensajes[-1]["contenido"] if mensajes else ""
+            meta = crm_obtener_meta(numero)
             clientes.append({
                 "numero": numero,
                 "preview": ultimo[:70],
                 "manual": numero in crm_modo_manual,
-                "proyecto": crm_nombre_proyecto(numero)
+                "proyecto": crm_nombre_proyecto(numero),
+                "etapa": meta["etapa"],
+                "proxima_accion": meta["proxima_accion"],
+                "proxima_accion_fecha": meta["proxima_accion_fecha"],
             })
 
         mensajes = list(
@@ -9461,6 +9744,90 @@ def crm_data():
         "seleccionado": seleccionado,
         "eventos_entrantes": eventos_entrantes
     })
+
+
+@app.route("/crm/gestion/<numero>", methods=["POST"])
+def crm_guardar_gestion(numero):
+    if not crm_autorizado():
+        return crm_pedir_login()
+
+    etapa = request.form.get("etapa", "Nuevo lead").strip()
+    proxima_accion = request.form.get("proxima_accion", "").strip()
+    proxima_accion_fecha = request.form.get("proxima_accion_fecha", "").strip()
+    crm_guardar_meta(numero, etapa, proxima_accion, proxima_accion_fecha)
+    return redirect(url_for("crm", numero=numero))
+
+
+def _crm_worker_accion_rapida(numero, accion):
+    proyecto = proyecto_activo.get(numero)
+    try:
+        if accion == "info-completa":
+            if proyecto:
+                enviar_info_completa_proyecto(numero, proyecto, cierre=True)
+        elif accion == "cotizaciones":
+            if proyecto:
+                enviar_cotizacion_del_proyecto(numero, proyecto)
+        elif accion == "ubicacion":
+            if proyecto:
+                enviar_ubicacion_proyecto(numero, proyecto)
+        elif accion == "plano":
+            if proyecto:
+                enviar_planos_solicitados(numero, proyecto, "plano")
+        elif accion == "fotos":
+            if proyecto:
+                enviar_multimedia_del_proyecto(numero, proyecto, enviar_fotos=True, enviar_videos=False)
+        elif accion == "videos":
+            if proyecto:
+                enviar_multimedia_del_proyecto(numero, proyecto, enviar_fotos=False, enviar_videos=True)
+        elif accion == "requisitos":
+            texto = respuesta_requisitos_segun_contexto(numero, "")
+            enviar_whatsapp(numero, texto)
+            guardar_mensaje(numero, "assistant", texto)
+        elif accion == "gastos":
+            if proyecto:
+                texto = respuesta_gastos_adicionales(proyecto)
+                enviar_whatsapp(numero, texto)
+                guardar_mensaje(numero, "assistant", texto)
+        elif accion == "visita":
+            texto = (
+                "Si gustas, podemos coordinar una visita para que conozcas el proyecto "
+                "personalmente 🏡📍 ¿Qué día te quedaría cómodo?"
+            )
+            enviar_whatsapp(numero, texto)
+            guardar_mensaje(numero, "assistant", texto)
+        elif accion == "seguimiento":
+            texto = (
+                "Hola 👋 Solo quería saber si pudiste revisar la información que te envié 😊 "
+                "¿Hubo alguna opción que te llamara más la atención?"
+            )
+            enviar_whatsapp(numero, texto)
+            guardar_mensaje(numero, "assistant", texto)
+    except Exception as exc:
+        print("ERROR ACCION RAPIDA CRM:", accion, numero, exc)
+
+
+@app.route("/crm/accion/rapida/<numero>/<accion>", methods=["POST"])
+def crm_accion_rapida(numero, accion):
+    if not crm_autorizado():
+        return crm_pedir_login()
+
+    permitidas = {
+        "info-completa", "cotizaciones", "ubicacion", "plano", "fotos",
+        "videos", "requisitos", "gastos", "visita", "seguimiento"
+    }
+    if accion not in permitidas:
+        return Response("Acción no válida", status=400)
+
+    cancelar_seguimiento(numero)
+    iniciar_procesamiento(numero, f"crm-accion-rapida-{accion}-{time.time()}")
+
+    Thread(
+        target=_crm_worker_accion_rapida,
+        args=(numero, accion),
+        daemon=True
+    ).start()
+
+    return redirect(url_for("crm", numero=numero))
 
 
 @app.route("/crm/toggle/<numero>", methods=["POST"])
