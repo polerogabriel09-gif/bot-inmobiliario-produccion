@@ -9797,8 +9797,8 @@ def _crm_worker_accion_rapida(numero, accion):
             guardar_mensaje(numero, "assistant", texto)
         elif accion == "seguimiento":
             texto = (
-                "Hola 👋 Solo quería saber si pudiste revisar la información que te envié 😊 "
-                "¿Hubo alguna opción que te llamara más la atención?"
+               "Hola 👋 Solo quería saber si pudo revisar la información que le envié 😊 "
+                 "¿Hubo alguna opción que le llamara más la atención?" 
             )
             enviar_whatsapp(numero, texto)
             guardar_mensaje(numero, "assistant", texto)
