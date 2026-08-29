@@ -1714,8 +1714,13 @@ def nombre_proyecto_plano(proyecto):
     }.get(proyecto, "el proyecto")
 
 
-def pregunta_por_diferencia_de_fases(texto):
-    t = texto.lower()
+def pregunta_por_diferencia_de_fases(texto, proyecto=None):
+    """Detecta preguntas sobre por qué existen precios distintos entre fases.
+
+    Debe reconocer tanto menciones explícitas de fases como preguntas naturales
+    del tipo "¿a qué se debe la diferencia del precio?" o "¿por qué hay dos precios?".
+    """
+    t = " ".join((texto or "").lower().strip().split())
 
     referencias_fase = [
         "fase 1", "fase1", "fase 2", "fase2",
@@ -1723,26 +1728,51 @@ def pregunta_por_diferencia_de_fases(texto):
         "fase f", "fase g",
         "una fase", "otra fase"
     ]
-
     referencias_precio = [
-        "por que", "por qué", "porque",
-        "sube", "subio", "subió",
-        "mas caro", "más caro",
-        "diferencia", "precio",
-        "vale mas", "vale más"
+        "precio", "precios", "diferencia", "caro", "cara",
+        "cuesta", "vale", "valor", "sube", "subió", "subio"
     ]
 
-    return (
-        any(x in t for x in referencias_fase)
-        and any(x in t for x in referencias_precio)
-    )
+    # Caso explícito: menciona fases + precio/diferencia.
+    if any(x in t for x in referencias_fase) and any(x in t for x in referencias_precio):
+        return True
+
+    # Solo Vista Hermosa y Palmeras tienen fases con precios distintos cargados.
+    if proyecto not in {"vista_hermosa", "palmeras"}:
+        return False
+
+    # Caso natural: no obliga al cliente a escribir la palabra "fase".
+    # Esto cubre incluso errores de escritura como "a que s debe la diferencia del precio".
+    if "diferencia" in t and any(x in t for x in ["precio", "precios", "cuesta", "vale", "valor"]):
+        return True
+
+    if "dos precios" in t or "precios diferentes" in t or "precios distintos" in t:
+        return True
+
+    if any(x in t for x in [
+        "por que uno cuesta mas", "por qué uno cuesta más",
+        "por que uno vale mas", "por qué uno vale más",
+        "por que uno es mas caro", "por qué uno es más caro",
+        "por que cambia el precio", "por qué cambia el precio"
+    ]):
+        return True
+
+    return False
 
 
 def respuesta_diferencia_fases(numero):
     proyecto = obtener_proyecto_actual(numero)
+
+    if proyecto == "vista_hermosa":
+        return (
+            "Sí 😊 En Vista Hermosa ambos lotes son de 8x16, pero pertenecen a fases diferentes. "
+            "La Fase F tiene un precio de Q83,200 y la Fase G de Q89,600. "
+            "La diferencia se debe principalmente a la plusvalía que ha ido ganando el proyecto "
+            "y al avance de urbanización conforme se desarrollan calles, servicios, amenidades e infraestructura 🏡📈."
+        )
+
     nombres = {
         "palmeras": "Palmeras San Miguel",
-        "vista_hermosa": "Vista Hermosa",
         "buenaventura": "Buenaventura Cuyotenango"
     }
     nombre = nombres.get(proyecto, "el proyecto")
@@ -7604,7 +7634,10 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
             return
 
         # Diferencia de precio entre fases
-        if pregunta_por_diferencia_de_fases(texto_cliente):
+        # Recuperamos también el proyecto persistente por si el mensaje actual es muy corto
+        # y no vuelve a mencionar "Vista Hermosa" o "Palmeras".
+        proyecto_diferencia = proyecto or obtener_proyecto_actual(numero_cliente)
+        if pregunta_por_diferencia_de_fases(texto_cliente, proyecto_diferencia):
             respuesta = respuesta_diferencia_fases(numero_cliente)
 
             guardar_mensaje(numero_cliente, "user", texto_cliente)
