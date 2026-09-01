@@ -1,3 +1,4 @@
+# VERSION_ANUNCIOS_PALMERAS_20260831 - IDs actuales Palmeras + deteccion WA/Messenger
 # VERSION_TRATO_USTED_GENERAL_20260831
 from flask import Flask, request, Response, redirect, url_for, render_template_string, jsonify, send_from_directory
 from openai import OpenAI
@@ -872,11 +873,12 @@ ANUNCIOS_META_PROYECTO = {
     "120248129659680634": "buenaventura",  # AD VID - 01 - BNV CUYO
     "120248129290310634": "buenaventura",  # AD IMG - 01 - BNV CUYO
 
-    # Palmeras San Miguel
-    "120248129867550634": "palmeras",  # AD VID - 01 - PSM
-    "120248129884270634": "palmeras",  # AD VID - 02 - PSM
-    "120248129845750634": "palmeras",  # AD IMG - 01 - PSM
-    "120248129863630634": "palmeras",  # AD IMG - 02 - PSM
+    # Palmeras San Miguel - anuncios actuales (agosto 2026)
+    "120248361771430634": "palmeras",
+    "120248361520120634": "palmeras",
+    "120248361871880634": "palmeras",
+    "120248361895820634": "palmeras",
+    "120248361823610634": "palmeras",
 
     # Vista Hermosa
     "120248129777940634": "vista_hermosa",  # AD VID - 01 - VTH
@@ -885,16 +887,26 @@ ANUNCIOS_META_PROYECTO = {
 }
 
 def proyecto_desde_referencia_anuncio(mensaje):
-    """Detecta el proyecto cuando WhatsApp incluye referral.source_id del anuncio."""
+    """
+    Detecta el proyecto desde anuncios de Meta en ambos canales:
+    - WhatsApp Click-to-WhatsApp: referral.source_id
+    - Messenger Click-to-Messenger: referral.ad_id
+    """
     referral = (mensaje or {}).get("referral") or {}
-    source_id = str(referral.get("source_id") or "").strip()
-    if not source_id:
+    anuncio_id = str(
+        referral.get("source_id")
+        or referral.get("ad_id")
+        or ""
+    ).strip()
+
+    if not anuncio_id:
         return None
-    proyecto = ANUNCIOS_META_PROYECTO.get(source_id)
+
+    proyecto = ANUNCIOS_META_PROYECTO.get(anuncio_id)
     if proyecto:
-        print(f"ANUNCIO META DETECTADO: {source_id} -> {proyecto}")
+        print(f"ANUNCIO META DETECTADO: {anuncio_id} -> {proyecto}")
     else:
-        print(f"ANUNCIO META SIN MAPEAR: {source_id}")
+        print(f"ANUNCIO META SIN MAPEAR: {anuncio_id}")
     return proyecto
 
 def fijar_proyecto_desde_anuncio(numero, mensaje):
@@ -4557,11 +4569,16 @@ def recibir_webhook_facebook():
                     texto_real = contenido
 
                 if texto_real:
+                    # Messenger puede adjuntar el origen del anuncio en referral.ad_id.
+                    # También puede venir dentro del postback cuando inicia una conversación nueva.
+                    referral_fb = (evento.get("referral") or (evento.get("postback") or {}).get("referral") or {})
+
                     mensaje_equivalente = {
                         "from": contacto,
                         "id": dedupe_id,
                         "type": "text",
-                        "text": {"body": texto_real}
+                        "text": {"body": texto_real},
+                        "referral": referral_fb
                     }
 
                     acumular_mensaje_texto(
