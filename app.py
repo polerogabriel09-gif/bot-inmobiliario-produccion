@@ -1,3 +1,4 @@
+# VERSION_BOTON_INFO_PALMERAS_20260831 - boton rapido para fijar Palmeras y enviar toda la informacion
 # VERSION_ANUNCIOS_PALMERAS_7_IDS_20260831 - 7 anuncios Palmeras identificados
 # VERSION_ANUNCIOS_PALMERAS_FIX_PROYECTO_20260831
 # VERSION_TRATO_USTED_GENERAL_20260831
@@ -9675,6 +9676,7 @@ CRM_HTML = r"""
             <div class="quick-tools">
                 <div class="quick-tools-title">⚡ MENSAJES Y ENVÍOS RÁPIDOS · usan el proyecto activo: {{ proyecto_seleccionado }}</div>
                 <div class="quick-grid">
+                    <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='palmeras-completa') }}"><button class="quick-chip" type="submit" title="Fija Palmeras San Miguel como proyecto activo y envía toda la información">🌴 Info Palmeras</button></form>
                     <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='info-completa') }}"><button class="quick-chip" type="submit" {% if not proyecto_clave_seleccionado %}disabled title="Primero debe existir un proyecto activo"{% endif %}>🏡 Info completa</button></form>
                     <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='cotizaciones') }}"><button class="quick-chip" type="submit" {% if not proyecto_clave_seleccionado %}disabled{% endif %}>💰 Cotizaciones</button></form>
                     <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='ubicacion') }}"><button class="quick-chip" type="submit" {% if not proyecto_clave_seleccionado %}disabled{% endif %}>📍 Ubicación</button></form>
@@ -10558,7 +10560,15 @@ def crm_guardar_gestion(numero):
 def _crm_worker_accion_rapida(numero, accion):
     proyecto = proyecto_activo.get(numero)
     try:
-        if accion == "info-completa":
+        if accion == "palmeras-completa":
+            # Botón independiente del proyecto activo: siempre trabaja con Palmeras San Miguel.
+            proyecto = "palmeras"
+            estado = obtener_estado_conversacion(numero)
+            estado["proyecto_actual"] = proyecto
+            proyecto_activo[numero] = proyecto
+            persistir_cliente(numero)
+            enviar_info_completa_proyecto(numero, proyecto, cierre=True)
+        elif accion == "info-completa":
             if proyecto:
                 enviar_info_completa_proyecto(numero, proyecto, cierre=True)
         elif accion == "cotizaciones":
@@ -10609,11 +10619,17 @@ def crm_accion_rapida(numero, accion):
         return crm_pedir_login()
 
     permitidas = {
-        "info-completa", "cotizaciones", "ubicacion", "plano", "fotos",
+        "palmeras-completa", "info-completa", "cotizaciones", "ubicacion", "plano", "fotos",
         "videos", "requisitos", "gastos", "visita", "seguimiento"
     }
     if accion not in permitidas:
         return Response("Acción no válida", status=400)
+
+    if accion == "palmeras-completa":
+        estado = obtener_estado_conversacion(numero)
+        estado["proyecto_actual"] = "palmeras"
+        proyecto_activo[numero] = "palmeras"
+        persistir_cliente(numero)
 
     cancelar_seguimiento(numero)
     iniciar_procesamiento(numero, f"crm-accion-rapida-{accion}-{time.time()}")
