@@ -1,5 +1,5 @@
-# VERSION_FB_IA_V2_20260831 - Messenger IA en hilo separado para no bloquear el CRM
-from flask import Flask, request, Response, redirect, url_for, render_template_string, jsonify
+# VERSION_MESSENGER_MISMA_LOGICA_WA_20260831
+from flask import Flask, request, Response, redirect, url_for, render_template_string, jsonify, send_from_directory
 from openai import OpenAI
 from dotenv import load_dotenv
 import requests
@@ -16,6 +16,7 @@ import mimetypes
 import uuid
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from urllib.parse import quote
 
 try:
     from pywebpush import webpush, WebPushException
@@ -68,6 +69,10 @@ CRM_PUBLIC_URL = os.getenv(
     "CRM_PUBLIC_URL",
     "https://bot-inmobiliario-produccion.onrender.com/crm"
 ).rstrip("/")
+
+# URL pública usada por Messenger para que Meta pueda descargar fotos/videos locales.
+# No requiere una variable nueva: si no existe, se deriva automáticamente de CRM_PUBLIC_URL.
+MESSENGER_PUBLIC_BASE_URL = os.getenv("MESSENGER_PUBLIC_BASE_URL", "").strip().rstrip("/")
 
 # Acceso al CRM. Configúralos en Render > Environment.
 CRM_USER = os.getenv("CRM_USER", "gabriel")
@@ -4058,18 +4063,51 @@ def crm_registrar_mensaje(numero, direccion, contenido, event_id=None, media_url
 
 
 # ============================================================
-# FACEBOOK MESSENGER - FASE 1 (ENTRADA AL CRM + RESPUESTA MANUAL)
+# FACEBOOK MESSENGER - MISMO MOTOR COMERCIAL DE WHATSAPP
 # ============================================================
+
+def _messenger_base_publica():
+    """Devuelve la URL base pública del servicio Render, sin /crm."""
+    if MESSENGER_PUBLIC_BASE_URL:
+        return MESSENGER_PUBLIC_BASE_URL
+    base = str(CRM_PUBLIC_URL or "").rstrip("/")
+    if base.endswith("/crm"):
+        base = base[:-4]
+    return base.rstrip("/")
+
+
+def _dividir_texto_messenger(texto, limite=1900):
+    """Messenger limita el tamaño de texto; conserva el mismo contenido dividiéndolo."""
+    texto = str(texto or "").strip()
+    if not texto:
+        return []
+    if len(texto) <= limite:
+        return [texto]
+    partes = []
+    restante = texto
+    while len(restante) > limite:
+        corte = restante.rfind("\n", 0, limite)
+        if corte < limite // 2:
+            corte = restante.rfind(" ", 0, limite)
+        if corte < limite // 2:
+            corte = limite
+        partes.append(restante[:corte].strip())
+        restante = restante[corte:].strip()
+    if restante:
+        partes.append(restante)
+    return [p for p in partes if p]
+
 
 def enviar_messenger_texto(contacto, texto):
     """
     Envía texto por Messenger usando el Page Access Token.
-    En esta primera fase se usa para respuestas MANUALES desde el CRM.
+    Se utiliza tanto para respuestas manuales como para TODO el flujo automático
+    que originalmente envía por WhatsApp.
     """
     psid = crm_psid_facebook(contacto)
-    texto = str(texto or "").strip()
+    partes = _dividir_texto_messenger(texto)
 
-    if not psid or not texto:
+    if not psid or not partes:
         return False
 
     if not MESSENGER_PAGE_ACCESS_TOKEN:
@@ -4077,37 +4115,126 @@ def enviar_messenger_texto(contacto, texto):
         return False
 
     url = "https://graph.facebook.com/v26.0/me/messages"
+    todo_ok = True
+
+    for parte in partes:
+        payload = {
+            "recipient": {"id": psid},
+            "messaging_type": "RESPONSE",
+            "message": {"text": parte}
+        }
+        try:
+            respuesta = requests.post(
+                url,
+                params={"access_token": MESSENGER_PAGE_ACCESS_TOKEN},
+                headers={"Content-Type": "application/json"},
+                json=payload,
+                timeout=20
+            )
+            print("\n==============================")
+            print("RESPUESTA DE MESSENGER")
+            print("==============================")
+            print("META STATUS:", respuesta.status_code)
+            print("META RESPONSE:", respuesta.text[:1200])
+
+            if 200 <= respuesta.status_code < 300:
+                crm_registrar_mensaje(contacto, "out", parte)
+            else:
+                todo_ok = False
+        except Exception as exc:
+            print("ERROR ENVIANDO MESSENGER:", exc)
+            todo_ok = False
+
+    return todo_ok
+
+
+def enviar_messenger_adjunto_url(contacto, tipo, url_archivo, caption=""):
+    """Envía image, video o file por Messenger desde una URL pública."""
+    psid = crm_psid_facebook(contacto)
+    url_archivo = str(url_archivo or "").strip()
+    tipo = str(tipo or "file").lower()
+    if tipo not in {"image", "video", "audio", "file"}:
+        tipo = "file"
+
+    if not psid or not url_archivo or not MESSENGER_PAGE_ACCESS_TOKEN:
+        return False
+
+    # Messenger no usa caption embebido como WhatsApp; enviamos el mismo texto antes.
+    if caption:
+        enviar_messenger_texto(contacto, caption)
+
     payload = {
         "recipient": {"id": psid},
         "messaging_type": "RESPONSE",
-        "message": {"text": texto}
+        "message": {
+            "attachment": {
+                "type": tipo,
+                "payload": {
+                    "url": url_archivo,
+                    "is_reusable": True
+                }
+            }
+        }
     }
 
     try:
         respuesta = requests.post(
-            url,
+            "https://graph.facebook.com/v26.0/me/messages",
             params={"access_token": MESSENGER_PAGE_ACCESS_TOKEN},
             headers={"Content-Type": "application/json"},
             json=payload,
-            timeout=20
+            timeout=60
         )
-
-        print("\n==============================")
-        print("RESPUESTA DE MESSENGER")
-        print("==============================")
-        print("META STATUS:", respuesta.status_code)
-        print("META RESPONSE:", respuesta.text[:1200])
-
+        print("MESSENGER ADJUNTO STATUS:", respuesta.status_code)
+        print("MESSENGER ADJUNTO RESPONSE:", respuesta.text[:1200])
         if 200 <= respuesta.status_code < 300:
-            crm_registrar_mensaje(contacto, "out", texto)
+            etiqueta = {
+                "image": "🖼️ Imagen enviada",
+                "video": "🎥 Video enviado",
+                "audio": "🎙️ Audio enviado",
+                "file": "📄 Archivo enviado",
+            }.get(tipo, "📎 Archivo enviado")
+            media_tipo = "document" if tipo == "file" else tipo
+            crm_registrar_mensaje(
+                contacto,
+                "out",
+                etiqueta,
+                media_url=url_archivo,
+                media_tipo=media_tipo if media_tipo in {"image", "video", "document"} else None
+            )
             return True
-
         return False
-
     except Exception as exc:
-        print("ERROR ENVIANDO MESSENGER:", exc)
+        print("ERROR ENVIANDO ADJUNTO MESSENGER:", exc)
         return False
 
+
+def url_publica_media_messenger(ruta_local):
+    """Convierte media/... local en una URL pública temporalmente servida por Flask."""
+    try:
+        raiz = os.path.abspath("media")
+        ruta_abs = os.path.abspath(str(ruta_local or ""))
+        if not ruta_abs or os.path.commonpath([raiz, ruta_abs]) != raiz:
+            return ""
+        relativo = os.path.relpath(ruta_abs, raiz).replace(os.sep, "/")
+        base = _messenger_base_publica()
+        if not base:
+            return ""
+        return f"{base}/messenger-media/{quote(relativo, safe='/')}"
+    except Exception as exc:
+        print("MESSENGER URL MEDIA ERROR:", exc)
+        return ""
+
+
+@app.route("/messenger-media/<path:archivo>", methods=["GET"])
+def messenger_media_publica(archivo):
+    """Sirve únicamente archivos dentro de media/ para que Meta pueda descargarlos."""
+    return send_from_directory(
+        os.path.abspath("media"),
+        archivo,
+        as_attachment=False,
+        max_age=3600
+    )
 
 def crm_resumen_entrante_facebook(evento):
     """Convierte un evento de Messenger en texto legible para el CRM."""
@@ -4199,28 +4326,6 @@ def guardar_media_facebook_crm(contacto, evento):
         return None, None
 
 
-def _procesar_ia_messenger(contacto, texto_messenger):
-    """Procesa la IA de Messenger fuera del webhook para no bloquear el CRM/Render."""
-    try:
-        # Si Gabriel tomó el control mientras el hilo arrancaba, no responder con IA.
-        if crm_esta_manual(contacto):
-            print("MESSENGER IA: conversación en MANUAL; no se responde automáticamente.")
-            return
-
-        actualizar_proyecto_activo(contacto, texto_messenger)
-        respuesta_ia = generar_respuesta(contacto, texto_messenger)
-
-        # Segunda comprobación: si Gabriel pausó la IA mientras OpenAI respondía, no enviar.
-        if crm_esta_manual(contacto):
-            print("MESSENGER IA: pausada antes del envío; respuesta descartada.")
-            return
-
-        if respuesta_ia:
-            enviar_messenger_texto(contacto, respuesta_ia)
-    except Exception as exc:
-        print("ERROR IA MESSENGER:", exc)
-
-
 @app.route("/webhook-facebook", methods=["GET"])
 def verificar_webhook_facebook():
     """Verificación independiente del webhook de WhatsApp."""
@@ -4239,11 +4344,9 @@ def verificar_webhook_facebook():
 @app.route("/webhook-facebook", methods=["POST"])
 def recibir_webhook_facebook():
     """
-    FASE 1:
-    - recibe mensajes de una Página de Facebook;
-    - los agrega al MISMO CRM;
-    - deja el chat en modo manual;
-    - NO activa todavía la IA automática de Messenger.
+    Recibe Messenger y, cuando la conversación está en IA, reutiliza EXACTAMENTE
+    el mismo procesador comercial de WhatsApp: proyecto activo, precios, cuotas,
+    ubicación, planos, cotizaciones, multimedia, visitas y respuesta OpenAI.
     """
     datos = request.get_json(silent=True) or {}
 
@@ -4253,15 +4356,11 @@ def recibir_webhook_facebook():
     try:
         for entry in datos.get("entry") or []:
             for evento in entry.get("messaging") or []:
-                # Ignoramos entregas/leídos y otros eventos que no son contenido del cliente.
                 if not any(k in evento for k in ("message", "postback", "referral")):
                     continue
 
-                mensaje = evento.get("message") or {}
-
-                # Los mensajes que envía la propia Página pueden regresar como echo.
-                # Ya los registramos al enviarlos desde el CRM, así que se ignoran.
-                if mensaje.get("is_echo"):
+                mensaje_fb = evento.get("message") or {}
+                if mensaje_fb.get("is_echo"):
                     continue
 
                 sender_id = str(((evento.get("sender") or {}).get("id")) or "").strip()
@@ -4269,14 +4368,12 @@ def recibir_webhook_facebook():
                     continue
 
                 contacto = f"{MESSENGER_CONTACT_PREFIX}{sender_id}"
-
-                mid = str(mensaje.get("mid") or "").strip()
+                mid = str(mensaje_fb.get("mid") or "").strip()
                 if not mid:
                     postback = evento.get("postback") or {}
                     mid = str(postback.get("mid") or "").strip()
 
                 dedupe_id = f"facebook:{mid}" if mid else f"facebook:{sender_id}:{evento.get('timestamp')}"
-
                 if dedupe_id and not marcar_mensaje_como_procesado(dedupe_id):
                     print("MESSENGER DUPLICADO IGNORADO:", dedupe_id)
                     continue
@@ -4284,6 +4381,7 @@ def recibir_webhook_facebook():
                 contenido = crm_resumen_entrante_facebook(evento)
                 media_url_crm, media_tipo_crm = guardar_media_facebook_crm(contacto, evento)
 
+                # 1) Siempre entra al mismo CRM, esté en MANUAL o IA.
                 crm_registrar_mensaje(
                     contacto,
                     "in",
@@ -4293,35 +4391,60 @@ def recibir_webhook_facebook():
                     media_tipo=media_tipo_crm
                 )
 
-                print("MESSENGER EN CRM:", contacto, contenido[:120])
+                # 2) Igual que WhatsApp: cancelar seguimiento y marcar este mensaje vigente.
+                cancelar_seguimiento(contacto)
+                iniciar_procesamiento(contacto, dedupe_id)
 
-                # Si el cliente envió texto, la IA puede responder. El trabajo pesado
-                # se ejecuta en otro hilo para devolver 200 a Meta inmediatamente y
-                # mantener el CRM disponible.
-                texto_messenger = str(mensaje.get("text") or "").strip()
+                # 3) Texto/postback/referral entra al MISMO motor de WhatsApp.
+                texto_real = str(mensaje_fb.get("text") or "").strip()
+                if not texto_real:
+                    postback = evento.get("postback") or {}
+                    texto_real = str(postback.get("title") or postback.get("payload") or "").strip()
+                if not texto_real and evento.get("referral"):
+                    texto_real = contenido
 
-                if texto_messenger:
-                    if crm_esta_manual(contacto):
-                        guardar_mensaje(contacto, "user", texto_messenger)
-                        print("MESSENGER: mensaje guardado; conversación en MANUAL.")
-                    else:
-                        Thread(
-                            target=_procesar_ia_messenger,
-                            args=(contacto, texto_messenger),
-                            daemon=True
-                        ).start()
+                if texto_real:
+                    mensaje_equivalente = {
+                        "from": contacto,
+                        "id": dedupe_id,
+                        "type": "text",
+                        "text": {"body": texto_real}
+                    }
+
+                    acumular_mensaje_texto(
+                        contacto,
+                        dedupe_id,
+                        mensaje_equivalente
+                    )
+
+                    datos_equivalentes = {
+                        "object": "whatsapp_business_account",
+                        "entry": [{
+                            "changes": [{
+                                "value": {
+                                    "messages": [mensaje_equivalente]
+                                }
+                            }]
+                        }]
+                    }
+
+                    Thread(
+                        target=procesar_mensaje_en_segundo_plano,
+                        args=(datos_equivalentes, dedupe_id),
+                        daemon=True
+                    ).start()
                 else:
-                    # Adjuntos/postbacks siguen visibles en CRM, pero no generamos
-                    # una respuesta automática sin texto suficiente.
-                    guardar_mensaje(contacto, "user", contenido)
+                    # Los adjuntos ya quedan visibles en CRM. No intentamos tratarlos como
+                    # media de WhatsApp porque Messenger entrega otra estructura.
+                    print("MESSENGER ADJUNTO EN CRM:", contacto, contenido[:120])
+
+                print("MESSENGER EN CRM:", contacto, contenido[:120])
 
         return "EVENT_RECEIVED", 200
 
     except Exception as exc:
         print("ERROR WEBHOOK MESSENGER:", exc)
-        # Meta debe recibir 200 para evitar reintentos infinitos por un error interno.
         return "EVENT_RECEIVED", 200
-
 
 
 _media_db_initialized = False
@@ -4766,13 +4889,9 @@ def generar_respuesta(numero_cliente, mensaje_cliente):
 
         instrucciones = f"""
 Tu nombre es Gabriel Polero y atiendes consultas sobre tus proyectos
-inmobiliarios mediante WhatsApp o Facebook Messenger.
+inmobiliarios mediante WhatsApp.
 
 Habla siempre en PRIMERA PERSONA como Gabriel.
-
-TRATO FORMAL OBLIGATORIO:
-Habla siempre de USTED con el cliente. Usa formas como "le", "su", "puede",
-"quiere", "dígame", "avíseme" y "escríbame". No uses tuteo ni voseo.
 
 NO digas:
 
@@ -4784,7 +4903,7 @@ NO digas:
 - "Según el contexto proporcionado"
 - "Como inteligencia artificial"
 
-Habla de manera natural desde el canal comercial de Gabriel Polero.
+Habla de manera natural desde el WhatsApp comercial de Gabriel Polero.
 
 No afirmes que Gabriel está escribiendo manualmente en ese momento.
 Simplemente conversa en primera persona.
@@ -6538,6 +6657,11 @@ def enviar_whatsapp(numero, texto):
     Esta función no programa seguimientos ni mensajes futuros.
     """
 
+    # MISMA LÓGICA, DISTINTO CANAL: todo el motor sigue llamando a enviar_whatsapp(),
+    # pero un contacto fb:<psid> sale por Messenger sin tocar la lógica comercial.
+    if crm_es_facebook(numero):
+        return enviar_messenger_texto(numero, texto)
+
     url = (
         f"https://graph.facebook.com/v26.0/"
         f"{PHONE_NUMBER_ID}/messages"
@@ -6582,12 +6706,15 @@ def enviar_whatsapp(numero, texto):
 
         if 200 <= respuesta.status_code < 300:
             crm_registrar_mensaje(numero, "out", texto)
+            return True
+        return False
 
 
     except Exception as error:
 
         print("\nERROR ENVIANDO WHATSAPP:")
         print(error)
+        return False
 
 
 
@@ -6602,6 +6729,14 @@ def enviar_documento_url_whatsapp(numero, url_documento, nombre_archivo, caption
     Se agrega un parámetro de versión para pedir siempre la copia más reciente
     cuando el plano se reemplaza en GitHub Pages conservando el mismo nombre.
     """
+    if crm_es_facebook(numero):
+        return enviar_messenger_adjunto_url(
+            numero,
+            "file",
+            url_documento,
+            caption=caption or nombre_archivo
+        )
+
     separador = "&" if "?" in url_documento else "?"
     version = datetime.now(ZoneInfo("America/Guatemala")).strftime("%Y%m%d%H%M%S")
     url_actualizada = f"{url_documento}{separador}v={version}"
@@ -6736,6 +6871,13 @@ def enviar_imagen_whatsapp(numero, ruta_imagen, caption=""):
     """
     Sube una imagen a Meta y luego la envía al número indicado.
     """
+    if crm_es_facebook(numero):
+        url_publica = url_publica_media_messenger(ruta_imagen)
+        if not url_publica:
+            print("MESSENGER: no se pudo crear URL pública para", ruta_imagen)
+            return False
+        return enviar_messenger_adjunto_url(numero, "image", url_publica, caption=caption)
+
     media_id = subir_imagen_a_meta(ruta_imagen)
 
     if not media_id:
@@ -6834,6 +6976,13 @@ def subir_video_a_meta(ruta_video):
 
 
 def enviar_video_whatsapp(numero, ruta_video, caption=""):
+    if crm_es_facebook(numero):
+        url_publica = url_publica_media_messenger(ruta_video)
+        if not url_publica:
+            print("MESSENGER: no se pudo crear URL pública para", ruta_video)
+            return False
+        return enviar_messenger_adjunto_url(numero, "video", url_publica, caption=caption)
+
     media_id = subir_video_a_meta(ruta_video)
 
     if not media_id:
@@ -9229,12 +9378,10 @@ CRM_HTML = r"""
                 </div>
 
                 <div class="head-actions">
-                    {% if canal_seleccionado != 'facebook' %}
-                        <form method="post" action="{{ url_for('crm_accion_info_tres_proyectos', numero=seleccionado) }}"
-                              onsubmit="return confirm('¿Enviar al cliente el resumen oficial de los 3 proyectos?');">
-                            <button class="quick-action" type="submit">🤖 Info 3 proyectos</button>
-                        </form>
-                    {% endif %}
+                    <form method="post" action="{{ url_for('crm_accion_info_tres_proyectos', numero=seleccionado) }}"
+                          onsubmit="return confirm('¿Enviar al cliente el resumen oficial de los 3 proyectos?');">
+                        <button class="quick-action" type="submit">🤖 Info 3 proyectos</button>
+                    </form>
                     <form method="post" action="{{ url_for('crm_toggle', numero=seleccionado) }}">
                         {% if manual %}
                             <button class="toggle resume" type="submit">▶ Activar IA</button>
@@ -9268,7 +9415,6 @@ CRM_HTML = r"""
                 </form>
             </div>
 
-            {% if canal_seleccionado != 'facebook' %}
             <div class="quick-tools">
                 <div class="quick-tools-title">⚡ MENSAJES Y ENVÍOS RÁPIDOS · usan el proyecto activo: {{ proyecto_seleccionado }}</div>
                 <div class="quick-grid">
@@ -9284,9 +9430,10 @@ CRM_HTML = r"""
                     <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='seguimiento') }}"><button class="quick-chip secondary" type="submit">☎️ Seguimiento</button></form>
                 </div>
             </div>
-            {% else %}
+
+            {% if canal_seleccionado == 'facebook' %}
             <div class="notice" style="background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8;">
-                🔵 Messenger conectado al CRM. Puede usar IA automática o pausar la IA para atender manualmente.
+                🔵 Messenger usa la misma lógica automática de WhatsApp. Puede alternar entre IA y MANUAL cuando quiera.
             </div>
             {% endif %}
 
@@ -9332,7 +9479,7 @@ CRM_HTML = r"""
                     </form>
                     {% else %}
                     <div style="font-size:12px;color:#667085;padding:2px 4px;">
-                        🔵 En esta primera prueba de Messenger el CRM envía texto. Los archivos se activarán después de validar el canal.
+                        🔵 El envío manual de archivos se mantiene separado. Los envíos automáticos del bot sí usan la misma lógica de WhatsApp.
                     </div>
                     {% endif %}
                 </div>
@@ -10211,10 +10358,6 @@ def crm_accion_rapida(numero, accion):
     if accion not in permitidas:
         return Response("Acción no válida", status=400)
 
-    if crm_es_facebook(numero):
-        # Fase 1 de Messenger: todavía no reutilizamos envíos rápidos de WhatsApp.
-        return redirect(url_for("crm", numero=numero))
-
     cancelar_seguimiento(numero)
     iniciar_procesamiento(numero, f"crm-accion-rapida-{accion}-{time.time()}")
 
@@ -10275,9 +10418,6 @@ def crm_accion_info_tres_proyectos(numero):
     if not crm_autorizado():
         return crm_pedir_login()
 
-    if crm_es_facebook(numero):
-        return redirect(url_for("crm", numero=numero))
-
     cancelar_seguimiento(numero)
     iniciar_procesamiento(numero, f"crm-accion-3-proyectos-{time.time()}")
 
@@ -10337,7 +10477,7 @@ def crm_enviar_archivo(numero):
         crm_registrar_mensaje(
             numero,
             "out",
-            "ℹ️ El envío manual de archivos por Messenger se activará después de validar la primera fase."
+            "ℹ️ El envío manual de archivos por Messenger se mantiene separado; los envíos automáticos del bot sí están activos."
         )
         return redirect(url_for("crm", numero=numero))
 
