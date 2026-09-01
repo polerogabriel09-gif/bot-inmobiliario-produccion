@@ -1,4 +1,5 @@
-# VERSION_ANUNCIOS_PALMERAS_20260831 - IDs actuales Palmeras + deteccion WA/Messenger
+# VERSION_ANUNCIOS_PALMERAS_7_IDS_20260831 - 7 anuncios Palmeras identificados
+# VERSION_ANUNCIOS_PALMERAS_FIX_PROYECTO_20260831
 # VERSION_TRATO_USTED_GENERAL_20260831
 from flask import Flask, request, Response, redirect, url_for, render_template_string, jsonify, send_from_directory
 from openai import OpenAI
@@ -879,6 +880,8 @@ ANUNCIOS_META_PROYECTO = {
     "120248361871880634": "palmeras",
     "120248361895820634": "palmeras",
     "120248361823610634": "palmeras",
+    "120248362032520634": "palmeras",
+    "120248362063450634": "palmeras",
 
     # Vista Hermosa
     "120248129777940634": "vista_hermosa",  # AD VID - 01 - VTH
@@ -886,37 +889,94 @@ ANUNCIOS_META_PROYECTO = {
     "120248129773580634": "vista_hermosa",  # AD IMG - 02 - VTH
 }
 
+PROYECTO_CAMPANA_ACTIVA = "palmeras"
+
+
+def _mensaje_generico_de_anuncio(texto):
+    """Mensajes cortos típicos de los botones/plantillas de los anuncios actuales."""
+    t = normalizar_ventas(str(texto or ""))
+    t = re.sub(r"[^a-z0-9áéíóúüñ\s]", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    exactos = {
+        "informacion", "información", "mas informacion", "más información",
+        "quiero informacion", "quiero información", "deseo informacion", "deseo información",
+        "ubicacion", "ubicación", "precio", "precios", "cotizacion", "cotización",
+        "me interesa", "estoy interesado", "estoy interesada", "hola quiero informacion",
+        "hola quiero información", "quiero saber mas", "quiero saber más"
+    }
+    return t in exactos
+
+
 def proyecto_desde_referencia_anuncio(mensaje):
     """
-    Detecta el proyecto desde anuncios de Meta en ambos canales:
-    - WhatsApp Click-to-WhatsApp: referral.source_id
-    - Messenger Click-to-Messenger: referral.ad_id
+    Detecta el proyecto desde anuncios de Meta.
+
+    Para la campaña actual, todos los anuncios activos corresponden a Palmeras San Miguel.
+    Si Meta entrega un referral de anuncio pero cambia/omite el ID esperado, usamos Palmeras
+    como respaldo para no perder el contexto comercial.
     """
-    referral = (mensaje or {}).get("referral") or {}
+    mensaje = mensaje or {}
+    referral = mensaje.get("referral") or {}
+
+    if referral:
+        try:
+            print("REFERRAL META RECIBIDO:", json.dumps(referral, ensure_ascii=False))
+        except Exception:
+            print("REFERRAL META RECIBIDO:", referral)
+
+    ads_context = referral.get("ads_context_data") or {}
     anuncio_id = str(
         referral.get("source_id")
         or referral.get("ad_id")
+        or ads_context.get("ad_id")
+        or ads_context.get("source_id")
         or ""
     ).strip()
 
-    if not anuncio_id:
-        return None
+    if anuncio_id:
+        proyecto = ANUNCIOS_META_PROYECTO.get(anuncio_id)
+        if proyecto:
+            print(f"ANUNCIO META DETECTADO: {anuncio_id} -> {proyecto}")
+            return proyecto
+        # Todos los anuncios que Gabriel está trabajando actualmente son Palmeras.
+        if referral:
+            print(f"ANUNCIO META ID NO MAPEADO ({anuncio_id}); FALLBACK ACTUAL -> palmeras")
+            return PROYECTO_CAMPANA_ACTIVA
 
-    proyecto = ANUNCIOS_META_PROYECTO.get(anuncio_id)
-    if proyecto:
-        print(f"ANUNCIO META DETECTADO: {anuncio_id} -> {proyecto}")
-    else:
-        print(f"ANUNCIO META SIN MAPEAR: {anuncio_id}")
-    return proyecto
+    # Si existe referral pero Meta no incluyó source_id/ad_id, igualmente sabemos
+    # que la campaña activa actual es Palmeras San Miguel.
+    if referral:
+        print("ANUNCIO META CON REFERRAL SIN ID; FALLBACK ACTUAL -> palmeras")
+        return PROYECTO_CAMPANA_ACTIVA
+
+    return None
+
 
 def fijar_proyecto_desde_anuncio(numero, mensaje):
     proyecto = proyecto_desde_referencia_anuncio(mensaje)
+
+    # Respaldo adicional: Meta permite que el usuario quite los datos de referencia.
+    # Como EN ESTE MOMENTO solo se están trabajando anuncios de Palmeras, si llega
+    # una conversación todavía sin proyecto y el texto es el típico CTA corto del anuncio
+    # (por ejemplo "Ubicación" o "Información"), la fijamos como Palmeras.
+    if not proyecto:
+        existente = obtener_proyecto_actual(numero)
+        if existente:
+            return existente
+        if (mensaje or {}).get("type") == "text":
+            texto = ((mensaje or {}).get("text") or {}).get("body", "")
+            if _mensaje_generico_de_anuncio(texto):
+                proyecto = PROYECTO_CAMPANA_ACTIVA
+                print(f"FALLBACK MENSAJE DE CAMPANA: {numero} -> palmeras | texto={texto!r}")
+
     if not proyecto:
         return None
+
     estado = obtener_estado_conversacion(numero)
     estado["proyecto_actual"] = proyecto
     proyecto_activo[numero] = proyecto
     persistir_cliente(numero)
+    print(f"PROYECTO FIJADO PARA CLIENTE: {numero} -> {proyecto}")
     return proyecto
 
 # Guarda qué proyecto está activo para cada número.
@@ -4546,6 +4606,12 @@ def recibir_webhook_facebook():
                 contenido = crm_resumen_entrante_facebook(evento)
                 media_url_crm, media_tipo_crm = guardar_media_facebook_crm(contacto, evento)
 
+                # Messenger puede adjuntar el origen del anuncio directamente en
+                # evento.referral o dentro de postback.referral. Lo guardamos ANTES
+                # de registrar el mensaje en CRM, incluso si el chat está en MANUAL.
+                referral_fb = (evento.get("referral") or (evento.get("postback") or {}).get("referral") or {})
+                fijar_proyecto_desde_anuncio(contacto, {"referral": referral_fb})
+
                 # 1) Siempre entra al mismo CRM, esté en MANUAL o IA.
                 crm_registrar_mensaje(
                     contacto,
@@ -4569,10 +4635,8 @@ def recibir_webhook_facebook():
                     texto_real = contenido
 
                 if texto_real:
-                    # Messenger puede adjuntar el origen del anuncio en referral.ad_id.
-                    # También puede venir dentro del postback cuando inicia una conversación nueva.
-                    referral_fb = (evento.get("referral") or (evento.get("postback") or {}).get("referral") or {})
-
+                    # referral_fb ya se extrajo y guardó antes de registrar el mensaje
+                    # en CRM, para que el proyecto sea visible de inmediato.
                     mensaje_equivalente = {
                         "from": contacto,
                         "id": dedupe_id,
@@ -7616,6 +7680,10 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
         numero_cliente = mensaje["from"]
         tipo_mensaje = mensaje.get("type")
 
+        # PRIMERO fijamos el proyecto del anuncio. Esto debe ocurrir incluso si
+        # Gabriel tiene el chat en MANUAL o si el primer mensaje es solo un saludo.
+        fijar_proyecto_desde_anuncio(numero_cliente, mensaje)
+
         if tipo_mensaje == "text":
             texto_agrupado = esperar_y_obtener_bloque_texto(
                 numero_cliente,
@@ -7720,10 +7788,9 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
             )
             return
 
-        # Si el mensaje nació desde un anuncio Click-to-WhatsApp, fijamos primero
-        # el proyecto según referral.source_id. Después, si el cliente menciona
-        # explícitamente otro proyecto en el texto, esa mención tiene prioridad.
-        fijar_proyecto_desde_anuncio(numero_cliente, mensaje)
+        # El proyecto del anuncio ya quedó fijado al inicio del procesamiento.
+        # Si el cliente menciona explícitamente otro proyecto en el texto,
+        # esa mención sí puede cambiar el proyecto activo a continuación.
 
         # Mantener proyecto fijo por número.
         proyecto = actualizar_proyecto_activo(
@@ -8445,6 +8512,11 @@ def recibir_webhook():
                     continue
 
                 numero_cliente = mensaje.get("from")
+
+                # Detectar y guardar el proyecto DEL ANUNCIO antes de registrar el
+                # mensaje en CRM. Así se muestra "Palmeras San Miguel" de inmediato
+                # aunque la conversación esté en modo MANUAL y la IA esté pausada.
+                fijar_proyecto_desde_anuncio(numero_cliente, mensaje)
 
                 # 1) Guardar en CRM y disparar UNA notificación propia.
                 # Si es una foto, también la conservamos de forma persistente
