@@ -1,3 +1,4 @@
+# VERSION_FB_IA_V2_20260831 - Messenger IA en hilo separado para no bloquear el CRM
 from flask import Flask, request, Response, redirect, url_for, render_template_string, jsonify
 from openai import OpenAI
 from dotenv import load_dotenv
@@ -47,6 +48,12 @@ VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+# Facebook Messenger (independiente de WhatsApp)
+MESSENGER_PAGE_ACCESS_TOKEN = os.getenv("MESSENGER_PAGE_ACCESS_TOKEN", "").strip()
+MESSENGER_VERIFY_TOKEN = os.getenv("MESSENGER_VERIFY_TOKEN", "").strip()
+MESSENGER_PAGE_ID = os.getenv("MESSENGER_PAGE_ID", "").strip()
+MESSENGER_CONTACT_PREFIX = "fb:"
 
 # PostgreSQL persistente para conservar las suscripciones Push
 # aunque Render se duerma, reinicie o haga deploy.
@@ -1714,8 +1721,13 @@ def nombre_proyecto_plano(proyecto):
     }.get(proyecto, "el proyecto")
 
 
-def pregunta_por_diferencia_de_fases(texto):
-    t = texto.lower()
+def pregunta_por_diferencia_de_fases(texto, proyecto=None):
+    """Detecta preguntas sobre por qué existen precios distintos entre fases.
+
+    Debe reconocer tanto menciones explícitas de fases como preguntas naturales
+    del tipo "¿a qué se debe la diferencia del precio?" o "¿por qué hay dos precios?".
+    """
+    t = " ".join((texto or "").lower().strip().split())
 
     referencias_fase = [
         "fase 1", "fase1", "fase 2", "fase2",
@@ -1723,26 +1735,51 @@ def pregunta_por_diferencia_de_fases(texto):
         "fase f", "fase g",
         "una fase", "otra fase"
     ]
-
     referencias_precio = [
-        "por que", "por qué", "porque",
-        "sube", "subio", "subió",
-        "mas caro", "más caro",
-        "diferencia", "precio",
-        "vale mas", "vale más"
+        "precio", "precios", "diferencia", "caro", "cara",
+        "cuesta", "vale", "valor", "sube", "subió", "subio"
     ]
 
-    return (
-        any(x in t for x in referencias_fase)
-        and any(x in t for x in referencias_precio)
-    )
+    # Caso explícito: menciona fases + precio/diferencia.
+    if any(x in t for x in referencias_fase) and any(x in t for x in referencias_precio):
+        return True
+
+    # Solo Vista Hermosa y Palmeras tienen fases con precios distintos cargados.
+    if proyecto not in {"vista_hermosa", "palmeras"}:
+        return False
+
+    # Caso natural: no obliga al cliente a escribir la palabra "fase".
+    # Esto cubre incluso errores de escritura como "a que s debe la diferencia del precio".
+    if "diferencia" in t and any(x in t for x in ["precio", "precios", "cuesta", "vale", "valor"]):
+        return True
+
+    if "dos precios" in t or "precios diferentes" in t or "precios distintos" in t:
+        return True
+
+    if any(x in t for x in [
+        "por que uno cuesta mas", "por qué uno cuesta más",
+        "por que uno vale mas", "por qué uno vale más",
+        "por que uno es mas caro", "por qué uno es más caro",
+        "por que cambia el precio", "por qué cambia el precio"
+    ]):
+        return True
+
+    return False
 
 
 def respuesta_diferencia_fases(numero):
     proyecto = obtener_proyecto_actual(numero)
+
+    if proyecto == "vista_hermosa":
+        return (
+            "Sí 😊 En Vista Hermosa ambos lotes son de 8x16, pero pertenecen a fases diferentes. "
+            "La Fase F tiene un precio de Q83,200 y la Fase G de Q89,600. "
+            "La diferencia se debe principalmente a la plusvalía que ha ido ganando el proyecto "
+            "y al avance de urbanización conforme se desarrollan calles, servicios, amenidades e infraestructura 🏡📈."
+        )
+
     nombres = {
         "palmeras": "Palmeras San Miguel",
-        "vista_hermosa": "Vista Hermosa",
         "buenaventura": "Buenaventura Cuyotenango"
     }
     nombre = nombres.get(proyecto, "el proyecto")
@@ -3343,6 +3380,34 @@ crm_ultima_actividad = {}
 crm_evento_contador = 0
 lock_crm = Lock()
 
+
+def crm_es_facebook(contacto):
+    """True cuando el identificador interno pertenece a Messenger."""
+    return str(contacto or "").startswith(MESSENGER_CONTACT_PREFIX)
+
+
+def crm_psid_facebook(contacto):
+    """Extrae el PSID real de Messenger desde la llave interna fb:<psid>."""
+    contacto = str(contacto or "")
+    if not crm_es_facebook(contacto):
+        return ""
+    return contacto[len(MESSENGER_CONTACT_PREFIX):].strip()
+
+
+def crm_canal_contacto(contacto):
+    return "facebook" if crm_es_facebook(contacto) else "whatsapp"
+
+
+def crm_identificador_visible(contacto):
+    """Texto corto para mostrar el origen del lead sin confundir PSID con teléfono."""
+    contacto = str(contacto or "")
+    if crm_es_facebook(contacto):
+        psid = crm_psid_facebook(contacto)
+        corto = psid[-8:] if len(psid) > 8 else psid
+        return f"Facebook · {corto or 'cliente'}"
+    return f"+{contacto}" if contacto else ""
+
+
 # ============================================================
 # MEMORIA PERSISTENTE DE CLIENTES EN POSTGRESQL
 # ============================================================
@@ -3963,7 +4028,8 @@ def crm_registrar_mensaje(numero, direccion, contenido, event_id=None, media_url
             "contenido": contenido,
             "hora": crm_hora_actual(),
             "media_url": media_url,
-            "media_tipo": media_tipo
+            "media_tipo": media_tipo,
+            "canal": crm_canal_contacto(numero)
         })
 
         # Mantener suficiente historial visual sin consumir RAM sin límite.
@@ -3989,6 +4055,272 @@ def crm_registrar_mensaje(numero, direccion, contenido, event_id=None, media_url
             args=(numero, contenido, event_id),
             daemon=True
         ).start()
+
+
+# ============================================================
+# FACEBOOK MESSENGER - FASE 1 (ENTRADA AL CRM + RESPUESTA MANUAL)
+# ============================================================
+
+def enviar_messenger_texto(contacto, texto):
+    """
+    Envía texto por Messenger usando el Page Access Token.
+    En esta primera fase se usa para respuestas MANUALES desde el CRM.
+    """
+    psid = crm_psid_facebook(contacto)
+    texto = str(texto or "").strip()
+
+    if not psid or not texto:
+        return False
+
+    if not MESSENGER_PAGE_ACCESS_TOKEN:
+        print("MESSENGER: falta MESSENGER_PAGE_ACCESS_TOKEN en Render.")
+        return False
+
+    url = "https://graph.facebook.com/v26.0/me/messages"
+    payload = {
+        "recipient": {"id": psid},
+        "messaging_type": "RESPONSE",
+        "message": {"text": texto}
+    }
+
+    try:
+        respuesta = requests.post(
+            url,
+            params={"access_token": MESSENGER_PAGE_ACCESS_TOKEN},
+            headers={"Content-Type": "application/json"},
+            json=payload,
+            timeout=20
+        )
+
+        print("\n==============================")
+        print("RESPUESTA DE MESSENGER")
+        print("==============================")
+        print("META STATUS:", respuesta.status_code)
+        print("META RESPONSE:", respuesta.text[:1200])
+
+        if 200 <= respuesta.status_code < 300:
+            crm_registrar_mensaje(contacto, "out", texto)
+            return True
+
+        return False
+
+    except Exception as exc:
+        print("ERROR ENVIANDO MESSENGER:", exc)
+        return False
+
+
+def crm_resumen_entrante_facebook(evento):
+    """Convierte un evento de Messenger en texto legible para el CRM."""
+    evento = evento or {}
+    mensaje = evento.get("message") or {}
+
+    texto = str(mensaje.get("text") or "").strip()
+    if texto:
+        return texto
+
+    attachments = mensaje.get("attachments") or []
+    if attachments:
+        tipos = []
+        for item in attachments:
+            tipo = str((item or {}).get("type") or "").lower()
+            if tipo == "image":
+                tipos.append("📷 Imagen recibida por Facebook")
+            elif tipo == "video":
+                tipos.append("🎥 Video recibido por Facebook")
+            elif tipo == "audio":
+                tipos.append("🎙️ Audio recibido por Facebook")
+            elif tipo == "file":
+                tipos.append("📄 Archivo recibido por Facebook")
+            else:
+                tipos.append("📎 Adjunto recibido por Facebook")
+        return " · ".join(tipos)
+
+    postback = evento.get("postback") or {}
+    if postback:
+        titulo = str(postback.get("title") or "").strip()
+        payload = str(postback.get("payload") or "").strip()
+        return titulo or payload or "🔘 Opción seleccionada en Facebook"
+
+    referral = evento.get("referral") or {}
+    if referral:
+        return "📣 Cliente llegó desde un anuncio o enlace de Facebook"
+
+    return "📩 Mensaje recibido por Facebook"
+
+
+def guardar_media_facebook_crm(contacto, evento):
+    """
+    Descarga el primer adjunto visual/archivo de Messenger y lo conserva en PostgreSQL,
+    para que no dependa de la URL temporal que entrega Meta.
+    """
+    mensaje = (evento or {}).get("message") or {}
+    attachments = mensaje.get("attachments") or []
+    if not attachments:
+        return None, None
+
+    adjunto = attachments[0] or {}
+    tipo_meta = str(adjunto.get("type") or "").lower()
+    url_media = str(((adjunto.get("payload") or {}).get("url")) or "").strip()
+
+    if not url_media or tipo_meta not in {"image", "video", "file"}:
+        return None, None
+
+    try:
+        r = requests.get(url_media, timeout=45)
+        if not (200 <= r.status_code < 300) or not r.content:
+            print("MESSENGER MEDIA DOWNLOAD:", r.status_code)
+            return None, None
+
+        mime = (r.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if not mime:
+            if tipo_meta == "image":
+                mime = "image/jpeg"
+            elif tipo_meta == "video":
+                mime = "video/mp4"
+            else:
+                mime = "application/octet-stream"
+
+        media_tipo = None
+        if mime.startswith("image/"):
+            media_tipo = "image"
+        elif mime.startswith("video/"):
+            media_tipo = "video"
+        elif mime == "application/pdf":
+            media_tipo = "document"
+
+        if not media_tipo:
+            return None, None
+
+        media_url = guardar_media_crm_bytes(contacto, r.content, mime)
+        return media_url, media_tipo if media_url else None
+
+    except Exception as exc:
+        print("MESSENGER MEDIA CRM ERROR:", exc)
+        return None, None
+
+
+def _procesar_ia_messenger(contacto, texto_messenger):
+    """Procesa la IA de Messenger fuera del webhook para no bloquear el CRM/Render."""
+    try:
+        # Si Gabriel tomó el control mientras el hilo arrancaba, no responder con IA.
+        if crm_esta_manual(contacto):
+            print("MESSENGER IA: conversación en MANUAL; no se responde automáticamente.")
+            return
+
+        actualizar_proyecto_activo(contacto, texto_messenger)
+        respuesta_ia = generar_respuesta(contacto, texto_messenger)
+
+        # Segunda comprobación: si Gabriel pausó la IA mientras OpenAI respondía, no enviar.
+        if crm_esta_manual(contacto):
+            print("MESSENGER IA: pausada antes del envío; respuesta descartada.")
+            return
+
+        if respuesta_ia:
+            enviar_messenger_texto(contacto, respuesta_ia)
+    except Exception as exc:
+        print("ERROR IA MESSENGER:", exc)
+
+
+@app.route("/webhook-facebook", methods=["GET"])
+def verificar_webhook_facebook():
+    """Verificación independiente del webhook de WhatsApp."""
+    modo = request.args.get("hub.mode")
+    token = request.args.get("hub.verify_token")
+    challenge = request.args.get("hub.challenge", "")
+
+    if modo == "subscribe" and MESSENGER_VERIFY_TOKEN and token == MESSENGER_VERIFY_TOKEN:
+        print("MESSENGER: webhook verificado correctamente")
+        return challenge, 200
+
+    print("MESSENGER: verificación rechazada")
+    return "Token incorrecto", 403
+
+
+@app.route("/webhook-facebook", methods=["POST"])
+def recibir_webhook_facebook():
+    """
+    FASE 1:
+    - recibe mensajes de una Página de Facebook;
+    - los agrega al MISMO CRM;
+    - deja el chat en modo manual;
+    - NO activa todavía la IA automática de Messenger.
+    """
+    datos = request.get_json(silent=True) or {}
+
+    if datos.get("object") != "page":
+        return "EVENT_RECEIVED", 200
+
+    try:
+        for entry in datos.get("entry") or []:
+            for evento in entry.get("messaging") or []:
+                # Ignoramos entregas/leídos y otros eventos que no son contenido del cliente.
+                if not any(k in evento for k in ("message", "postback", "referral")):
+                    continue
+
+                mensaje = evento.get("message") or {}
+
+                # Los mensajes que envía la propia Página pueden regresar como echo.
+                # Ya los registramos al enviarlos desde el CRM, así que se ignoran.
+                if mensaje.get("is_echo"):
+                    continue
+
+                sender_id = str(((evento.get("sender") or {}).get("id")) or "").strip()
+                if not sender_id:
+                    continue
+
+                contacto = f"{MESSENGER_CONTACT_PREFIX}{sender_id}"
+
+                mid = str(mensaje.get("mid") or "").strip()
+                if not mid:
+                    postback = evento.get("postback") or {}
+                    mid = str(postback.get("mid") or "").strip()
+
+                dedupe_id = f"facebook:{mid}" if mid else f"facebook:{sender_id}:{evento.get('timestamp')}"
+
+                if dedupe_id and not marcar_mensaje_como_procesado(dedupe_id):
+                    print("MESSENGER DUPLICADO IGNORADO:", dedupe_id)
+                    continue
+
+                contenido = crm_resumen_entrante_facebook(evento)
+                media_url_crm, media_tipo_crm = guardar_media_facebook_crm(contacto, evento)
+
+                crm_registrar_mensaje(
+                    contacto,
+                    "in",
+                    contenido,
+                    event_id=dedupe_id,
+                    media_url=media_url_crm,
+                    media_tipo=media_tipo_crm
+                )
+
+                print("MESSENGER EN CRM:", contacto, contenido[:120])
+
+                # Si el cliente envió texto, la IA puede responder. El trabajo pesado
+                # se ejecuta en otro hilo para devolver 200 a Meta inmediatamente y
+                # mantener el CRM disponible.
+                texto_messenger = str(mensaje.get("text") or "").strip()
+
+                if texto_messenger:
+                    if crm_esta_manual(contacto):
+                        guardar_mensaje(contacto, "user", texto_messenger)
+                        print("MESSENGER: mensaje guardado; conversación en MANUAL.")
+                    else:
+                        Thread(
+                            target=_procesar_ia_messenger,
+                            args=(contacto, texto_messenger),
+                            daemon=True
+                        ).start()
+                else:
+                    # Adjuntos/postbacks siguen visibles en CRM, pero no generamos
+                    # una respuesta automática sin texto suficiente.
+                    guardar_mensaje(contacto, "user", contenido)
+
+        return "EVENT_RECEIVED", 200
+
+    except Exception as exc:
+        print("ERROR WEBHOOK MESSENGER:", exc)
+        # Meta debe recibir 200 para evitar reintentos infinitos por un error interno.
+        return "EVENT_RECEIVED", 200
 
 
 
@@ -4434,9 +4766,13 @@ def generar_respuesta(numero_cliente, mensaje_cliente):
 
         instrucciones = f"""
 Tu nombre es Gabriel Polero y atiendes consultas sobre tus proyectos
-inmobiliarios mediante WhatsApp.
+inmobiliarios mediante WhatsApp o Facebook Messenger.
 
 Habla siempre en PRIMERA PERSONA como Gabriel.
+
+TRATO FORMAL OBLIGATORIO:
+Habla siempre de USTED con el cliente. Usa formas como "le", "su", "puede",
+"quiere", "dígame", "avíseme" y "escríbame". No uses tuteo ni voseo.
 
 NO digas:
 
@@ -4448,7 +4784,7 @@ NO digas:
 - "Según el contexto proporcionado"
 - "Como inteligencia artificial"
 
-Habla de manera natural desde el WhatsApp comercial de Gabriel Polero.
+Habla de manera natural desde el canal comercial de Gabriel Polero.
 
 No afirmes que Gabriel está escribiendo manualmente en ese momento.
 Simplemente conversa en primera persona.
@@ -7604,7 +7940,10 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
             return
 
         # Diferencia de precio entre fases
-        if pregunta_por_diferencia_de_fases(texto_cliente):
+        # Recuperamos también el proyecto persistente por si el mensaje actual es muy corto
+        # y no vuelve a mencionar "Vista Hermosa" o "Palmeras".
+        proyecto_diferencia = proyecto or obtener_proyecto_actual(numero_cliente)
+        if pregunta_por_diferencia_de_fases(texto_cliente, proyecto_diferencia):
             respuesta = respuesta_diferencia_fases(numero_cliente)
 
             guardar_mensaje(numero_cliente, "user", texto_cliente)
@@ -8627,6 +8966,12 @@ CRM_HTML = r"""
         }
         .status.ai { background: #dcfce7; color: #166534; }
         .status.manual { background: #fee2e2; color: #991b1b; }
+        .channel-badge {
+            display:inline-block; margin-right:5px; padding:3px 7px; border-radius:999px;
+            font-size:10px; font-weight:800; vertical-align:middle;
+        }
+        .channel-badge.whatsapp { background:#dcfce7; color:#166534; }
+        .channel-badge.facebook { background:#dbeafe; color:#1d4ed8; }
         .main {
             display: flex;
             flex-direction: column;
@@ -8824,7 +9169,7 @@ CRM_HTML = r"""
         <aside class="sidebar" id="sidebar">
             <div class="sidebar-title">Conversaciones (<span id="client-count">{{ clientes|length }}</span>)</div>
             <div class="sidebar-search">
-                <input id="crm-search-number" type="search" inputmode="numeric" placeholder="🔎 Buscar por número..." autocomplete="off">
+                <input id="crm-search-number" type="search" placeholder="🔎 Buscar cliente..." autocomplete="off">
                 <select id="crm-filter-stage" aria-label="Filtrar por etapa">
                     <option value="">Todas las etapas</option>
                     {% for etapa in etapas %}
@@ -8841,10 +9186,17 @@ CRM_HTML = r"""
             {% for c in clientes %}
                 <a class="chat-link {% if seleccionado == c.numero %}active{% endif %}"
                    data-number="{{ c.numero }}"
+                   data-channel="{{ c.canal }}"
+                   data-label="{{ c.identificador }}"
                    data-stage="{{ c.etapa }}"
                    href="{{ url_for('crm', numero=c.numero) }}">
                     <div>
-                        <span class="phone">+{{ c.numero }}</span>
+                        {% if c.canal == 'facebook' %}
+                            <span class="channel-badge facebook">🔵 Facebook</span>
+                        {% else %}
+                            <span class="channel-badge whatsapp">🟢 WhatsApp</span>
+                        {% endif %}
+                        <span class="phone">{{ c.identificador }}</span>
                         {% if c.manual %}
                             <span class="status manual">MANUAL</span>
                         {% else %}
@@ -8865,15 +9217,24 @@ CRM_HTML = r"""
         {% if seleccionado %}
             <div class="chat-head">
                 <div>
-                    <h2>+{{ seleccionado }}</h2>
+                    <h2>
+                        {% if canal_seleccionado == 'facebook' %}
+                            <span class="channel-badge facebook">🔵 Facebook</span>
+                        {% else %}
+                            <span class="channel-badge whatsapp">🟢 WhatsApp</span>
+                        {% endif %}
+                        {{ identificador_seleccionado }}
+                    </h2>
                     <p>{{ proyecto_seleccionado }}</p>
                 </div>
 
                 <div class="head-actions">
-                    <form method="post" action="{{ url_for('crm_accion_info_tres_proyectos', numero=seleccionado) }}"
-                          onsubmit="return confirm('¿Enviar al cliente el resumen oficial de los 3 proyectos?');">
-                        <button class="quick-action" type="submit">🤖 Info 3 proyectos</button>
-                    </form>
+                    {% if canal_seleccionado != 'facebook' %}
+                        <form method="post" action="{{ url_for('crm_accion_info_tres_proyectos', numero=seleccionado) }}"
+                              onsubmit="return confirm('¿Enviar al cliente el resumen oficial de los 3 proyectos?');">
+                            <button class="quick-action" type="submit">🤖 Info 3 proyectos</button>
+                        </form>
+                    {% endif %}
                     <form method="post" action="{{ url_for('crm_toggle', numero=seleccionado) }}">
                         {% if manual %}
                             <button class="toggle resume" type="submit">▶ Activar IA</button>
@@ -8907,6 +9268,7 @@ CRM_HTML = r"""
                 </form>
             </div>
 
+            {% if canal_seleccionado != 'facebook' %}
             <div class="quick-tools">
                 <div class="quick-tools-title">⚡ MENSAJES Y ENVÍOS RÁPIDOS · usan el proyecto activo: {{ proyecto_seleccionado }}</div>
                 <div class="quick-grid">
@@ -8922,6 +9284,11 @@ CRM_HTML = r"""
                     <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='seguimiento') }}"><button class="quick-chip secondary" type="submit">☎️ Seguimiento</button></form>
                 </div>
             </div>
+            {% else %}
+            <div class="notice" style="background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8;">
+                🔵 Messenger conectado al CRM. Puede usar IA automática o pausar la IA para atender manualmente.
+            </div>
+            {% endif %}
 
             {% if manual %}
                 <div class="notice">
@@ -8957,11 +9324,17 @@ CRM_HTML = r"""
                         <textarea id="composer-text" name="mensaje" placeholder="Escribe tu respuesta manual..." required></textarea>
                         <button class="send" type="submit">Enviar</button>
                     </form>
+                    {% if canal_seleccionado != 'facebook' %}
                     <form class="media-form" method="post" enctype="multipart/form-data" action="{{ url_for('crm_enviar_archivo', numero=seleccionado) }}">
                         <input type="file" name="archivo" accept="image/jpeg,image/png,video/mp4,application/pdf" required>
                         <input type="text" name="caption" placeholder="Texto opcional para acompañar el archivo" style="flex:1;min-width:220px;padding:10px;border:1px solid #cfd6dd;border-radius:9px;">
                         <button class="media-send" type="submit">📎 Enviar archivo</button>
                     </form>
+                    {% else %}
+                    <div style="font-size:12px;color:#667085;padding:2px 4px;">
+                        🔵 En esta primera prueba de Messenger el CRM envía texto. Los archivos se activarán después de validar el canal.
+                    </div>
+                    {% endif %}
                 </div>
             </div>
         {% else %}
@@ -8981,12 +9354,17 @@ CRM_HTML = r"""
         const crmSearchNumber = document.getElementById("crm-search-number");
         const crmFilterStage = document.getElementById("crm-filter-stage");
         function filtrarConversacionesPorNumero() {
-            const q = crmSearchNumber ? (crmSearchNumber.value || "").replace(/\D/g, "") : "";
+            const q = crmSearchNumber ? (crmSearchNumber.value || "").trim().toLowerCase() : "";
             const etapa = crmFilterStage ? (crmFilterStage.value || "") : "";
             document.querySelectorAll("#sidebar .chat-link").forEach(link => {
-                const n = (link.dataset.number || "").replace(/\D/g, "");
+                const buscable = [
+                    link.dataset.number || "",
+                    link.dataset.channel || "",
+                    link.dataset.label || "",
+                    link.textContent || ""
+                ].join(" ").toLowerCase();
                 const etapaLink = link.dataset.stage || "";
-                const coincideNumero = !q || n.includes(q);
+                const coincideNumero = !q || buscable.includes(q);
                 const coincideEtapa = !etapa || etapaLink === etapa;
                 link.style.display = (coincideNumero && coincideEtapa) ? "block" : "none";
             });
@@ -9247,8 +9625,9 @@ CRM_HTML = r"""
                         ? ` · ${e.proyecto}`
                         : "";
 
+                    const ident = e.identificador || (e.canal === "facebook" ? "Facebook" : `+${e.numero}`);
                     const n = new Notification("🏡 Nuevo mensaje de cliente", {
-                        body: `+${e.numero}${proyecto}\n${e.contenido}`,
+                        body: `${ident}${proyecto}\n${e.contenido}`,
                         tag: `crm-${e.id}`
                     });
 
@@ -9338,14 +9717,20 @@ CRM_HTML = r"""
                 const a = document.createElement("a");
                 a.className = "chat-link" + (seleccionado === c.numero ? " active" : "");
                 a.dataset.number = c.numero || "";
+                a.dataset.channel = c.canal || "";
+                a.dataset.label = c.identificador || "";
                 a.dataset.stage = c.etapa || "Nuevo lead";
                 a.href = "/crm?numero=" + encodeURIComponent(c.numero);
                 const prox = c.proxima_accion
                     ? `<div class="next-mini">⏰ ${escapeHtml(c.proxima_accion)}${c.proxima_accion_fecha ? " · " + escapeHtml(String(c.proxima_accion_fecha).replace("T", " ")) : ""}</div>`
                     : "";
+                const canalBadge = c.canal === "facebook"
+                    ? '<span class="channel-badge facebook">🔵 Facebook</span>'
+                    : '<span class="channel-badge whatsapp">🟢 WhatsApp</span>';
                 a.innerHTML = `
                     <div>
-                        <span class="phone">+${escapeHtml(c.numero)}</span>
+                        ${canalBadge}
+                        <span class="phone">${escapeHtml(c.identificador || c.numero)}</span>
                         <span class="status ${c.manual ? "manual" : "ai"}">
                             ${c.manual ? "MANUAL" : "IA"}
                         </span>
@@ -9654,6 +10039,8 @@ def crm():
             meta = crm_obtener_meta(numero)
             clientes.append({
                 "numero": numero,
+                "identificador": crm_identificador_visible(numero),
+                "canal": crm_canal_contacto(numero),
                 "preview": ultimo[:70],
                 "manual": numero in crm_modo_manual,
                 "proyecto": crm_nombre_proyecto(numero),
@@ -9679,6 +10066,8 @@ def crm():
         manual=manual,
         proyecto_seleccionado=crm_nombre_proyecto(seleccionado) if seleccionado else "",
         proyecto_clave_seleccionado=proyecto_clave_seleccionado,
+        canal_seleccionado=crm_canal_contacto(seleccionado) if seleccionado else "",
+        identificador_seleccionado=crm_identificador_visible(seleccionado) if seleccionado else "",
         etapas=CRM_ETAPAS,
         meta_seleccionada=meta_seleccionada,
     )
@@ -9706,6 +10095,8 @@ def crm_data():
             meta = crm_obtener_meta(numero)
             clientes.append({
                 "numero": numero,
+                "identificador": crm_identificador_visible(numero),
+                "canal": crm_canal_contacto(numero),
                 "preview": ultimo[:70],
                 "manual": numero in crm_modo_manual,
                 "proyecto": crm_nombre_proyecto(numero),
@@ -9729,6 +10120,8 @@ def crm_data():
                     eventos_entrantes.append({
                         "id": m.get("id", 0),
                         "numero": numero,
+                        "identificador": crm_identificador_visible(numero),
+                        "canal": crm_canal_contacto(numero),
                         "contenido": m.get("contenido", ""),
                         "hora": m.get("hora", ""),
                         "proyecto": crm_nombre_proyecto(numero)
@@ -9818,6 +10211,10 @@ def crm_accion_rapida(numero, accion):
     if accion not in permitidas:
         return Response("Acción no válida", status=400)
 
+    if crm_es_facebook(numero):
+        # Fase 1 de Messenger: todavía no reutilizamos envíos rápidos de WhatsApp.
+        return redirect(url_for("crm", numero=numero))
+
     cancelar_seguimiento(numero)
     iniciar_procesamiento(numero, f"crm-accion-rapida-{accion}-{time.time()}")
 
@@ -9878,6 +10275,9 @@ def crm_accion_info_tres_proyectos(numero):
     if not crm_autorizado():
         return crm_pedir_login()
 
+    if crm_es_facebook(numero):
+        return redirect(url_for("crm", numero=numero))
+
     cancelar_seguimiento(numero)
     iniciar_procesamiento(numero, f"crm-accion-3-proyectos-{time.time()}")
 
@@ -9911,8 +10311,19 @@ def crm_enviar(numero):
         f"crm-manual-{time.time()}"
     )
 
-    enviar_whatsapp(numero, mensaje)
-    guardar_mensaje(numero, "assistant", mensaje)
+    if crm_es_facebook(numero):
+        ok = enviar_messenger_texto(numero, mensaje)
+        if ok:
+            guardar_mensaje(numero, "assistant", mensaje)
+        else:
+            crm_registrar_mensaje(
+                numero,
+                "out",
+                "⚠️ Messenger no pudo enviar este mensaje. Revise el token de la Página en Render."
+            )
+    else:
+        enviar_whatsapp(numero, mensaje)
+        guardar_mensaje(numero, "assistant", mensaje)
 
     return redirect(url_for("crm", numero=numero))
 
@@ -9921,6 +10332,14 @@ def crm_enviar(numero):
 def crm_enviar_archivo(numero):
     if not crm_autorizado():
         return crm_pedir_login()
+
+    if crm_es_facebook(numero):
+        crm_registrar_mensaje(
+            numero,
+            "out",
+            "ℹ️ El envío manual de archivos por Messenger se activará después de validar la primera fase."
+        )
+        return redirect(url_for("crm", numero=numero))
 
     archivo = request.files.get("archivo")
     caption = request.form.get("caption", "").strip()
