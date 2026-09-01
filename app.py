@@ -1,4 +1,4 @@
-# VERSION_MESSENGER_MISMA_LOGICA_WA_20260831
+# VERSION_TRATO_USTED_GENERAL_20260831
 from flask import Flask, request, Response, redirect, url_for, render_template_string, jsonify, send_from_directory
 from openai import OpenAI
 from dotenv import load_dotenv
@@ -59,6 +59,157 @@ MESSENGER_CONTACT_PREFIX = "fb:"
 # PostgreSQL persistente para conservar las suscripciones Push
 # aunque Render se duerma, reinicie o haga deploy.
 DATABASE_URL = os.getenv("DATABASE_URL")
+
+
+# ============================================================
+# TRATO FORMAL OBLIGATORIO CON CLIENTES (USTED)
+# ============================================================
+def _reemplazo_formal(match, reemplazo):
+    original = match.group(0)
+    if original and original[0].isupper():
+        return reemplazo[:1].upper() + reemplazo[1:]
+    return reemplazo
+
+
+def formalizar_trato_usted(texto):
+    """Convierte expresiones comunes de tú/vos a trato formal de usted."""
+    texto = str(texto or "")
+    if not texto:
+        return texto
+
+    reemplazos = [
+        # Frases y pronombres.
+        (r"\bcómo\s+te\s+llamas\b", "cómo se llama"),
+        (r"\bcomo\s+te\s+llamas\b", "como se llama"),
+        (r"\bpara\s+ti\b", "para usted"),
+        (r"\ba\s+ti\b", "a usted"),
+        (r"\bde\s+ti\b", "de usted"),
+        (r"\bcon\s+vos\b", "con usted"),
+        (r"\bcontigo\b", "con usted"),
+        (r"\bvos\b", "usted"),
+        (r"\btú\b", "usted"),
+        (r"\btus\b", "sus"),
+        (r"\btu\b", "su"),
+        (r"\btuyos\b", "suyos"),
+        (r"\btuyas\b", "suyas"),
+        (r"\btuyo\b", "suyo"),
+        (r"\btuya\b", "suya"),
+        (r"\bte\b", "le"),
+
+        # Tuteo/voseo frecuente.
+        (r"\bpod[eé]s\b", "puede"),
+        (r"\bpuedes\b", "puede"),
+        (r"\bpuedas\b", "pueda"),
+        (r"\bpodrías\b", "podría"),
+        (r"\bpodrias\b", "podría"),
+        (r"\bquer[eé]s\b", "quiere"),
+        (r"\bquieres\b", "quiere"),
+        (r"\bquieras\b", "quiera"),
+        (r"\bten[eé]s\b", "tiene"),
+        (r"\btienes\b", "tiene"),
+        (r"\btengas\b", "tenga"),
+        (r"\btendrás\b", "tendrá"),
+        (r"\btendras\b", "tendrá"),
+        (r"\bnecesit[aá]s\b", "necesita"),
+        (r"\bnecesitas\b", "necesita"),
+        (r"\bnecesites\b", "necesite"),
+        (r"\bnecesitarías\b", "necesitaría"),
+        (r"\bnecesitarias\b", "necesitaría"),
+        (r"\bdese[aá]s\b", "desea"),
+        (r"\bdeseas\b", "desea"),
+        (r"\bdesees\b", "desee"),
+        (r"\bprefer[ií]s\b", "prefiere"),
+        (r"\bprefieres\b", "prefiere"),
+        (r"\bprefieras\b", "prefiera"),
+        (r"\beres\b", "es"),
+        (r"\bestás\b", "está"),
+        (r"\bestés\b", "esté"),
+        (r"\bhas\b", "ha"),
+        (r"\bvas\b", "va"),
+        (r"\bvayas\b", "vaya"),
+        (r"\bvienes\b", "viene"),
+        (r"\bbuscas\b", "busca"),
+        (r"\bbusques\b", "busque"),
+        (r"\bconoces\b", "conoce"),
+        (r"\bconozcas\b", "conozca"),
+        (r"\bsabes\b", "sabe"),
+        (r"\bsepas\b", "sepa"),
+        (r"\bdebes\b", "debe"),
+        (r"\bdeberías\b", "debería"),
+        (r"\bdeberias\b", "debería"),
+        (r"\beliges\b", "elige"),
+        (r"\belijas\b", "elija"),
+        (r"\bescoges\b", "escoge"),
+        (r"\bveas\b", "vea"),
+        (r"\bllegues\b", "llegue"),
+        (r"\bllegas\b", "llega"),
+        (r"\bhagas\b", "haga"),
+        (r"\bdigas\b", "diga"),
+        (r"\bseas\b", "sea"),
+        (r"\bpagas\b", "paga"),
+        (r"\bcompras\b", "compra"),
+        (r"\brecibes\b", "recibe"),
+        (r"\bgustas\b", "gusta"),
+        (r"\bindicas\b", "indica"),
+        (r"\bpudiste\b", "pudo"),
+
+        # Imperativos frecuentes.
+        (r"\bdecime\b", "dígame"),
+        (r"\bdime\b", "dígame"),
+        (r"\bmand[aá]me\b", "mándeme"),
+        (r"\bmándame\b", "mándeme"),
+        (r"\benvi[aá]me\b", "envíeme"),
+        (r"\benvíame\b", "envíeme"),
+        (r"\bescrib[ií]me\b", "escríbame"),
+        (r"\bescríbeme\b", "escríbame"),
+        (r"\bavis[aá]me\b", "avíseme"),
+        (r"\bavísame\b", "avíseme"),
+        (r"\bcont[aá]me\b", "cuénteme"),
+        (r"\bcuéntame\b", "cuénteme"),
+        (r"\bconfirm[aá]me\b", "confírmeme"),
+        (r"\bconfírmame\b", "confírmeme"),
+        (r"\bindic[aá]me\b", "indíqueme"),
+        (r"\bindícame\b", "indíqueme"),
+        (r"\bpas[aá]me\b", "páseme"),
+        (r"\brespond[eé]me\b", "respóndame"),
+        (r"\brevis[aá]\b", "revise"),
+        (r"\bmir[aá]\b", "mire"),
+        (r"\bintent[aá]\b", "intente"),
+        (r"\bdínoslo\b", "díganoslo"),
+
+        # Infinitivos con pronombre.
+        (r"\bayudarte\b", "ayudarle"),
+        (r"\benviarte\b", "enviarle"),
+        (r"\bmostrarte\b", "mostrarle"),
+        (r"\bcompartirte\b", "compartirle"),
+        (r"\bexplicarte\b", "explicarle"),
+        (r"\bcontarte\b", "contarle"),
+        (r"\bconfirmarte\b", "confirmarle"),
+        (r"\borientarte\b", "orientarle"),
+        (r"\batenderte\b", "atenderle"),
+        (r"\bacompañarte\b", "acompañarle"),
+        (r"\bavisarte\b", "avisarle"),
+        (r"\bescribirte\b", "escribirle"),
+        (r"\bllamarte\b", "llamarle"),
+        (r"\bmandarte\b", "mandarle"),
+        (r"\bdarte\b", "darle"),
+        (r"\bhacerte\b", "hacerle"),
+        (r"\bdecirte\b", "decirle"),
+        (r"\bpreguntarte\b", "preguntarle"),
+        (r"\bcotizarte\b", "cotizarle"),
+        (r"\bcalcularte\b", "calcularle"),
+        (r"\brecomendarte\b", "recomendarle"),
+        (r"\bagendarte\b", "agendarle"),
+    ]
+
+    for patron, reemplazo in reemplazos:
+        texto = re.sub(
+            patron,
+            lambda m, r=reemplazo: _reemplazo_formal(m, r),
+            texto,
+            flags=re.IGNORECASE,
+        )
+    return texto
 
 # ============================================================
 # NTFY - NOTIFICACIONES NATIVAS EN ANDROID
@@ -4098,12 +4249,14 @@ def _dividir_texto_messenger(texto, limite=1900):
     return [p for p in partes if p]
 
 
-def enviar_messenger_texto(contacto, texto):
+def enviar_messenger_texto(contacto, texto, formalizar=True):
     """
     Envía texto por Messenger usando el Page Access Token.
     Se utiliza tanto para respuestas manuales como para TODO el flujo automático
     que originalmente envía por WhatsApp.
     """
+    if formalizar:
+        texto = formalizar_trato_usted(texto)
     psid = crm_psid_facebook(contacto)
     partes = _dividir_texto_messenger(texto)
 
@@ -4838,7 +4991,10 @@ def obtener_historial(numero_cliente):
     return conversaciones[numero_cliente]
 
 
-def guardar_mensaje(numero_cliente, rol, contenido):
+def guardar_mensaje(numero_cliente, rol, contenido, formalizar=True):
+
+    if rol == "assistant" and formalizar:
+        contenido = formalizar_trato_usted(contenido)
 
     historial = obtener_historial(numero_cliente)
 
@@ -4889,7 +5045,13 @@ def generar_respuesta(numero_cliente, mensaje_cliente):
 
         instrucciones = f"""
 Tu nombre es Gabriel Polero y atiendes consultas sobre tus proyectos
-inmobiliarios mediante WhatsApp.
+inmobiliarios mediante WhatsApp o Messenger.
+
+TRATO FORMAL OBLIGATORIO:
+- Trate SIEMPRE al cliente de USTED en absolutamente todas las respuestas.
+- Use formas como: le, su, sus, puede, quiere, tiene, desea, necesita, prefiere.
+- NUNCA use tú, vos, te, tu, tus, contigo, puedes, quieres, tienes, deseas, necesitás, podés, querés o tenés para dirigirse al cliente.
+- Mantenga este trato formal aunque el cliente escriba usando tú o vos.
 
 Habla siempre en PRIMERA PERSONA como Gabriel.
 
@@ -6651,16 +6813,19 @@ def transcribir_audio_whatsapp(mensaje):
 # ENVIAR MENSAJE POR WHATSAPP
 # ============================================================
 
-def enviar_whatsapp(numero, texto):
+def enviar_whatsapp(numero, texto, formalizar=True):
     """
     Envía UN mensaje únicamente como respuesta a un mensaje entrante.
     Esta función no programa seguimientos ni mensajes futuros.
     """
 
+    if formalizar:
+        texto = formalizar_trato_usted(texto)
+
     # MISMA LÓGICA, DISTINTO CANAL: todo el motor sigue llamando a enviar_whatsapp(),
     # pero un contacto fb:<psid> sale por Messenger sin tocar la lógica comercial.
     if crm_es_facebook(numero):
-        return enviar_messenger_texto(numero, texto)
+        return enviar_messenger_texto(numero, texto, formalizar=False)
 
     url = (
         f"https://graph.facebook.com/v26.0/"
@@ -6729,6 +6894,7 @@ def enviar_documento_url_whatsapp(numero, url_documento, nombre_archivo, caption
     Se agrega un parámetro de versión para pedir siempre la copia más reciente
     cuando el plano se reemplaza en GitHub Pages conservando el mismo nombre.
     """
+    caption = formalizar_trato_usted(caption)
     if crm_es_facebook(numero):
         return enviar_messenger_adjunto_url(
             numero,
@@ -6871,6 +7037,7 @@ def enviar_imagen_whatsapp(numero, ruta_imagen, caption=""):
     """
     Sube una imagen a Meta y luego la envía al número indicado.
     """
+    caption = formalizar_trato_usted(caption)
     if crm_es_facebook(numero):
         url_publica = url_publica_media_messenger(ruta_imagen)
         if not url_publica:
@@ -6976,6 +7143,7 @@ def subir_video_a_meta(ruta_video):
 
 
 def enviar_video_whatsapp(numero, ruta_video, caption=""):
+    caption = formalizar_trato_usted(caption)
     if crm_es_facebook(numero):
         url_publica = url_publica_media_messenger(ruta_video)
         if not url_publica:
@@ -10452,9 +10620,9 @@ def crm_enviar(numero):
     )
 
     if crm_es_facebook(numero):
-        ok = enviar_messenger_texto(numero, mensaje)
+        ok = enviar_messenger_texto(numero, mensaje, formalizar=False)
         if ok:
-            guardar_mensaje(numero, "assistant", mensaje)
+            guardar_mensaje(numero, "assistant", mensaje, formalizar=False)
         else:
             crm_registrar_mensaje(
                 numero,
@@ -10462,8 +10630,8 @@ def crm_enviar(numero):
                 "⚠️ Messenger no pudo enviar este mensaje. Revise el token de la Página en Render."
             )
     else:
-        enviar_whatsapp(numero, mensaje)
-        guardar_mensaje(numero, "assistant", mensaje)
+        enviar_whatsapp(numero, mensaje, formalizar=False)
+        guardar_mensaje(numero, "assistant", mensaje, formalizar=False)
 
     return redirect(url_for("crm", numero=numero))
 
@@ -10519,7 +10687,7 @@ def crm_enviar_archivo(numero):
         etiqueta = {"image": "🖼️ Imagen enviada", "video": "🎥 Video enviado", "document": "📄 PDF enviado"}[tipo]
         texto_crm = f"{etiqueta}: {nombre}" + (f"\n{caption}" if caption else "")
         crm_registrar_mensaje(numero, "out", texto_crm, media_url=media_url, media_tipo=tipo)
-        guardar_mensaje(numero, "assistant", texto_crm)
+        guardar_mensaje(numero, "assistant", texto_crm, formalizar=False)
     else:
         crm_registrar_mensaje(numero, "out", f"⚠️ WhatsApp rechazó el envío de {nombre}.")
 
