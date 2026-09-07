@@ -1,3 +1,4 @@
+# VERSION_BUENAVENTURA_NUEVA_CAMPANA_20260907
 # VERSION_PRECIOS_SIN_REPETIR_INFO_20260907
 # VERSION_BOTON_INFO_PALMERAS_20260831 - boton rapido para fijar Palmeras y enviar toda la informacion
 # VERSION_ANUNCIOS_PALMERAS_7_IDS_20260831 - 7 anuncios Palmeras identificados
@@ -956,9 +957,16 @@ def obtener_enganche_exacto(proyecto, texto):
 # ============================================================
 
 ANUNCIOS_META_PROYECTO = {
-    # Buenaventura Cuyotenango
+    # Buenaventura Cuyotenango - anuncios históricos
     "120248129659680634": "buenaventura",  # AD VID - 01 - BNV CUYO
     "120248129290310634": "buenaventura",  # AD IMG - 01 - BNV CUYO
+
+    # Buenaventura Cuyotenango - campaña actual (septiembre 2026)
+    "120248470171920634": "buenaventura",
+    "120248470434590634": "buenaventura",
+    "120248470398980634": "buenaventura",
+    "120248470410070634": "buenaventura",
+    "120248470403240634": "buenaventura",
 
     # Palmeras San Miguel - anuncios actuales (agosto 2026)
     "120248361771430634": "palmeras",
@@ -975,7 +983,7 @@ ANUNCIOS_META_PROYECTO = {
     "120248129773580634": "vista_hermosa",  # AD IMG - 02 - VTH
 }
 
-PROYECTO_CAMPANA_ACTIVA = "palmeras"
+PROYECTO_CAMPANA_ACTIVA = "buenaventura"
 
 
 def _mensaje_generico_de_anuncio(texto):
@@ -997,8 +1005,8 @@ def proyecto_desde_referencia_anuncio(mensaje):
     """
     Detecta el proyecto desde anuncios de Meta.
 
-    Para la campaña actual, todos los anuncios activos corresponden a Palmeras San Miguel.
-    Si Meta entrega un referral de anuncio pero cambia/omite el ID esperado, usamos Palmeras
+    Para la campaña actual, todos los anuncios activos corresponden a Buenaventura Cuyotenango.
+    Si Meta entrega un referral de anuncio pero cambia/omite el ID esperado, usamos Buenaventura
     como respaldo para no perder el contexto comercial.
     """
     mensaje = mensaje or {}
@@ -1024,15 +1032,15 @@ def proyecto_desde_referencia_anuncio(mensaje):
         if proyecto:
             print(f"ANUNCIO META DETECTADO: {anuncio_id} -> {proyecto}")
             return proyecto
-        # Todos los anuncios que Gabriel está trabajando actualmente son Palmeras.
+        # Todos los anuncios de la campaña activa actual corresponden a Buenaventura.
         if referral:
-            print(f"ANUNCIO META ID NO MAPEADO ({anuncio_id}); FALLBACK ACTUAL -> palmeras")
+            print(f"ANUNCIO META ID NO MAPEADO ({anuncio_id}); FALLBACK ACTUAL -> buenaventura")
             return PROYECTO_CAMPANA_ACTIVA
 
     # Si existe referral pero Meta no incluyó source_id/ad_id, igualmente sabemos
-    # que la campaña activa actual es Palmeras San Miguel.
+    # que la campaña activa actual es Buenaventura Cuyotenango.
     if referral:
-        print("ANUNCIO META CON REFERRAL SIN ID; FALLBACK ACTUAL -> palmeras")
+        print("ANUNCIO META CON REFERRAL SIN ID; FALLBACK ACTUAL -> buenaventura")
         return PROYECTO_CAMPANA_ACTIVA
 
     return None
@@ -1042,9 +1050,9 @@ def fijar_proyecto_desde_anuncio(numero, mensaje):
     proyecto = proyecto_desde_referencia_anuncio(mensaje)
 
     # Respaldo adicional: Meta permite que el usuario quite los datos de referencia.
-    # Como EN ESTE MOMENTO solo se están trabajando anuncios de Palmeras, si llega
+    # Como EN ESTE MOMENTO la campaña activa es Buenaventura, si llega
     # una conversación todavía sin proyecto y el texto es el típico CTA corto del anuncio
-    # (por ejemplo "Ubicación" o "Información"), la fijamos como Palmeras.
+    # (por ejemplo "Ubicación" o "Información"), la fijamos como Buenaventura.
     if not proyecto:
         existente = obtener_proyecto_actual(numero)
         if existente:
@@ -1053,7 +1061,7 @@ def fijar_proyecto_desde_anuncio(numero, mensaje):
             texto = ((mensaje or {}).get("text") or {}).get("body", "")
             if _mensaje_generico_de_anuncio(texto):
                 proyecto = PROYECTO_CAMPANA_ACTIVA
-                print(f"FALLBACK MENSAJE DE CAMPANA: {numero} -> palmeras | texto={texto!r}")
+                print(f"FALLBACK MENSAJE DE CAMPANA: {numero} -> buenaventura | texto={texto!r}")
 
     if not proyecto:
         return None
