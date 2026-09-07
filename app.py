@@ -1,3 +1,4 @@
+# VERSION_PRECIOS_SIN_REPETIR_INFO_20260907
 # VERSION_BOTON_INFO_PALMERAS_20260831 - boton rapido para fijar Palmeras y enviar toda la informacion
 # VERSION_ANUNCIOS_PALMERAS_7_IDS_20260831 - 7 anuncios Palmeras identificados
 # VERSION_ANUNCIOS_PALMERAS_FIX_PROYECTO_20260831
@@ -813,6 +814,90 @@ def respuesta_medidas_disponibles(proyecto):
         return "En Buenaventura Cuyotenango tenemos lotes de 8x16, 8x18 y 9x20 😊🏡"
     if proyecto == "vista_hermosa":
         return "En Ciudad Vista Hermosa tenemos lotes de 8x16 en Fase F y Fase G 😊🏡"
+    return None
+
+
+def es_consulta_general_de_precio(texto):
+    """
+    Detecta preguntas generales como "¿cuánto valen los terrenos?".
+
+    No intercepta una medida concreta, una cuota, enganche, plazo, cotización
+    ni una pregunta sobre diferencia de precios; esos casos conservan sus
+    flujos especializados.
+    """
+    t = normalizar_ventas(texto)
+
+    # Mantener intactos los flujos específicos ya existentes.
+    if detectar_medida_en_texto(texto):
+        return False
+    if pregunta_cuota_especifica(texto):
+        return False
+    if pregunta_enganche(texto):
+        return False
+    if pregunta_por_plazo_de_financiamiento(texto):
+        return False
+    if any(x in t for x in [
+        "cotizacion", "cotizaciones", "cuota", "cuotas", "mensualidad",
+        "mensualidades", "plan de pago", "planes de pago", "financiamiento",
+        "enganche", "diferencia", "dos precios", "fases", "fase f", "fase g"
+    ]):
+        return False
+
+    frases_precio = [
+        "precio", "precios", "cuanto cuesta", "cuanto cuestan",
+        "cuanto vale", "cuanto valen", "cuanto salen", "valor",
+        "costo", "costos", "que vale", "que valen"
+    ]
+    return any(x in t for x in frases_precio)
+
+
+def es_primera_consulta_comercial(numero):
+    """
+    Considera como primera consulta comercial cuando antes del mensaje actual
+    el cliente solo ha saludado o todavía no existe otra pregunta real.
+    """
+    historial = obtener_historial(numero)
+    for item in historial:
+        if item.get("role") != "user":
+            continue
+        contenido = str(item.get("content") or "").strip()
+        if not contenido:
+            continue
+        if es_solo_saludo(contenido):
+            continue
+        return False
+    return True
+
+
+def respuesta_precio_breve_con_intencion(proyecto):
+    """
+    Respuesta breve para una consulta general de precio cuando la conversación
+    ya venía avanzando. Evita reenviar cotizaciones, fotos y amenidades.
+    """
+    if proyecto == "buenaventura":
+        return (
+            "Claro 😊 En Buenaventura Cuyotenango tenemos:\n\n"
+            "• 8x16 desde Q83,200\n"
+            "• 8x18 Q93,600\n\n"
+            "¿Qué medida le interesa y la busca para construir su casa, hacer locales o como inversión?"
+        )
+
+    if proyecto == "palmeras":
+        return (
+            "Claro 😊 En Palmeras San Miguel tenemos:\n\n"
+            "• 8x16 Q67,200\n"
+            "• 8x18 Q79,200\n\n"
+            "¿Qué medida le interesa y la busca para construir su casa, hacer locales o como inversión?"
+        )
+
+    if proyecto == "vista_hermosa":
+        return (
+            "Claro 😊 En Ciudad Vista Hermosa tenemos lotes de 8x16:\n\n"
+            "• Fase F Q83,200\n"
+            "• Fase G Q89,600\n\n"
+            "¿Cuál opción le interesa y la busca para construir su casa, hacer locales o como inversión?"
+        )
+
     return None
 
 def respuesta_medida_especifica(proyecto, medida, texto=""):
@@ -8372,9 +8457,39 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
 
                 return
 
+        # PRECIO GENERAL: EVITAR REPETIR TODO EL PAQUETE
+        # Si "¿cuánto valen los terrenos?" es la primera consulta comercial,
+        # mantenemos el comportamiento completo. Si la conversación ya venía
+        # avanzando, respondemos solo precios + una pregunta de calificación.
+        if es_consulta_general_de_precio(texto_cliente):
+            if es_primera_consulta_comercial(numero_cliente):
+                guardar_mensaje(numero_cliente, "user", texto_cliente)
+                guardar_mensaje(
+                    numero_cliente,
+                    "assistant",
+                    f"Se envió la información completa de {proyecto or 'el proyecto'} por ser la primera consulta comercial."
+                )
+                if procesamiento_sigue_vigente(numero_cliente, message_id):
+                    if proyecto:
+                        enviar_info_completa_proyecto(numero_cliente, proyecto, cierre=True)
+                    else:
+                        enviar_whatsapp(
+                            numero_cliente,
+                            "¡Claro! 😊 ¿De cuál proyecto desea conocer los precios?"
+                        )
+                return
+
+            respuesta_precio = respuesta_precio_breve_con_intencion(proyecto)
+            if respuesta_precio:
+                guardar_mensaje(numero_cliente, "user", texto_cliente)
+                guardar_mensaje(numero_cliente, "assistant", respuesta_precio)
+                if procesamiento_sigue_vigente(numero_cliente, message_id):
+                    enviar_whatsapp(numero_cliente, respuesta_precio)
+                return
+
         # PRECIOS / CUOTAS / COTIZACIONES
-        # Si el cliente pide cotización o confirma una cotización ofrecida,
-        # se envía DE UNA VEZ. No se vuelve a preguntar plazo, medida o si quiere verla.
+        # Cotización explícita, cuotas, plazos o confirmaciones conservan el flujo
+        # de imágenes y planes de pago existente.
         if debe_enviar_cotizacion_directa(
             numero_cliente,
             texto_cliente
