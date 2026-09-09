@@ -1,3 +1,4 @@
+# VERSION_BUENAVENTURA_CTA_CONTROLADOS_20260908 - CTAs de anuncios + contexto de venta controlado
 # VERSION_BUENAVENTURA_NUEVA_CAMPANA_20260907
 # VERSION_PRECIOS_SIN_REPETIR_INFO_20260907
 # VERSION_BOTON_INFO_PALMERAS_20260831 - boton rapido para fijar Palmeras y enviar toda la informacion
@@ -952,6 +953,420 @@ def obtener_enganche_exacto(proyecto, texto):
         return None
     return datos.get("enganche")
 
+
+# ============================================================
+# CAMPAÑA BUENAVENTURA - BOTONES / PREGUNTAS CONTROLADAS
+# ============================================================
+
+def _normalizar_boton_campana(texto):
+    """
+    Normaliza el texto recibido desde los botones de Meta.
+    Quita emojis/signos para que pequeñas diferencias visuales no cambien
+    la intención del botón.
+    """
+    t = normalizar_ventas(texto)
+    t = re.sub(r"[^a-z0-9\s]", " ", t)
+    return " ".join(t.split())
+
+
+def detectar_cta_buenaventura(texto):
+    """
+    Detecta las cuatro preguntas configuradas en los anuncios de Buenaventura.
+    Se evalúan ANTES que la IA y antes de los detectores generales para evitar
+    respuestas duplicadas o interpretaciones equivocadas.
+    """
+    t = _normalizar_boton_campana(texto)
+
+    grupos = {
+        "precios_cuotas": {
+            "quiero conocer precios y cuotas",
+            "precios y cuotas",
+        },
+        "ubicacion": {
+            "quiero ver la ubicacion del proyecto",
+            "ver la ubicacion del proyecto",
+        },
+        "lotes_disponibles": {
+            "quiero conocer lotes disponibles",
+            "conocer lotes disponibles",
+            "lotes disponibles",
+        },
+        "agendar_visita": {
+            "quiero agendar una visita",
+            "agendar una visita",
+        },
+    }
+
+    for accion, frases in grupos.items():
+        if t in frases:
+            return accion
+    return None
+
+
+def _limpiar_contextos_cta_buenaventura(numero, conservar=None):
+    """Evita que una pregunta vieja de un botón interfiera con un botón nuevo."""
+    estado = obtener_estado_conversacion(numero)
+    claves = [
+        "esperando_uso_lote_cta",
+        "esperando_medida_lotes_cta",
+        "esperando_tipo_dia_visita_cta",
+        "esperando_dia_visita_cta",
+        "esperando_jornada_visita_cta",
+        "esperando_hora_visita_cta",
+    ]
+    for clave in claves:
+        if clave != conservar:
+            estado[clave] = False
+    persistir_cliente(numero)
+
+
+def info_completa_ya_enviada(numero, proyecto=None):
+    estado = obtener_estado_conversacion(numero)
+    if not estado.get("info_completa_enviada"):
+        return False
+    if proyecto and estado.get("info_completa_proyecto") not in {None, proyecto}:
+        return False
+    return True
+
+
+def respuesta_precio_breve_buenaventura():
+    return (
+        "Claro 😊 En Buenaventura Cuyotenango tenemos:\n\n"
+        "• 8x16 desde Q83,200\n"
+        "• 8x18 Q93,600\n\n"
+        "¿Qué medida le interesa y la busca para construir su casa, hacer locales "
+        "o tenerlo como patrimonio?"
+    )
+
+
+def respuesta_ubicacion_cta_buenaventura():
+    datos = UBICACIONES_PROYECTOS.get("buenaventura", {})
+    enlace = datos.get("maps", "https://maps.app.goo.gl/4wTj52Ez32rdigXk8")
+    return (
+        "Buenaventura Cuyotenango está en el km 168 sobre la carretera hacia Tulate, "
+        "a 2 minutos del centro de Cuyotenango y aproximadamente a 15 minutos del IRTRA. 📍\n\n"
+        f"Google Maps:\n{enlace}"
+    )
+
+
+def respuesta_lotes_disponibles_cta_buenaventura():
+    return (
+        "Con gusto 👍 Puedo mostrarle las ubicaciones disponibles actualmente en "
+        "Buenaventura Cuyotenango.\n\n"
+        "¿Está buscando un lote para construir su casa, hacer locales o para tenerlo "
+        "como patrimonio?"
+    )
+
+
+def respuesta_visita_cta_buenaventura():
+    return (
+        "Excelente 😊 Podemos coordinar una visita a Buenaventura Cuyotenango para que "
+        "conozca el proyecto personalmente.\n\n"
+        "¿Le queda mejor entre semana o fin de semana?"
+    )
+
+
+def detectar_uso_lote_buenaventura(texto):
+    t = normalizar_ventas(texto)
+    if any(x in t for x in [
+        "casa", "mi casa", "vivienda", "vivir", "familia", "para mi familia"
+    ]):
+        return "casa"
+    if any(x in t for x in [
+        "local", "locales", "negocio", "negocios", "comercial", "comercio"
+    ]):
+        return "locales"
+    if any(x in t for x in [
+        "patrimonio", "inversion", "invertir", "guardar mi dinero", "plusvalia"
+    ]):
+        return "patrimonio"
+    return None
+
+
+def respuesta_seguimiento_uso_lote_buenaventura(numero, texto):
+    """
+    Entiende respuestas cortas como "para mi casa", "locales" o "patrimonio"
+    porque recuerda la pregunta que hizo el botón de disponibilidad.
+    """
+    estado = obtener_estado_conversacion(numero)
+    if not estado.get("esperando_uso_lote_cta"):
+        return None
+
+    uso = detectar_uso_lote_buenaventura(texto)
+    if not uso:
+        return None
+
+    estado["esperando_uso_lote_cta"] = False
+    estado["esperando_medida_lotes_cta"] = True
+    estado["uso_lote_cta"] = uso
+    persistir_cliente(numero)
+
+    if uso == "casa":
+        return (
+            "Perfecto 😊 Para construir su casa tenemos medidas de 8x16, 8x18 y 9x20. "
+            "¿Qué medida le interesa más?"
+        )
+    if uso == "locales":
+        return (
+            "Perfecto 😊 El diseño de construcción es libre, por lo que puede desarrollar "
+            "locales con construcción formal en block. Tenemos 8x16, 8x18 y 9x20. "
+            "¿Qué medida le interesa más?"
+        )
+    return (
+        "Perfecto 😊 Para tenerlo como patrimonio puede revisar las opciones de 8x16, "
+        "8x18 y 9x20. ¿Qué medida le interesa revisar primero?"
+    )
+
+
+def respuesta_seguimiento_medida_lotes_buenaventura(numero, texto):
+    """
+    Si el cliente ya explicó para qué quiere el lote y luego elige una medida,
+    responde el precio exacto existente y ofrece mostrar la ubicación disponible
+    en el plano, sin perder el contexto.
+    """
+    estado = obtener_estado_conversacion(numero)
+    if not estado.get("esperando_medida_lotes_cta"):
+        return None
+
+    medida = detectar_medida_en_texto(texto)
+    if not medida:
+        return None
+
+    respuesta = respuesta_medida_especifica("buenaventura", medida, texto)
+    if not respuesta:
+        return None
+
+    estado["esperando_medida_lotes_cta"] = False
+    estado["esperando_disponibilidad_desde_cta"] = True
+    persistir_cliente(numero)
+
+    return (
+        respuesta
+        + "\n\n¿Quiere que le muestre en el plano las ubicaciones disponibles de esa medida?"
+    )
+
+
+def detectar_tipo_dia_visita_cta(texto):
+    t = normalizar_ventas(texto)
+    if any(x in t for x in ["fin de semana", "sabado", "domingo"]):
+        return "fin_semana"
+    if any(x in t for x in [
+        "entre semana", "lunes", "martes", "miercoles", "jueves", "viernes"
+    ]):
+        return "entre_semana"
+    return None
+
+
+def detectar_jornada_visita_cta(texto):
+    t = normalizar_ventas(texto)
+    if any(x in t for x in ["manana", "por la manana", "en la manana", "am"]):
+        return "mañana"
+    if any(x in t for x in ["tarde", "por la tarde", "en la tarde", "pm"]):
+        return "tarde"
+    return None
+
+
+def respuesta_seguimiento_visita_cta(numero, texto, proyecto):
+    """
+    Flujo corto y contextual:
+    entre semana/fin de semana -> día -> mañana/tarde -> hora.
+    No sustituye el sistema de visitas existente; lo alimenta y, al tener día+hora,
+    usa respuesta_visita() para cerrar la cita como antes.
+    """
+    estado = obtener_estado_conversacion(numero)
+    visita = estado_visitas.setdefault(
+        numero,
+        {"dia": None, "hora": None, "proyecto": proyecto or "buenaventura", "cerrada": False}
+    )
+    if proyecto:
+        visita["proyecto"] = proyecto
+
+    if estado.get("esperando_tipo_dia_visita_cta"):
+        tipo = detectar_tipo_dia_visita_cta(texto)
+        dia = extraer_dia_visita(texto)
+        hora = extraer_hora_visita(texto)
+
+        if dia:
+            visita["dia"] = dia
+            estado["esperando_tipo_dia_visita_cta"] = False
+            if hora:
+                estado["esperando_jornada_visita_cta"] = False
+                estado["esperando_hora_visita_cta"] = False
+                persistir_cliente(numero)
+                return respuesta_visita(numero, texto, proyecto)
+            estado["esperando_jornada_visita_cta"] = True
+            persistir_cliente(numero)
+            return "Perfecto 😊 ¿Le quedaría mejor por la mañana o por la tarde?"
+
+        if tipo:
+            estado["esperando_tipo_dia_visita_cta"] = False
+            estado["esperando_dia_visita_cta"] = True
+            estado["tipo_dia_visita_cta"] = tipo
+            persistir_cliente(numero)
+            if tipo == "fin_semana":
+                return "Perfecto 😊 ¿Qué día le queda mejor, sábado o domingo?"
+            return "Perfecto 😊 ¿Qué día le queda mejor de lunes a viernes?"
+
+        return None
+
+    if estado.get("esperando_dia_visita_cta"):
+        dia = extraer_dia_visita(texto)
+        if not dia:
+            return None
+
+        visita["dia"] = dia
+        estado["esperando_dia_visita_cta"] = False
+
+        hora = extraer_hora_visita(texto)
+        if hora:
+            estado["esperando_jornada_visita_cta"] = False
+            estado["esperando_hora_visita_cta"] = False
+            persistir_cliente(numero)
+            return respuesta_visita(numero, texto, proyecto)
+
+        estado["esperando_jornada_visita_cta"] = True
+        persistir_cliente(numero)
+        return "Perfecto 😊 ¿Le quedaría mejor por la mañana o por la tarde?"
+
+    if estado.get("esperando_jornada_visita_cta"):
+        jornada = detectar_jornada_visita_cta(texto)
+        hora = extraer_hora_visita(texto)
+
+        if hora:
+            estado["esperando_jornada_visita_cta"] = False
+            estado["esperando_hora_visita_cta"] = False
+            persistir_cliente(numero)
+            return respuesta_visita(numero, texto, proyecto)
+
+        if not jornada:
+            return None
+
+        estado["jornada_visita_cta"] = jornada
+        estado["esperando_jornada_visita_cta"] = False
+        estado["esperando_hora_visita_cta"] = True
+        persistir_cliente(numero)
+        return f"Perfecto 😊 ¿Qué hora por la {jornada} le quedaría mejor?"
+
+    if estado.get("esperando_hora_visita_cta"):
+        if not extraer_hora_visita(texto):
+            return None
+        estado["esperando_hora_visita_cta"] = False
+        persistir_cliente(numero)
+        return respuesta_visita(numero, texto, proyecto)
+
+    return None
+
+
+def manejar_cta_buenaventura(numero, texto, proyecto, message_id):
+    """
+    Ejecuta las cuatro opciones del anuncio sin pasar por OpenAI.
+    Devuelve True si el mensaje fue atendido por este flujo.
+    """
+    accion = detectar_cta_buenaventura(texto)
+    if not accion:
+        return False
+
+    # Estos botones pertenecen a la campaña actual de Buenaventura.
+    estado = obtener_estado_conversacion(numero)
+    estado["proyecto_actual"] = "buenaventura"
+    proyecto_activo[numero] = "buenaventura"
+    proyecto = "buenaventura"
+    ultima_intencion[numero] = f"cta_buenaventura_{accion}"
+
+    guardar_mensaje(numero, "user", texto)
+
+    if accion == "precios_cuotas":
+        _limpiar_contextos_cta_buenaventura(numero)
+
+        primera = es_primera_consulta_comercial(numero)
+        # guardar_mensaje() ya añadió el mensaje actual; por eso, si el historial
+        # anterior estaba vacío, comprobamos también si todavía no se envió el paquete.
+        # Restamos el efecto del mensaje actual mirando cuántos mensajes de usuario reales hay.
+        usuarios_reales = [
+            x for x in obtener_historial(numero)
+            if x.get("role") == "user" and not es_solo_saludo(str(x.get("content") or ""))
+        ]
+        primera = (len(usuarios_reales) <= 1) and not info_completa_ya_enviada(numero, "buenaventura")
+
+        if primera:
+            estado["info_completa_enviada"] = True
+            estado["info_completa_proyecto"] = "buenaventura"
+            persistir_cliente(numero)
+
+            if procesamiento_sigue_vigente(numero, message_id):
+                enviar_info_completa_proyecto(numero, "buenaventura", cierre=False)
+                cierre = (
+                    "Para orientarle mejor 😊 ¿Qué cuota mensual aproximadamente "
+                    "le resultaría cómoda?"
+                )
+                enviar_whatsapp(numero, cierre)
+                guardar_mensaje(numero, "assistant", cierre)
+            return True
+
+        respuesta = respuesta_precio_breve_buenaventura()
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+        return True
+
+    if accion == "ubicacion":
+        _limpiar_contextos_cta_buenaventura(numero)
+        respuesta = respuesta_ubicacion_cta_buenaventura()
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+        return True
+
+    if accion == "lotes_disponibles":
+        _limpiar_contextos_cta_buenaventura(numero, conservar="esperando_uso_lote_cta")
+        estado["esperando_uso_lote_cta"] = True
+        persistir_cliente(numero)
+        respuesta = respuesta_lotes_disponibles_cta_buenaventura()
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+        return True
+
+    if accion == "agendar_visita":
+        _limpiar_contextos_cta_buenaventura(numero, conservar="esperando_tipo_dia_visita_cta")
+        estado["esperando_tipo_dia_visita_cta"] = True
+        estado_visitas[numero] = {
+            "dia": None,
+            "hora": None,
+            "proyecto": "buenaventura",
+            "cerrada": False,
+        }
+        persistir_cliente(numero)
+        respuesta = respuesta_visita_cta_buenaventura()
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+        return True
+
+    return False
+
+
+def manejar_seguimiento_cta_buenaventura(numero, texto, proyecto, message_id):
+    """Atiende respuestas cortas a preguntas que hizo uno de los botones."""
+    if proyecto != "buenaventura":
+        return False
+
+    respuesta = respuesta_seguimiento_visita_cta(numero, texto, proyecto)
+    if not respuesta:
+        respuesta = respuesta_seguimiento_uso_lote_buenaventura(numero, texto)
+    if not respuesta:
+        respuesta = respuesta_seguimiento_medida_lotes_buenaventura(numero, texto)
+
+    if not respuesta:
+        return False
+
+    guardar_mensaje(numero, "user", texto)
+    guardar_mensaje(numero, "assistant", respuesta)
+    if procesamiento_sigue_vigente(numero, message_id):
+        enviar_whatsapp(numero, respuesta)
+    return True
+
+
 # ============================================================
 # IDENTIFICACION DEL PROYECTO DESDE ANUNCIOS DE META / CLICK-TO-WHATSAPP
 # ============================================================
@@ -996,7 +1411,12 @@ def _mensaje_generico_de_anuncio(texto):
         "quiero informacion", "quiero información", "deseo informacion", "deseo información",
         "ubicacion", "ubicación", "precio", "precios", "cotizacion", "cotización",
         "me interesa", "estoy interesado", "estoy interesada", "hola quiero informacion",
-        "hola quiero información", "quiero saber mas", "quiero saber más"
+        "hola quiero información", "quiero saber mas", "quiero saber más",
+        # Nuevos botones de la campaña de Buenaventura Cuyotenango.
+        "quiero conocer precios y cuotas",
+        "quiero ver la ubicacion del proyecto",
+        "quiero conocer lotes disponibles",
+        "quiero agendar una visita"
     }
     return t in exactos
 
@@ -1221,7 +1641,19 @@ def obtener_estado_conversacion(numero):
             "multimedia_pendiente": False,
             "esperando_cantidad_descuento_contado": False,
             "esperando_disponibilidad_desde_cta": False,
-            "esperando_proyecto_despues_tres": False
+            "esperando_proyecto_despues_tres": False,
+            # Contexto de los botones de la campaña de Buenaventura.
+            "info_completa_enviada": False,
+            "info_completa_proyecto": None,
+            "esperando_uso_lote_cta": False,
+            "esperando_medida_lotes_cta": False,
+            "uso_lote_cta": None,
+            "esperando_tipo_dia_visita_cta": False,
+            "esperando_dia_visita_cta": False,
+            "esperando_jornada_visita_cta": False,
+            "esperando_hora_visita_cta": False,
+            "tipo_dia_visita_cta": None,
+            "jornada_visita_cta": None
         }
 
     return estado_conversacion[numero]
@@ -2771,6 +3203,13 @@ def enviar_info_completa_proyecto(numero, proyecto, cierre=True):
     if not proyecto:
         return
 
+    # Recordar que el cliente ya recibió el paquete completo para no repetirlo
+    # cuando más adelante vuelva a preguntar únicamente por precios.
+    estado = obtener_estado_conversacion(numero)
+    estado["info_completa_enviada"] = True
+    estado["info_completa_proyecto"] = proyecto
+    persistir_cliente(numero)
+
     resumen = construir_resumen_cotizacion(proyecto)
     if resumen:
         enviar_whatsapp(numero, resumen)
@@ -3848,6 +4287,18 @@ def _aplicar_snapshot(numero, snap):
     estado.setdefault("multimedia_pendiente", False)
     estado.setdefault("esperando_cantidad_descuento_contado", False)
     estado.setdefault("esperando_disponibilidad_desde_cta", False)
+    estado.setdefault("esperando_proyecto_despues_tres", False)
+    estado.setdefault("info_completa_enviada", False)
+    estado.setdefault("info_completa_proyecto", None)
+    estado.setdefault("esperando_uso_lote_cta", False)
+    estado.setdefault("esperando_medida_lotes_cta", False)
+    estado.setdefault("uso_lote_cta", None)
+    estado.setdefault("esperando_tipo_dia_visita_cta", False)
+    estado.setdefault("esperando_dia_visita_cta", False)
+    estado.setdefault("esperando_jornada_visita_cta", False)
+    estado.setdefault("esperando_hora_visita_cta", False)
+    estado.setdefault("tipo_dia_visita_cta", None)
+    estado.setdefault("jornada_visita_cta", None)
     estado_conversacion[numero] = estado
 
     if snap.get("ultima_intencion") is not None:
@@ -7891,6 +8342,30 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
             numero_cliente,
             texto_cliente
         )
+
+        # ========================================================
+        # BOTONES CONTROLADOS DE LA CAMPAÑA DE BUENAVENTURA
+        # ========================================================
+        # Tienen prioridad sobre todos los detectores generales y sobre OpenAI.
+        # Así "precios y cuotas", "ubicación", "lotes disponibles" y "agendar visita"
+        # siempre siguen el guion definido para esta campaña.
+        if manejar_cta_buenaventura(
+            numero_cliente,
+            texto_cliente,
+            proyecto,
+            message_id
+        ):
+            return
+
+        # Respuestas cortas a preguntas que hizo el flujo anterior:
+        # "para mi casa", "locales", "fin de semana", "sábado", "por la tarde", etc.
+        if manejar_seguimiento_cta_buenaventura(
+            numero_cliente,
+            texto_cliente,
+            proyecto,
+            message_id
+        ):
+            return
 
         # INFORMACIÓN DE LOS TRES PROYECTOS EN UNA SOLA CONSULTA
         # No obligamos al cliente a escoger antes si pidió explícitamente las 3 opciones.
