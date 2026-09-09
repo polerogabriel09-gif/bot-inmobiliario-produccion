@@ -1,3 +1,4 @@
+# VERSION_BUENAVENTURA_2_NUEVOS_IDS_20260908
 # VERSION_BUENAVENTURA_CTA_CONTROLADOS_20260908 - CTAs de anuncios + contexto de venta controlado
 # VERSION_BUENAVENTURA_NUEVA_CAMPANA_20260907
 # VERSION_PRECIOS_SIN_REPETIR_INFO_20260907
@@ -1376,12 +1377,16 @@ ANUNCIOS_META_PROYECTO = {
     "120248129659680634": "buenaventura",  # AD VID - 01 - BNV CUYO
     "120248129290310634": "buenaventura",  # AD IMG - 01 - BNV CUYO
 
-    # Buenaventura Cuyotenango - campaña actual (septiembre 2026)
+    # Buenaventura Cuyotenango - campaña anterior (se conserva como respaldo)
     "120248470171920634": "buenaventura",
     "120248470434590634": "buenaventura",
     "120248470398980634": "buenaventura",
     "120248470410070634": "buenaventura",
     "120248470403240634": "buenaventura",
+
+    # Buenaventura Cuyotenango - nueva campaña actual (septiembre 2026)
+    "120248487845740634": "buenaventura",
+    "120248488028640634": "buenaventura",
 
     # Palmeras San Miguel - anuncios actuales (agosto 2026)
     "120248361771430634": "palmeras",
