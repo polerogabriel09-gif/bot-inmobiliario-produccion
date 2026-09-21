@@ -1,3 +1,4 @@
+# VERSION_NUEVOS_ANUNCIOS_20260921
 # VERSION_BUENAVENTURA_2_NUEVOS_IDS_20260908
 # VERSION_BUENAVENTURA_CTA_CONTROLADOS_20260908 - CTAs de anuncios + contexto de venta controlado
 # VERSION_BUENAVENTURA_NUEVA_CAMPANA_20260907
@@ -1396,6 +1397,21 @@ ANUNCIOS_META_PROYECTO = {
     "120248361823610634": "palmeras",
     "120248362032520634": "palmeras",
     "120248362063450634": "palmeras",
+
+
+    # Vista Hermosa - campaña nueva septiembre 2026
+    "120248674470520634": "vista_hermosa",
+
+    # Palmeras San Miguel - campaña nueva septiembre 2026
+    "120248674098970634": "palmeras",
+    "120248673963430634": "palmeras",
+    "120248673718320634": "palmeras",
+
+    # Buenaventura Cuyotenango - campaña nueva septiembre 2026
+    "120248674333730634": "buenaventura",
+    "120248674412860634": "buenaventura",
+    "120248674277790634": "buenaventura",
+    "120248674320740634": "buenaventura",
 
     # Vista Hermosa
     "120248129777940634": "vista_hermosa",  # AD VID - 01 - VTH
