@@ -1,4 +1,4 @@
-# VERSION_AGRUPACION_MENSAJES_8S_20260924 - espera 8s, agrupa mensajes y procesa tandas secuenciales
+# VERSION_MULTIINTENCION_MENSAJES_8S_20260924 - agrupa 8s y atiende varias solicitudes del mismo bloque
 # VERSION_NUEVOS_ANUNCIOS_20260921
 # VERSION_BUENAVENTURA_2_NUEVOS_IDS_20260908
 # VERSION_BUENAVENTURA_CTA_CONTROLADOS_20260908 - CTAs de anuncios + contexto de venta controlado
@@ -8361,6 +8361,183 @@ def _worker_bloques_texto(numero):
             ).start()
 
 
+
+# ============================================================
+# CONSULTAS MULTIPLES EN UN MISMO BLOQUE
+# ============================================================
+
+def _pide_ubicacion_directa_multi(texto):
+    """
+    Para el coordinador multi-intencion evitamos confundir "mapa/plano del
+    proyecto" con una solicitud de Google Maps.
+    """
+    t = normalizar_ventas(texto)
+    frases = [
+        "ubicacion", "donde queda", "como llego", "direccion",
+        "google maps", "maps", "mandame ubicacion", "manda ubicacion"
+    ]
+    return any(x in t for x in frases)
+
+
+def manejar_intenciones_multiples(numero, texto, proyecto, message_id):
+    """
+    Atiende varias solicitudes que llegaron juntas durante la ventana de 8 s.
+
+    Antes, el procesador usaba una cadena de `if ... return`: al encontrar por
+    ejemplo "ubicacion", respondia eso y ya no alcanzaba a procesar "precios".
+    Este coordinador detecta varias intenciones independientes y las ejecuta en
+    la misma tanda sin alterar el comportamiento normal cuando solo hay una.
+    """
+    texto = str(texto or "").strip()
+    if not texto:
+        return False
+
+    # Intenciones especializadas de dinero. Evitamos contar dos veces la misma
+    # pregunta (por ejemplo, "enganche" tambien puede coincidir con cotizacion).
+    quiere_enganche = pregunta_enganche(texto)
+    quiere_cuota = pregunta_cuota_especifica(texto)
+    quiere_medidas = pregunta_medidas_disponibles(texto)
+
+    quiere_precio = False
+    if not quiere_enganche and not quiere_cuota:
+        quiere_precio = (
+            es_consulta_general_de_precio(texto)
+            or debe_enviar_cotizacion_directa(numero, texto)
+        )
+
+    quiere_plano = pide_plano(texto)
+    quiere_ubicacion = _pide_ubicacion_directa_multi(texto)
+    quiere_multimedia = pide_fotos(texto) or pide_videos(texto)
+    quiere_requisitos = cliente_en_extranjero(texto) or pide_requisitos_compra(texto)
+    quiere_gastos = pide_gastos_adicionales(texto)
+    quiere_visita = detectar_intencion_visita(texto)
+
+    intenciones = [
+        nombre for nombre, activa in [
+            ("enganche", quiere_enganche),
+            ("cuota", quiere_cuota),
+            ("medidas", quiere_medidas),
+            ("precio", quiere_precio),
+            ("ubicacion", quiere_ubicacion),
+            ("plano", quiere_plano),
+            ("multimedia", quiere_multimedia),
+            ("requisitos", quiere_requisitos),
+            ("gastos", quiere_gastos),
+            ("visita", quiere_visita),
+        ] if activa
+    ]
+
+    # Con una sola intención dejamos trabajar exactamente al flujo anterior.
+    if len(intenciones) < 2:
+        return False
+
+    print("\n========================================")
+    print("CONSULTA MULTI-INTENCION")
+    print("========================================")
+    print("CLIENTE:", numero)
+    print("INTENCIONES:", ", ".join(intenciones))
+
+    # Calcular esto ANTES de guardar el bloque actual. De lo contrario el propio
+    # bloque se contaría como una consulta comercial anterior.
+    primera_consulta_comercial = es_primera_consulta_comercial(numero)
+
+    guardar_mensaje(numero, "user", texto)
+
+    # Si esta es la primera consulta comercial y pidió precio, usamos el paquete
+    # completo existente. Ese paquete YA contiene ubicación, cotizaciones y
+    # material visual, así que no los repetimos después.
+    paquete_completo_enviado = False
+    if quiere_precio and es_consulta_general_de_precio(texto) and primera_consulta_comercial:
+        if procesamiento_sigue_vigente(numero, message_id):
+            if proyecto:
+                enviar_info_completa_proyecto(numero, proyecto, cierre=True)
+                paquete_completo_enviado = True
+            else:
+                enviar_whatsapp(
+                    numero,
+                    "¡Claro! 😊 ¿De cuál proyecto desea conocer los precios y la información?"
+                )
+        # Si no sabemos el proyecto, no podemos ejecutar correctamente el resto.
+        if not proyecto:
+            guardar_mensaje(
+                numero,
+                "assistant",
+                "Se pidió confirmar el proyecto para atender varias solicitudes."
+            )
+            return True
+
+    # Dinero / cotizaciones cuando no se mandó ya el paquete completo.
+    if not paquete_completo_enviado:
+        if quiere_enganche:
+            respuesta = respuesta_enganche(proyecto, texto)
+            if respuesta and procesamiento_sigue_vigente(numero, message_id):
+                enviar_whatsapp(numero, respuesta)
+
+        if quiere_cuota:
+            respuesta = respuesta_cuota_especifica(proyecto, texto)
+            if respuesta and procesamiento_sigue_vigente(numero, message_id):
+                enviar_whatsapp(numero, respuesta)
+
+        if quiere_medidas:
+            respuesta = respuesta_medidas_disponibles(proyecto)
+            if respuesta and procesamiento_sigue_vigente(numero, message_id):
+                enviar_whatsapp(numero, respuesta)
+
+        if quiere_precio:
+            if es_consulta_general_de_precio(texto):
+                respuesta = respuesta_precio_breve_con_intencion(proyecto)
+                if respuesta and procesamiento_sigue_vigente(numero, message_id):
+                    enviar_whatsapp(numero, respuesta)
+            else:
+                if procesamiento_sigue_vigente(numero, message_id):
+                    enviar_cotizacion_del_proyecto(
+                        numero,
+                        proyecto,
+                        detectar_medida_en_texto(texto)
+                    )
+
+    # El paquete completo ya incluye ubicación y fotos/videos; no duplicarlos.
+    if quiere_ubicacion and not paquete_completo_enviado:
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_ubicacion_proyecto(numero, proyecto)
+
+    if quiere_plano:
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_planos_solicitados(numero, proyecto, texto)
+
+    if quiere_multimedia and not paquete_completo_enviado:
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_multimedia_del_proyecto(
+                numero,
+                proyecto,
+                enviar_fotos=True,
+                enviar_videos=True
+            )
+
+    if quiere_requisitos:
+        respuesta = respuesta_requisitos_segun_contexto(numero, texto)
+        if respuesta and procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+
+    if quiere_gastos:
+        respuesta = respuesta_gastos_adicionales(proyecto)
+        if respuesta and procesamiento_sigue_vigente(numero, message_id):
+            ultima_intencion[numero] = "gastos_adicionales"
+            enviar_whatsapp(numero, respuesta)
+
+    if quiere_visita and not cita_ya_cerrada(numero):
+        respuesta = respuesta_visita(numero, texto, proyecto)
+        if respuesta and procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+
+    guardar_mensaje(
+        numero,
+        "assistant",
+        "Atendí en la misma respuesta estas solicitudes: " + ", ".join(intenciones) + "."
+    )
+    return True
+
+
 # ============================================================
 # RECIBIR MENSAJES DE WHATSAPP
 # ============================================================
@@ -8504,6 +8681,17 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
             numero_cliente,
             texto_cliente
         )
+
+        # Si el cliente envió varias preguntas seguidas (o una sola frase con
+        # varias solicitudes), las atendemos TODAS antes de entrar a los flujos
+        # de una sola intención que terminan con `return`.
+        if manejar_intenciones_multiples(
+            numero_cliente,
+            texto_cliente,
+            proyecto,
+            message_id
+        ):
+            return
 
         # ========================================================
         # BOTONES CONTROLADOS DE LA CAMPAÑA DE BUENAVENTURA
