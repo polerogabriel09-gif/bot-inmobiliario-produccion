@@ -1,3 +1,4 @@
+# VERSION_AGRUPACION_MENSAJES_8S_20260924 - espera 8s, agrupa mensajes y procesa tandas secuenciales
 # VERSION_NUEVOS_ANUNCIOS_20260921
 # VERSION_BUENAVENTURA_2_NUEVOS_IDS_20260908
 # VERSION_BUENAVENTURA_CTA_CONTROLADOS_20260908 - CTAs de anuncios + contexto de venta controlado
@@ -5188,9 +5189,10 @@ def recibir_webhook_facebook():
                     media_tipo=media_tipo_crm
                 )
 
-                # 2) Igual que WhatsApp: cancelar seguimiento y marcar este mensaje vigente.
+                # 2) Igual que WhatsApp: cancelar cualquier seguimiento pendiente.
+                # Los textos se agrupan abajo; NO invalidamos una tanda que ya
+                # esté siendo respondida.
                 cancelar_seguimiento(contacto)
-                iniciar_procesamiento(contacto, dedupe_id)
 
                 # 3) Texto/postback/referral entra al MISMO motor de WhatsApp.
                 texto_real = str(mensaje_fb.get("text") or "").strip()
@@ -5217,22 +5219,9 @@ def recibir_webhook_facebook():
                         mensaje_equivalente
                     )
 
-                    datos_equivalentes = {
-                        "object": "whatsapp_business_account",
-                        "entry": [{
-                            "changes": [{
-                                "value": {
-                                    "messages": [mensaje_equivalente]
-                                }
-                            }]
-                        }]
-                    }
-
-                    Thread(
-                        target=procesar_mensaje_en_segundo_plano,
-                        args=(datos_equivalentes, dedupe_id),
-                        daemon=True
-                    ).start()
+                    # El agrupador inicia y administra el único worker de texto
+                    # para este contacto. Si llegan más mensajes mientras el bot
+                    # responde, quedarán como una segunda tanda.
                 else:
                     # Los adjuntos ya quedan visibles en CRM. No intentamos tratarlos como
                     # media de WhatsApp porque Messenger entrega otra estructura.
@@ -8181,48 +8170,195 @@ def programar_seguimiento_inactividad(numero):
 # AGRUPAR MENSAJES SEGUIDOS DEL CLIENTE
 # ============================================================
 
-ESPERA_BLOQUE_MENSAJES_SEGUNDOS = 5
+# Esperamos 8 segundos DE SILENCIO desde el último mensaje de texto.
+# Cada mensaje nuevo reinicia de forma natural la ventana porque el worker
+# vuelve a calcular el tiempo restante usando la hora del último mensaje.
+ESPERA_BLOQUE_MENSAJES_SEGUNDOS = 8
+MAX_MENSAJES_POR_BLOQUE = 20
+
+# numero -> [{"id", "texto", "mensaje", "recibido_en"}, ...]
 mensajes_texto_pendientes = {}
+# Números que ya tienen un worker encargado de sus mensajes.
+workers_texto_activos = set()
 lock_mensajes_texto_pendientes = Lock()
 
 
-def acumular_mensaje_texto(numero, message_id, mensaje):
-    """Guarda temporalmente mensajes de texto consecutivos del mismo cliente."""
-    if not numero or not message_id or not mensaje or mensaje.get("type") != "text":
-        return
+def _texto_de_mensaje(mensaje):
+    if not mensaje or mensaje.get("type") != "text":
+        return ""
+    return str((mensaje.get("text") or {}).get("body") or "").strip()
 
-    texto = (mensaje.get("text") or {}).get("body", "").strip()
+
+def acumular_mensaje_texto(numero, message_id, mensaje):
+    """
+    Encola un mensaje de texto y garantiza UN solo worker por cliente.
+
+    El worker:
+    - espera 8 s desde el último mensaje;
+    - une todos los textos de la tanda en orden;
+    - procesa la tanda como una sola entrada;
+    - si llegan más mensajes mientras el bot responde, los deja para una
+      segunda tanda y NO los pierde.
+    """
+    if not numero or not message_id or not mensaje:
+        return False
+
+    texto = _texto_de_mensaje(mensaje)
     if not texto:
-        return
+        return False
+
+    iniciar_worker = False
 
     with lock_mensajes_texto_pendientes:
         lista = mensajes_texto_pendientes.setdefault(numero, [])
-        lista.append({"id": message_id, "texto": texto})
+        lista.append({
+            "id": message_id,
+            "texto": texto,
+            # Copia superficial suficiente: solo necesitamos los campos del
+            # mensaje para construir luego un payload de texto equivalente.
+            "mensaje": dict(mensaje),
+            "recibido_en": time.monotonic(),
+        })
 
-        if len(lista) > 20:
-            mensajes_texto_pendientes[numero] = lista[-20:]
+        # Protección de RAM ante una conversación anormalmente larga.
+        if len(lista) > MAX_MENSAJES_POR_BLOQUE:
+            mensajes_texto_pendientes[numero] = lista[-MAX_MENSAJES_POR_BLOQUE:]
+
+        if numero not in workers_texto_activos:
+            workers_texto_activos.add(numero)
+            iniciar_worker = True
+
+    if iniciar_worker:
+        Thread(
+            target=_worker_bloques_texto,
+            args=(numero,),
+            daemon=True
+        ).start()
+
+    return True
 
 
-def esperar_y_obtener_bloque_texto(numero, message_id):
-    """Espera 5 segundos desde el último texto y devuelve el bloque completo."""
-    time.sleep(ESPERA_BLOQUE_MENSAJES_SEGUNDOS)
-
-    if not procesamiento_sigue_vigente(numero, message_id):
-        return None
-
-    with lock_mensajes_texto_pendientes:
-        pendientes = mensajes_texto_pendientes.pop(numero, [])
-
+def _construir_payload_bloque_texto(numero, pendientes):
+    """Crea un payload compatible con el procesador existente usando toda la tanda."""
     textos = [
-        item.get("texto", "").strip()
+        str(item.get("texto") or "").strip()
         for item in pendientes
-        if item.get("texto", "").strip()
+        if str(item.get("texto") or "").strip()
     ]
 
     if not textos:
-        return None
+        return None, None
 
-    return "\n".join(textos)
+    ultimo = pendientes[-1]
+    message_id = ultimo.get("id")
+    mensaje_base = dict(ultimo.get("mensaje") or {})
+    mensaje_base["from"] = numero
+    mensaje_base["id"] = message_id
+    mensaje_base["type"] = "text"
+    mensaje_base["text"] = {"body": "\n".join(textos)}
+    # Marca interna: indica que el texto YA pasó por el agrupador.
+    mensaje_base["_texto_agrupado"] = True
+
+    datos_bloque = {
+        "object": "whatsapp_business_account",
+        "entry": [{
+            "changes": [{
+                "value": {
+                    "messages": [mensaje_base]
+                }
+            }]
+        }]
+    }
+
+    return datos_bloque, message_id
+
+
+def _worker_bloques_texto(numero):
+    """
+    Worker secuencial por cliente.
+
+    Mientras este worker procesa una tanda, los mensajes nuevos continúan
+    acumulándose. Al terminar, vuelve al principio y procesa la siguiente tanda.
+    De esta forma no existen dos respuestas del bot compitiendo para el mismo
+    cliente y no se descartan mensajes que llegaron mientras la IA respondía.
+    """
+    try:
+        while True:
+            # 1) Esperar hasta completar 8 s de silencio real.
+            while True:
+                with lock_mensajes_texto_pendientes:
+                    pendientes_actuales = mensajes_texto_pendientes.get(numero) or []
+
+                    if not pendientes_actuales:
+                        workers_texto_activos.discard(numero)
+                        return
+
+                    recibido_en = pendientes_actuales[-1].get("recibido_en", time.monotonic())
+
+                restante = ESPERA_BLOQUE_MENSAJES_SEGUNDOS - (
+                    time.monotonic() - recibido_en
+                )
+
+                if restante <= 0:
+                    break
+
+                # Dormimos como máximo 1 s para reaccionar con precisión si
+                # llega otro mensaje y la ventana debe extenderse.
+                time.sleep(min(restante, 1.0))
+
+            # 2) Sacar SOLO la tanda que quedó lista. Los mensajes nuevos que
+            # lleguen desde este punto se guardarán en una lista nueva.
+            with lock_mensajes_texto_pendientes:
+                pendientes = mensajes_texto_pendientes.pop(numero, [])
+
+            if not pendientes:
+                continue
+
+            datos_bloque, message_id = _construir_payload_bloque_texto(
+                numero,
+                pendientes
+            )
+
+            if not datos_bloque or not message_id:
+                continue
+
+            textos_debug = [p.get("texto", "") for p in pendientes]
+            print("\n========================================")
+            print("BLOQUE DE MENSAJES LISTO")
+            print("========================================")
+            print("CLIENTE:", numero)
+            print("MENSAJES AGRUPADOS:", len(textos_debug))
+            print("TEXTO AGRUPADO:")
+            print("\n".join(textos_debug))
+
+            # Este batch pasa a ser el procesamiento vigente. Los mensajes de
+            # texto que lleguen mientras se responde NO cambian este id; quedan
+            # esperando para la siguiente vuelta del worker.
+            iniciar_procesamiento(numero, message_id)
+            procesar_mensaje_en_segundo_plano(datos_bloque, message_id)
+
+            # 3) Al volver del procesador repetimos el ciclo. Si durante la
+            # respuesta entraron nuevos mensajes, serán la siguiente tanda.
+
+    except Exception as error:
+        print("ERROR EN WORKER DE MENSAJES AGRUPADOS:", numero, error)
+
+    finally:
+        # Liberación segura. Si un mensaje entró justo antes de liberar el worker,
+        # arrancamos uno nuevo para que jamás quede una cola huérfana.
+        reiniciar = False
+        with lock_mensajes_texto_pendientes:
+            workers_texto_activos.discard(numero)
+            if mensajes_texto_pendientes.get(numero):
+                workers_texto_activos.add(numero)
+                reiniciar = True
+
+        if reiniciar:
+            Thread(
+                target=_worker_bloques_texto,
+                args=(numero,),
+                daemon=True
+            ).start()
 
 
 # ============================================================
@@ -8251,12 +8387,17 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
         fijar_proyecto_desde_anuncio(numero_cliente, mensaje)
 
         if tipo_mensaje == "text":
-            texto_agrupado = esperar_y_obtener_bloque_texto(
-                numero_cliente,
-                message_id
-            )
+            # Los textos llegan aquí YA agrupados por el worker de 8 segundos.
+            # Si alguna ruta interna llama este procesador con un texto normal,
+            # seguimos siendo compatibles y usamos el body tal cual.
+            texto_agrupado = str(
+                (mensaje.get("text") or {}).get("body") or ""
+            ).strip()
 
-            if texto_agrupado is None:
+            if not texto_agrupado:
+                return
+
+            if not procesamiento_sigue_vigente(numero_cliente, message_id):
                 print("PROCESAMIENTO ANTIGUO CANCELADO:", message_id)
                 return
         else:
@@ -9159,40 +9300,41 @@ def recibir_webhook():
                 # 2) Cancelar seguimiento pendiente.
                 cancelar_seguimiento(numero_cliente)
 
-                # 3) Este mensaje pasa a ser el procesamiento vigente.
-                iniciar_procesamiento(
-                    numero_cliente,
-                    message_id
-                )
+                # 3) Los mensajes de TEXTO pasan al agrupador de 8 segundos.
+                # No arrancamos un Thread por cada texto: un solo worker por
+                # cliente espera el silencio, agrupa la tanda y la procesa.
+                if mensaje.get("type") == "text":
+                    acumular_mensaje_texto(
+                        numero_cliente,
+                        message_id,
+                        mensaje
+                    )
+                else:
+                    # Audio, imagen, video u otro tipo conservan el flujo inmediato.
+                    iniciar_procesamiento(
+                        numero_cliente,
+                        message_id
+                    )
 
-                acumular_mensaje_texto(
-                    numero_cliente,
-                    message_id,
-                    mensaje
-                )
-
-                # Construimos un payload individual para reutilizar
-                # el procesador existente sin hacerle creer que solo
-                # existe el primer elemento de un webhook agrupado.
-                datos_individuales = {
-                    "object": datos.get("object"),
-                    "entry": [{
-                        **datos["entry"][0],
-                        "changes": [{
-                            **datos["entry"][0]["changes"][0],
-                            "value": {
-                                **value,
-                                "messages": [mensaje]
-                            }
+                    datos_individuales = {
+                        "object": datos.get("object"),
+                        "entry": [{
+                            **datos["entry"][0],
+                            "changes": [{
+                                **datos["entry"][0]["changes"][0],
+                                "value": {
+                                    **value,
+                                    "messages": [mensaje]
+                                }
+                            }]
                         }]
-                    }]
-                }
+                    }
 
-                Thread(
-                    target=procesar_mensaje_en_segundo_plano,
-                    args=(datos_individuales, message_id),
-                    daemon=True
-                ).start()
+                    Thread(
+                        target=procesar_mensaje_en_segundo_plano,
+                        args=(datos_individuales, message_id),
+                        daemon=True
+                    ).start()
 
             except Exception as error_mensaje:
                 print(
