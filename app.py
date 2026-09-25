@@ -1,3 +1,4 @@
+# VERSION_FORMATO_VISUAL_GLOBAL_PALMERAS_20260925 - respuestas mas faciles de leer con saltos, negritas y emojis
 # VERSION_AJUSTES_CONVERSACION_PALMERAS_20260925 - cierres lógicos, cambios de fase naturales, sin firma y gestor USA
 # VERSION_PALMERAS_VISITAS_NATURALES_20260925 - reconoce dia+hora natural y evita preguntas redundantes
 # VERSION_PRIORIDADES_INTENCION_Y_SIN_ECO_20260925 - giros libres + no repetir pregunta del cliente
@@ -8579,8 +8580,90 @@ def _palmeras_pregunta_disponibilidad(texto):
     ])
 
 
+def _palmeras_formatear_visual(texto):
+    """Da formato de WhatsApp sin cambiar el contenido comercial de la respuesta."""
+    texto = str(texto or "").strip()
+    if not texto:
+        return texto
+
+    # Corrige dobles asteriscos accidentales: WhatsApp usa un solo asterisco.
+    texto = texto.replace("**", "*")
+
+    # Resalta cifras/datos muy frecuentes cuando la IA los dejó en texto plano.
+    patrones_negrita = [
+        r"(?<!\*)Q\s?\d[\d,]*(?:\.\d{1,2})?(?!\*)",
+        r"(?<!\*)\d{1,3}%(?!\*)",
+        r"(?<!\*)\b2\s+a\s+8\s+años\b(?!\*)",
+        r"(?<!\*)\b11\s+cuotas\b(?!\*)",
+        r"(?<!\*)\b15\s+días\b(?!\*)",
+        r"(?<!\*)\bFase\s+[12]\b(?!\*)",
+    ]
+    for patron in patrones_negrita:
+        texto = re.sub(patron, lambda m: f"*{m.group(0)}*", texto, flags=re.IGNORECASE)
+
+    # Separa bloques muy largos. No reescribe ni agrega hechos; solo hace respirar el texto.
+    parrafos_originales = [p.strip() for p in re.split(r"\n\s*\n", texto) if p.strip()]
+    parrafos = []
+    for p in parrafos_originales:
+        # Conserva listas ya bien formateadas y preguntas finales.
+        lineas = [ln.strip() for ln in p.splitlines() if ln.strip()]
+        if len(lineas) > 1 or (p.startswith(("✅", "💳", "💰", "🔑", "📍", "🏡", "💧", "⚡", "🌳", "🏊", "📄", "•", "-"))):
+            parrafos.append("\n".join(lineas))
+            continue
+        if len(p) <= 235 or p.endswith("?"):
+            parrafos.append(p)
+            continue
+        oraciones = [x.strip() for x in re.split(r"(?<=[.!?])\s+", p) if x.strip()]
+        bloque = []
+        largo = 0
+        for oracion in oraciones:
+            if bloque and (len(bloque) >= 2 or largo + len(oracion) > 220):
+                parrafos.append(" ".join(bloque))
+                bloque = []
+                largo = 0
+            bloque.append(oracion)
+            largo += len(oracion) + 1
+        if bloque:
+            parrafos.append(" ".join(bloque))
+
+    # Añade un emoji visual SOLO a párrafos informativos sin emoji previo.
+    def emoji_para(p):
+        if re.search(r"[😀-🙏🌀-🫿]", p):
+            return ""
+        n = normalizar_ventas(p)
+        if "reserva" in n or "apartar" in n:
+            return "🔑 "
+        if "ubicacion" in n or "zona 5" in n or "camino a la verde" in n:
+            return "📍 "
+        if "agua" in n or "pozo" in n:
+            return "💧 "
+        if "energia" in n or "electric" in n:
+            return "⚡ "
+        if "constru" in n or "urbanizacion" in n:
+            return "🏗️ "
+        if "piscina" in n or "amenidad" in n or "area verde" in n:
+            return "🏡 "
+        if any(k in n for k in ["financiamiento", "interes", "cuota", "enganche", "abono", "saldo", "contado", "pago"]):
+            return "💰 "
+        if "escrit" in n or "document" in n or "dpi" in n or "pasaporte" in n:
+            return "📄 "
+        return ""
+
+    resultado = []
+    for p in parrafos:
+        # No anteponer emoji a una pregunta final; mantenerla limpia y cálida.
+        if p.rstrip().endswith("?") or p.lstrip().startswith("*") and p.rstrip().endswith("?*"):
+            resultado.append(p)
+            continue
+        prefijo = emoji_para(p)
+        resultado.append(prefijo + p if prefijo else p)
+
+    return "\n\n".join(resultado).strip()
+
+
 def _palmeras_enviar_y_recordar(numero, texto):
     texto = formalizar_trato_usted(texto)
+    texto = _palmeras_formatear_visual(texto)
     enviar_whatsapp(numero, texto)
     guardar_mensaje(numero, "assistant", texto)
     return texto
@@ -9266,6 +9349,9 @@ REGLAS DE CONVERSACIÓN:
 - No ofrezca ejecutar acciones que el sistema no puede realizar directamente, como cobrar, registrar pagos o aplicar abonos.
 - Una pregunta técnica o informativa NO es por sí sola una señal para pedir visita. Responda y deje respirar la conversación.
 - FORMATO VISUAL OBLIGATORIO: haga que cada respuesta informativa sea fácil y agradable de leer en WhatsApp.
+- NUNCA entregue un bloque largo con varios datos pegados. Separe por temas con líneas en blanco: por ejemplo financiamiento, abonos, reserva, servicios, ubicación o construcción.
+- Si una respuesta contiene 3 o más datos concretos, organícelos visualmente en líneas cortas o pequeños bloques. El cliente debe poder localizar montos, plazos y condiciones en segundos desde el celular.
+- Use emojis como señales visuales, no solo como decoración: 💳 financiamiento, 💰 montos/abonos, 🔑 reserva, 📍 ubicación, 💧 agua, ⚡ energía, 🏡 proyecto/amenidades, 📄 documentos.
 - Use *negritas de WhatsApp* con UN solo asterisco para destacar de 2 a 5 datos realmente importantes: precios, montos, plazos, nombres de fase, servicios o restricciones relevantes. No use **doble asterisco**.
 - Use normalmente entre 2 y 5 emojis naturales por respuesta cuando el contenido lo permita. Reparta los emojis con intención (por ejemplo 🏡 💰 💧 ✅ 📍 🌳), sin poner uno al final de cada oración ni saturar el mensaje.
 - Cuando enumere 3 o más características o servicios, prefiera una lista breve y visual con viñetas o emojis, en lugar de un párrafo pesado.
