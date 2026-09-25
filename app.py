@@ -1,3 +1,4 @@
+# VERSION_VISITA_COMPLETA_PUNTO_ABIERTA_PALMERAS_20260925 - visita día+hora+punto, conversación siempre abierta
 # VERSION_ALERTAS_CRM_RESERVA_VISITA_PALMERAS_20260925 - alertas comerciales + entrada de reserva progresiva
 # VERSION_RELEVANCIA_RESPUESTA_PALMERAS_20260925 - responde solo lo pedido y evita informacion correcta pero innecesaria
 # VERSION_ESTADO_COMERCIAL_PERSISTENTE_PALMERAS_20260925 - visita/reserva no cierran la conversación; dudas conocidas siguen y desconocidas escalan
@@ -1760,6 +1761,7 @@ def obtener_estado_conversacion(numero):
             "palmeras_visita_agendada": False,
             "palmeras_visita_dia": None,
             "palmeras_visita_hora": None,
+            "palmeras_visita_punto": None,
             "palmeras_reserva_en_curso": False,
             "palmeras_reserva_fase": None,
             "palmeras_alerta_visita_enviada": False,
@@ -8328,7 +8330,9 @@ GASTOS ADICIONALES (solo si el cliente pregunta):
 VISITAS:
 - Se puede visitar cualquier día, incluidos días festivos.
 - Horario permitido: 6:00 AM a 5:00 PM.
-- Si hace falta sugerir punto de encuentro: directamente en Palmeras San Miguel o Centro Comercial La Trinidad.
+- Puntos de encuentro permitidos: directamente en Palmeras San Miguel o Centro Comercial La Trinidad.
+- Una visita queda completamente coordinada cuando ya existen día/fecha, hora y punto de encuentro.
+- Después de coordinar la visita, la conversación sigue totalmente abierta: el cliente puede preguntar precios, pagos, servicios, fases, construcción, requisitos, reserva o cualquier otra duda. Responder cada duda normalmente sin volver a ofrecer otra visita.
 - Nunca confirmar disponibilidad de un lote específico sin consultarla.
 """.strip()
 
@@ -8350,6 +8354,7 @@ def _estado_palmeras(numero):
         "palmeras_visita_agendada": False,
         "palmeras_visita_dia": None,
         "palmeras_visita_hora": None,
+        "palmeras_visita_punto": None,
         "palmeras_reserva_en_curso": False,
         "palmeras_reserva_fase": None,
         "palmeras_alerta_visita_enviada": False,
@@ -9206,11 +9211,54 @@ def _palmeras_hora_valida(texto_o_hora):
     return (hh, mm) >= (6, 0) and (hh, mm) <= (17, 0)
 
 
+def _palmeras_detectar_punto_visita(texto):
+    """Detecta una elección explícita de uno de los dos puntos autorizados."""
+    original = str(texto or "").strip()
+    t = normalizar_ventas(original).strip()
+    if not t:
+        return None
+
+    # Evitamos tomar una pregunta lateral sobre un lugar como si fuera una elección.
+    # Ej.: "¿qué tan lejos está La Trinidad?" debe responderse, no cerrar la cita.
+    es_pregunta = "?" in original or "¿" in original
+
+    opciones_trinidad = {
+        "la trinidad", "centro comercial la trinidad", "cc la trinidad",
+        "en la trinidad", "en centro comercial la trinidad",
+    }
+    opciones_proyecto = {
+        "en el proyecto", "directo al proyecto", "directamente en el proyecto",
+        "directo en el proyecto", "en palmeras", "directo en palmeras",
+        "en palmeras san miguel", "directamente en palmeras san miguel",
+    }
+
+    if not es_pregunta and t in opciones_trinidad:
+        return "Centro Comercial La Trinidad"
+    if not es_pregunta and t in opciones_proyecto:
+        return "Palmeras San Miguel"
+
+    if not es_pregunta and any(x in t for x in [
+        "prefiero la trinidad", "me queda mejor la trinidad", "nos vemos en la trinidad",
+        "quedemos en la trinidad", "nos juntamos en la trinidad",
+    ]):
+        return "Centro Comercial La Trinidad"
+
+    if not es_pregunta and any(x in t for x in [
+        "prefiero el proyecto", "me queda mejor el proyecto", "nos vemos en el proyecto",
+        "quedemos en el proyecto", "nos juntamos en el proyecto",
+        "prefiero palmeras", "nos vemos en palmeras",
+    ]):
+        return "Palmeras San Miguel"
+
+    return None
+
+
 def _palmeras_mensaje_aporta_dato_visita(texto):
     """Sirve para continuar una cita sin exigir que repita 'quiero visitar'."""
     return bool(
         _palmeras_extraer_dia_fecha_visita(texto)
         or _palmeras_extraer_hora_natural(texto)
+        or _palmeras_detectar_punto_visita(texto)
     )
 
 
@@ -9220,14 +9268,16 @@ def _palmeras_manejar_visita(numero, texto):
 
     estado = estado_visitas.setdefault(
         numero,
-        {"dia": None, "hora": None, "proyecto": "palmeras", "cerrada": False},
+        {"dia": None, "hora": None, "punto": None, "proyecto": "palmeras", "cerrada": False},
     )
+    estado.setdefault("punto", None)
     estado["proyecto"] = "palmeras"
 
     dia = _palmeras_extraer_dia_fecha_visita(texto)
     hora = _palmeras_extraer_hora_natural(texto)
+    punto = _palmeras_detectar_punto_visita(texto)
 
-    # Cada dato nuevo sustituye el anterior; esto permite cambiar día/hora naturalmente.
+    # Cada dato nuevo sustituye el anterior; esto permite cambiar día, hora o punto naturalmente.
     if dia:
         estado["dia"] = dia
         estado["cerrada"] = False
@@ -9245,18 +9295,23 @@ def _palmeras_manejar_visita(numero, texto):
             return (
                 f"Claro 😊 A las *{hora}* ya no tenemos horario de atención para visitas. "
                 "Podemos coordinar entre *6:00 AM y 5:00 PM*.\n\n"
-                "¿Qué otra hora dentro de ese horario le quedaría bien?"
+                "*¿Qué otra hora dentro de ese horario le quedaría bien?*"
             ), False
         estado["hora"] = hora
         estado["cerrada"] = False
 
-    # Si el cliente ya dio día/fecha Y hora, no se vuelve a pedir ninguno de los dos.
-    if estado.get("dia") and estado.get("hora"):
+    if punto:
+        estado["punto"] = punto
+        estado["cerrada"] = False
+
+    # La cita solo queda completamente coordinada con día + hora + punto.
+    if estado.get("dia") and estado.get("hora") and estado.get("punto"):
         estado["cerrada"] = True
+        detalle = f"{estado['dia']} {estado['hora']} · {estado['punto']}"
         _palmeras_marcar_crm(
             numero,
             "Visita pendiente",
-            f"Visita Palmeras: {estado['dia']} {estado['hora']}",
+            f"✅ Visita Palmeras: {detalle}",
         )
         _actualizar_estado_palmeras(
             numero,
@@ -9264,52 +9319,81 @@ def _palmeras_manejar_visita(numero, texto):
             palmeras_visita_agendada=True,
             palmeras_visita_dia=estado.get("dia"),
             palmeras_visita_hora=estado.get("hora"),
+            palmeras_visita_punto=estado.get("punto"),
             palmeras_esperando_cliente=False,
             palmeras_pregunta_pendiente=None,
         )
-        _palmeras_alertar_interes_comercial(
+        _palmeras_alertar_interes_comercial(numero, "visita_agendada", detalle)
+        return (
+            "¡Perfecto! 😊 Su visita a *Palmeras San Miguel* queda coordinada así:\n\n"
+            f"📅 *{estado['dia']}*\n"
+            f"🕙 *{estado['hora']}*\n"
+            f"📍 *{estado['punto']}*\n\n"
+            "Con gusto estaré pendiente para atenderle 🏡✨\n\n"
+            "Si antes de su visita le surge cualquier duda sobre precios, formas de pago, servicios, fases o el proyecto, puede escribirme con confianza 😊."
+        ), True
+
+    # Si ya tenemos día + hora, falta únicamente el punto de encuentro.
+    if estado.get("dia") and estado.get("hora"):
+        _palmeras_marcar_crm(
             numero,
-            "visita_agendada",
-            f"{estado.get('dia')} {estado.get('hora')}",
+            "Visita pendiente",
+            f"📅 Fecha y hora definidas Palmeras: {estado['dia']} {estado['hora']} · esperando punto",
+        )
+        _actualizar_estado_palmeras(
+            numero,
+            palmeras_etapa="coordinando_punto_visita",
+            palmeras_visita_agendada=False,
+            palmeras_visita_dia=estado.get("dia"),
+            palmeras_visita_hora=estado.get("hora"),
+            palmeras_visita_punto=None,
+            palmeras_esperando_cliente=True,
+            palmeras_pregunta_pendiente="punto de encuentro para la visita",
         )
         return (
-            f"Perfecto 😊 Queda coordinada su visita a *Palmeras San Miguel* para *{estado['dia']} a las {estado['hora']}*.\n\n"
-            "Podemos encontrarnos directamente en el proyecto o, si le queda más cómodo, en *Centro Comercial La Trinidad*."
-        ), True
+            f"Perfecto 😊 Podemos coordinar su visita para *{estado['dia']} a las {estado['hora']}* 🏡\n\n"
+            "Podemos encontrarnos *directamente en Palmeras San Miguel* o en *Centro Comercial La Trinidad* 📍\n\n"
+            "*¿Cuál de los dos puntos le queda más cómodo?*"
+        ), False
 
     if estado.get("dia"):
         _actualizar_estado_palmeras(
             numero,
             palmeras_etapa="coordinando_visita",
+            palmeras_visita_agendada=False,
+            palmeras_visita_dia=estado.get("dia"),
             palmeras_esperando_cliente=True,
             palmeras_pregunta_pendiente="hora de visita",
         )
         return (
             f"Perfecto 😊 Ya tengo el día: *{estado['dia']}*. "
-            "¿A qué hora le quedaría bien? Podemos coordinar entre *6:00 AM y 5:00 PM*."
+            "*¿A qué hora le quedaría bien?* Podemos coordinar entre *6:00 AM y 5:00 PM*."
         ), False
 
     if estado.get("hora"):
         _actualizar_estado_palmeras(
             numero,
             palmeras_etapa="coordinando_visita",
+            palmeras_visita_agendada=False,
+            palmeras_visita_hora=estado.get("hora"),
             palmeras_esperando_cliente=True,
             palmeras_pregunta_pendiente="día de visita",
         )
         return (
-            f"Perfecto 😊 Ya tengo la hora: *{estado['hora']}*. ¿Qué día le quedaría bien visitarnos?"
+            f"Perfecto 😊 Ya tengo la hora: *{estado['hora']}*. *¿Qué día le quedaría bien visitarnos?*"
         ), False
 
     _actualizar_estado_palmeras(
         numero,
         palmeras_etapa="coordinando_visita",
+        palmeras_visita_agendada=False,
         palmeras_esperando_cliente=True,
         palmeras_pregunta_pendiente="día y hora de visita",
     )
     return (
-        "¡Claro! 🙌 Con gusto podemos coordinar su visita a *Palmeras San Miguel*. "
-        "Atendemos todos los días, incluso festivos, entre *6:00 AM y 5:00 PM*.\n\n"
-        "*¿Qué día y aproximadamente a qué hora le quedaría bien?* 📅"
+        "¡Claro! 😊 Con gusto coordinamos su visita a *Palmeras San Miguel* 🏡\n\n"
+        "Podemos atenderle *cualquier día*, incluso fines de semana y días festivos, en horario de *6:00 AM a 5:00 PM* 📅\n\n"
+        "*¿Qué día y a qué hora le quedaría bien visitarlo?*"
     ), False
 
 
@@ -9513,6 +9597,7 @@ def _palmeras_generar_abierto(numero, texto_cliente):
         "visita_agendada": bool(estado.get("palmeras_visita_agendada") or visita_actual.get("cerrada")),
         "visita_dia": estado.get("palmeras_visita_dia") or visita_actual.get("dia"),
         "visita_hora": estado.get("palmeras_visita_hora") or visita_actual.get("hora"),
+        "visita_punto": estado.get("palmeras_visita_punto") or visita_actual.get("punto"),
         "reserva_en_curso": bool(estado.get("palmeras_reserva_en_curso")),
         "reserva_fase": estado.get("palmeras_reserva_fase"),
     }
@@ -9538,7 +9623,9 @@ REGLAS DE CONVERSACIÓN:
 - Si el cliente expresa una decisión y además hace una pregunta en el mismo bloque, no envíe primero una ficha completa de la decisión y luego otra respuesta. Integre ambos mensajes en UNA respuesta coherente centrada en la pregunta actual.
 - Solo entregue una explicación amplia del proyecto cuando el cliente pida explícitamente "toda la información", "explíqueme todo", "qué incluye" o una solicitud equivalente.
 - Evite convertir cada respuesta en una ficha técnica. Una pregunta sencilla merece una respuesta sencilla. Una comparación puede ser un poco más completa, pero siempre enfocada.
-- Si visita_agendada es true, conserve día y hora en memoria. Responda dudas posteriores normalmente y NO vuelva a ofrecer, pedir ni agendar otra visita, salvo que el cliente expresamente quiera cambiarla, cancelarla, confirmar el horario o pregunte por la cita.
+- Si visita_agendada es true, conserve día, hora y punto de encuentro en memoria. Responda dudas posteriores normalmente y NO vuelva a ofrecer, pedir ni agendar otra visita, salvo que el cliente expresamente quiera cambiarla, cancelarla, confirmar los datos o pregunte por la cita.
+- Si la etapa es coordinando_punto_visita, significa que el día y la hora YA están definidos y solo falta el punto. Si el cliente hace una pregunta distinta antes de elegir el punto, responda primero esa pregunta normalmente y conserve pendiente el punto; NO repita la coordinación de visita en la misma respuesta salvo que resulte natural.
+- Una cita o reserva NUNCA limita qué puede preguntar el cliente. Después de cualquiera de esas acciones, siga contestando cualquier consulta respaldada por la ficha oficial. Si no sabe o no está seguro, active intervención en vez de inventar.
 - Si reserva_en_curso es true, responda dudas posteriores normalmente. No vuelva a explicar ni ofrecer la reserva en cada respuesta. No diga que un lote específico ya quedó reservado o disponible mientras esa disponibilidad no haya sido confirmada.
 - Después de una visita agendada o una reserva iniciada, use TODA la ficha oficial para contestar preguntas de precios, pagos, servicios, construcción, agua, requisitos, escrituras, ubicación y amenidades igual que antes.
 - NUNCA repita ni copie la pregunta del cliente como primera línea, encabezado o cita. Empiece directamente con la respuesta.
@@ -9659,7 +9746,7 @@ def manejar_nuevo_cerebro_palmeras(numero, texto, message_id=None):
     # Intención alta siempre rompe el protocolo. Si ya estamos coordinando una visita,
     # basta con que el cliente aporte un día/fecha u hora; no tiene que repetir "quiero visitar".
     continuacion_visita = (
-        estado.get("palmeras_etapa") == "coordinando_visita"
+        estado.get("palmeras_etapa") in {"coordinando_visita", "coordinando_punto_visita", "visita_agendada"}
         and _palmeras_mensaje_aporta_dato_visita(texto)
     )
     if especiales["visita"] or continuacion_visita:
@@ -10013,10 +10100,10 @@ def manejar_nuevo_cerebro_palmeras(numero, texto, message_id=None):
     else:
         # Si estábamos coordinando una visita y el cliente hizo una pregunta lateral,
         # respondemos esa pregunta sin borrar el día/hora que ya se había conversado.
-        if etapa_antes_de_pregunta_abierta == "coordinando_visita":
+        if etapa_antes_de_pregunta_abierta in {"coordinando_visita", "coordinando_punto_visita"}:
             _actualizar_estado_palmeras(
                 numero,
-                palmeras_etapa="coordinando_visita",
+                palmeras_etapa=etapa_antes_de_pregunta_abierta,
                 palmeras_esperando_gabriel=False,
                 palmeras_requiere_intervencion=False,
             )
