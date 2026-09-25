@@ -1,3 +1,4 @@
+# VERSION_PALMERAS_VISITAS_NATURALES_20260925 - reconoce dia+hora natural y evita preguntas redundantes
 # VERSION_PRIORIDADES_INTENCION_Y_SIN_ECO_20260925 - giros libres + no repetir pregunta del cliente
 # VERSION_PALMERAS_CAMBIO_MODALIDAD_PRIORITARIO_20260925
 # VERSION_VIDEO_PALMERAS_SIN_DUPLICADO_Y_CAPTION_CONTEXTUAL_20260925
@@ -8900,58 +8901,200 @@ def _palmeras_aplicar_propuesta(numero, fase, modalidad, plazo=None):
     return True
 
 
-def _palmeras_hora_valida(texto):
+def _palmeras_extraer_dia_fecha_visita(texto):
+    """Reconoce días/fechas escritos de forma natural sin exigir un formato rígido."""
+    dia = extraer_dia_visita(texto)
+    if dia:
+        return dia
+
     t = normalizar_ventas(texto)
+    if re.search(r"\bpasado\s+manana\b", t):
+        return "Pasado mañana"
+    if re.search(r"\bmanana\b", t):
+        return "Mañana"
+    if re.search(r"\bhoy\b", t):
+        return "Hoy"
+
+    meses = (
+        "enero|febrero|marzo|abril|mayo|junio|julio|agosto|"
+        "septiembre|setiembre|octubre|noviembre|diciembre"
+    )
+    m = re.search(rf"\b(?:el\s+)?(\d{{1,2}})\s+de\s+({meses})\b", t)
+    if m:
+        return f"{m.group(1)} de {m.group(2)}"
+
+    return None
+
+
+def _palmeras_extraer_hora_natural(texto):
+    """Reconoce '10 AM', '10:30', '10 de la mañana', '4 de la tarde', etc."""
+    hora = extraer_hora_visita(texto)
+    if hora:
+        # Normalizamos AM/PM para que la confirmación sea más legible.
+        t = normalizar_ventas(hora)
+        m = re.search(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b", t)
+        if m:
+            hh = int(m.group(1))
+            mm = int(m.group(2) or 0)
+            return f"{hh}:{mm:02d} {m.group(3).upper()}"
+        return hora
+
+    t = normalizar_ventas(texto)
+
+    # Ej.: "a las 10 de la mañana", "8 de la noche", "4 de la tarde".
+    m = re.search(
+        r"\b(?:a\s+las?\s+)?(\d{1,2})(?::(\d{2}))?\s*(?:de\s+la\s+|por\s+la\s+)?"
+        r"(manana|tarde|noche|mediodia)\b",
+        t,
+    )
+    if m:
+        hh = int(m.group(1))
+        mm = int(m.group(2) or 0)
+        periodo = m.group(3)
+        if not (1 <= hh <= 12 and 0 <= mm <= 59):
+            return None
+        if periodo == "manana":
+            ampm = "AM"
+        elif periodo == "mediodia":
+            hh = 12
+            ampm = "PM"
+        else:
+            ampm = "PM"
+        return f"{hh}:{mm:02d} {ampm}"
+
+    # Formato de 24 horas sin AM/PM (ej. 16:30).
+    m = re.search(r"\b([01]?\d|2[0-3]):([0-5]\d)\b", t)
+    if m:
+        hh24 = int(m.group(1))
+        mm = int(m.group(2))
+        ampm = "AM" if hh24 < 12 else "PM"
+        hh12 = hh24 % 12 or 12
+        return f"{hh12}:{mm:02d} {ampm}"
+
+    return None
+
+
+def _palmeras_hora_a_24(hora):
+    if not hora:
+        return None
+    t = normalizar_ventas(hora)
     m = re.search(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b", t)
     if not m:
-        m24 = re.search(r"\b([01]?\d|2[0-3]):([0-5]\d)\b", t)
-        if not m24:
-            return None
-        h = int(m24.group(1))
-        return 6 <= h <= 17
-    h = int(m.group(1))
+        return None
+    hh = int(m.group(1))
+    mm = int(m.group(2) or 0)
     ampm = m.group(3)
-    if ampm == "pm" and h != 12:
-        h += 12
-    if ampm == "am" and h == 12:
-        h = 0
-    return 6 <= h <= 17
+    if not (1 <= hh <= 12 and 0 <= mm <= 59):
+        return None
+    if ampm == "pm" and hh != 12:
+        hh += 12
+    if ampm == "am" and hh == 12:
+        hh = 0
+    return hh, mm
+
+
+def _palmeras_hora_valida(texto_o_hora):
+    hora = _palmeras_extraer_hora_natural(texto_o_hora)
+    valor = _palmeras_hora_a_24(hora)
+    if valor is None:
+        return None
+    hh, mm = valor
+    # Desde 06:00 hasta 17:00 inclusive.
+    return (hh, mm) >= (6, 0) and (hh, mm) <= (17, 0)
+
+
+def _palmeras_mensaje_aporta_dato_visita(texto):
+    """Sirve para continuar una cita sin exigir que repita 'quiero visitar'."""
+    return bool(
+        _palmeras_extraer_dia_fecha_visita(texto)
+        or _palmeras_extraer_hora_natural(texto)
+    )
 
 
 def _palmeras_manejar_visita(numero, texto):
-    estado = estado_visitas.setdefault(numero, {"dia": None, "hora": None, "proyecto": "palmeras", "cerrada": False})
+    estado = estado_visitas.setdefault(
+        numero,
+        {"dia": None, "hora": None, "proyecto": "palmeras", "cerrada": False},
+    )
     estado["proyecto"] = "palmeras"
-    dia = extraer_dia_visita(texto)
-    t_visita = normalizar_ventas(texto)
-    if not dia and "manana" in t_visita:
-        dia = "Mañana"
-    elif not dia and re.search(r"\bhoy\b", t_visita):
-        dia = "Hoy"
-    hora = extraer_hora_visita(texto)
+
+    dia = _palmeras_extraer_dia_fecha_visita(texto)
+    hora = _palmeras_extraer_hora_natural(texto)
+
+    # Cada dato nuevo sustituye el anterior; esto permite cambiar día/hora naturalmente.
     if dia:
         estado["dia"] = dia
+        estado["cerrada"] = False
+
     if hora:
-        valido = _palmeras_hora_valida(texto)
+        valido = _palmeras_hora_valida(hora)
         if valido is False:
+            hora_anterior = estado.get("hora")
+            if hora_anterior:
+                return (
+                    f"Claro 😊 A las *{hora}* ya no tenemos horario de atención para visitas. "
+                    "Podemos coordinar entre *6:00 AM y 5:00 PM*.\n\n"
+                    f"Si desea, mantenemos la hora que ya teníamos, *{hora_anterior}*, o puede indicarme otra dentro de ese horario."
+                ), False
             return (
-                "Con gusto coordinamos la visita 😊. Para poder atenderle, manejamos visitas entre *6:00 AM y 5:00 PM*.\n\n"
-                "¿Qué hora dentro de ese horario le quedaría bien?"
+                f"Claro 😊 A las *{hora}* ya no tenemos horario de atención para visitas. "
+                "Podemos coordinar entre *6:00 AM y 5:00 PM*.\n\n"
+                "¿Qué otra hora dentro de ese horario le quedaría bien?"
             ), False
         estado["hora"] = hora
+        estado["cerrada"] = False
+
+    # Si el cliente ya dio día/fecha Y hora, no se vuelve a pedir ninguno de los dos.
     if estado.get("dia") and estado.get("hora"):
         estado["cerrada"] = True
-        _palmeras_marcar_crm(numero, "Visita pendiente", f"Visita Palmeras: {estado['dia']} {estado['hora']}")
-        _actualizar_estado_palmeras(numero, palmeras_etapa="visita_agendada", palmeras_esperando_cliente=False, palmeras_pregunta_pendiente=None)
+        _palmeras_marcar_crm(
+            numero,
+            "Visita pendiente",
+            f"Visita Palmeras: {estado['dia']} {estado['hora']}",
+        )
+        _actualizar_estado_palmeras(
+            numero,
+            palmeras_etapa="visita_agendada",
+            palmeras_esperando_cliente=False,
+            palmeras_pregunta_pendiente=None,
+        )
         return (
             f"Perfecto 😊 Queda coordinada su visita a *Palmeras San Miguel* para *{estado['dia']} a las {estado['hora']}*.\n\n"
             "Podemos encontrarnos directamente en el proyecto o, si le queda más cómodo, en *Centro Comercial La Trinidad*."
         ), True
+
     if estado.get("dia"):
-        _actualizar_estado_palmeras(numero, palmeras_etapa="coordinando_visita", palmeras_esperando_cliente=True, palmeras_pregunta_pendiente="hora de visita")
-        return "Perfecto 😊 ¿A qué hora le quedaría bien? Podemos coordinar entre *6:00 AM y 5:00 PM*.", False
-    _actualizar_estado_palmeras(numero, palmeras_etapa="coordinando_visita", palmeras_esperando_cliente=True, palmeras_pregunta_pendiente="día y hora de visita")
+        _actualizar_estado_palmeras(
+            numero,
+            palmeras_etapa="coordinando_visita",
+            palmeras_esperando_cliente=True,
+            palmeras_pregunta_pendiente="hora de visita",
+        )
+        return (
+            f"Perfecto 😊 Ya tengo el día: *{estado['dia']}*. "
+            "¿A qué hora le quedaría bien? Podemos coordinar entre *6:00 AM y 5:00 PM*."
+        ), False
+
+    if estado.get("hora"):
+        _actualizar_estado_palmeras(
+            numero,
+            palmeras_etapa="coordinando_visita",
+            palmeras_esperando_cliente=True,
+            palmeras_pregunta_pendiente="día de visita",
+        )
+        return (
+            f"Perfecto 😊 Ya tengo la hora: *{estado['hora']}*. ¿Qué día le quedaría bien visitarnos?"
+        ), False
+
+    _actualizar_estado_palmeras(
+        numero,
+        palmeras_etapa="coordinando_visita",
+        palmeras_esperando_cliente=True,
+        palmeras_pregunta_pendiente="día y hora de visita",
+    )
     return (
-        "¡Claro! 🙌 Con gusto podemos coordinar su visita a *Palmeras San Miguel*. Atendemos todos los días, incluso festivos, entre *6:00 AM y 5:00 PM*.\n\n"
+        "¡Claro! 🙌 Con gusto podemos coordinar su visita a *Palmeras San Miguel*. "
+        "Atendemos todos los días, incluso festivos, entre *6:00 AM y 5:00 PM*.\n\n"
         "*¿Qué día y aproximadamente a qué hora le quedaría bien?* 📅"
     ), False
 
@@ -9031,6 +9174,7 @@ REGLAS DE CONVERSACIÓN:
 - No invente procedimientos que no estén en la ficha (por ejemplo, no ofrezca explicar "cómo registrar un abono" si ese procedimiento no está documentado).
 - Una pregunta técnica o informativa NO es por sí sola una señal para pedir visita. Responda y deje respirar la conversación.
 - Use párrafos cortos, saltos de línea, *negritas de WhatsApp* y 1-4 emojis cuando ayuden.
+- Responda con calidez y lenguaje cotidiano de un asesor por WhatsApp; evite sonar técnico, jurídico o como manual salvo que el cliente realmente pregunte algo técnico.
 - No envíe enlaces de Google Maps.
 - No invente disponibilidad, descuentos superiores al 3%, plazos legales, fechas exactas ni datos que no aparezcan en la ficha.
 - Si el cliente muestra intención alta, avance hacia visita o reserva sin obligarlo a seguir el protocolo inicial.
@@ -9114,8 +9258,13 @@ def manejar_nuevo_cerebro_palmeras(numero, texto, message_id=None):
         estado["palmeras_plazo"] = intencion["plazo"]
     persistir_cliente(numero)
 
-    # Intención alta siempre rompe el protocolo.
-    if especiales["visita"]:
+    # Intención alta siempre rompe el protocolo. Si ya estamos coordinando una visita,
+    # basta con que el cliente aporte un día/fecha u hora; no tiene que repetir "quiero visitar".
+    continuacion_visita = (
+        estado.get("palmeras_etapa") == "coordinando_visita"
+        and _palmeras_mensaje_aporta_dato_visita(texto)
+    )
+    if especiales["visita"] or continuacion_visita:
         respuesta, cerrada = _palmeras_manejar_visita(numero, texto)
         _palmeras_enviar_y_recordar(numero, respuesta)
         return True
@@ -9408,11 +9557,22 @@ def manejar_nuevo_cerebro_palmeras(numero, texto, message_id=None):
             return True
 
     # Preguntas comunes / conversación abierta con razonamiento de IA.
+    etapa_antes_de_pregunta_abierta = estado.get("palmeras_etapa")
     puede, respuesta, sugerir_visita = _palmeras_generar_abierto(numero, texto)
     if not puede:
         _palmeras_marcar_intervencion(numero, texto)
     else:
-        _actualizar_estado_palmeras(numero, palmeras_etapa="conversacion_abierta", palmeras_esperando_gabriel=False, palmeras_requiere_intervencion=False)
+        # Si estábamos coordinando una visita y el cliente hizo una pregunta lateral,
+        # respondemos esa pregunta sin borrar el día/hora que ya se había conversado.
+        if etapa_antes_de_pregunta_abierta == "coordinando_visita":
+            _actualizar_estado_palmeras(
+                numero,
+                palmeras_etapa="coordinando_visita",
+                palmeras_esperando_gabriel=False,
+                palmeras_requiere_intervencion=False,
+            )
+        else:
+            _actualizar_estado_palmeras(numero, palmeras_etapa="conversacion_abierta", palmeras_esperando_gabriel=False, palmeras_requiere_intervencion=False)
         # No convierta cada respuesta técnica en una invitación a visitar.
         # Solo aceptamos la sugerencia de la IA si el MENSAJE ACTUAL muestra una
         # señal comercial clara.
