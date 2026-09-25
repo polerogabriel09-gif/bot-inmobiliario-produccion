@@ -18,6 +18,8 @@
 # VERSION_ANUNCIOS_PALMERAS_7_IDS_20260831 - 7 anuncios Palmeras identificados
 # VERSION_ANUNCIOS_PALMERAS_FIX_PROYECTO_20260831
 # VERSION_TRATO_USTED_GENERAL_20260831
+# VERSION_PREGUNTA_CALIDA_ABONOS_PALMERAS_20260925
+# VERSION_ESTILO_DINAMICO_PALMERAS_20260925
 from flask import Flask, request, Response, redirect, url_for, render_template_string, jsonify, send_from_directory
 from openai import OpenAI
 from dotenv import load_dotenv
@@ -9180,10 +9182,47 @@ def _palmeras_quitar_cierre_abono_incoherente(mensaje, cliente_ya_compro=False):
         "hacer un abono", "realizar un abono", "registrar un abono",
         "programar un abono", "programarlos", "aplicar un abono",
         "hacer el abono", "realizar el abono", "abono extra ahora",
+        "mostrar un ejemplo", "afectar la cuota", "simular", "simulacion",
     ]
     if "?" in parrafos[-1] and any(p in ultimo for p in patrones):
         parrafos = parrafos[:-1]
     return "\n\n".join(p for p in parrafos if p.strip()).strip()
+
+
+def _palmeras_es_consulta_abono_extra(texto_cliente):
+    """Detecta dudas de prospectos sobre aportar dinero extra al capital."""
+    t = normalizar_ventas(texto_cliente or "")
+    claves = (
+        "abonar", "abono a capital", "abonos a capital", "abono extra",
+        "abonos extra", "dinero extra", "pagar de mas", "pagar mas",
+    )
+    return any(k in t for k in claves)
+
+
+def _palmeras_cierre_calido_abonos(mensaje, texto_cliente, cliente_ya_compro=False, historial=None):
+    """
+    Para un prospecto que pregunta por abonos, abre conversación sin ofrecer
+    simulaciones ni asumir que ya tiene un lote financiado.
+    """
+    texto = str(mensaje or "").strip()
+    if cliente_ya_compro or not texto or not _palmeras_es_consulta_abono_extra(texto_cliente):
+        return texto
+
+    # Si esta pregunta ya se hizo recientemente, no la repetimos.
+    historial_texto = " ".join(str(x.get("content") or "") for x in (historial or []))
+    h = normalizar_ventas(historial_texto)
+    if "construir mas adelante" in h and "como inversion" in h:
+        return texto
+
+    # Sustituye cualquier pregunta final generada por la IA; la respuesta factual
+    # se conserva intacta y cerramos con una pregunta segura de descubrimiento.
+    parrafos = [p.strip() for p in re.split(r"\n\s*\n", texto) if p.strip()]
+    if parrafos and "?" in parrafos[-1]:
+        parrafos = parrafos[:-1]
+
+    pregunta = "*¿Su idea sería comprar el terreno para construir más adelante o lo está viendo más como inversión?* 😊"
+    base = "\n\n".join(parrafos).strip()
+    return f"{base}\n\n{pregunta}" if base else pregunta
 
 
 def _palmeras_generar_abierto(numero, texto_cliente):
@@ -9222,10 +9261,16 @@ REGLAS DE CONVERSACIÓN:
 - No interrogue. Como máximo UNA pregunta al final. La pregunta final es OPCIONAL: si no aporta valor, termine la respuesta sin preguntar nada.
 - Antes de hacer una pregunta final, compruebe que tenga sentido con la etapa real del cliente y con lo que ya se sabe de la conversación.
 - Si cliente_ya_compro es false, NUNCA pregunte si desea hacer, registrar, programar o aplicar un abono ahora. El cliente todavía está evaluando la compra. Puede explicar cómo funcionan los abonos, pero no actuar como si ya tuviera una deuda activa.
+- Si un PROSPECTO pregunta por abonos a capital o por poner dinero extra, NO ofrezca simulaciones, ejemplos de amortización ni cálculos de cómo cambiaría la cuota. Después de responder la duda, la pregunta preferida para mantener viva la conversación es: "¿Su idea sería comprar el terreno para construir más adelante o lo está viendo más como inversión? 😊". Esa pregunta descubre la intención del cliente sin inventar datos.
 - No invente procedimientos que no estén en la ficha (por ejemplo, no ofrezca explicar "cómo registrar un abono" si ese procedimiento no está documentado).
 - No ofrezca ejecutar acciones que el sistema no puede realizar directamente, como cobrar, registrar pagos o aplicar abonos.
 - Una pregunta técnica o informativa NO es por sí sola una señal para pedir visita. Responda y deje respirar la conversación.
-- Use párrafos cortos, saltos de línea, *negritas de WhatsApp* y 1-4 emojis cuando ayuden.
+- FORMATO VISUAL OBLIGATORIO: haga que cada respuesta informativa sea fácil y agradable de leer en WhatsApp.
+- Use *negritas de WhatsApp* con UN solo asterisco para destacar de 2 a 5 datos realmente importantes: precios, montos, plazos, nombres de fase, servicios o restricciones relevantes. No use **doble asterisco**.
+- Use normalmente entre 2 y 5 emojis naturales por respuesta cuando el contenido lo permita. Reparta los emojis con intención (por ejemplo 🏡 💰 💧 ✅ 📍 🌳), sin poner uno al final de cada oración ni saturar el mensaje.
+- Cuando enumere 3 o más características o servicios, prefiera una lista breve y visual con viñetas o emojis, en lugar de un párrafo pesado.
+- Si hay una pregunta final, puede ponerla en *negrita* cuando ayude a que el cliente identifique claramente el siguiente paso.
+- Mantenga párrafos cortos y saltos de línea. La prioridad es que el cliente pueda identificar rápidamente la información importante al leer desde el celular.
 - Revise ortografía, concordancia y sentido antes de responder. Evite frases poco naturales o ambiguas.
 - Responda con calidez y lenguaje cotidiano de un asesor por WhatsApp; evite sonar técnico, jurídico o como manual salvo que el cliente realmente pregunte algo técnico.
 - NUNCA firme los mensajes con "Gabriel", "Gabriel Polero", "— Gabriel", "- Gabriel" ni despedidas de firma. El cliente ya está hablando directamente con Gabriel desde el inicio.
@@ -9263,6 +9308,12 @@ Devuelva EXCLUSIVAMENTE JSON válido con este formato:
         mensaje = formalizar_trato_usted(mensaje)
         mensaje = _palmeras_quitar_firma_innecesaria(mensaje)
         mensaje = _palmeras_quitar_cierre_abono_incoherente(mensaje, cliente_ya_compro=cliente_ya_compro)
+        mensaje = _palmeras_cierre_calido_abonos(
+            mensaje,
+            texto_cliente,
+            cliente_ya_compro=cliente_ya_compro,
+            historial=historial,
+        )
         return bool(data.get("puede_responder", True)), mensaje, bool(data.get("sugerir_visita", False))
     except Exception as exc:
         print("PALMERAS IA ABIERTA ERROR:", exc)
