@@ -1,3 +1,4 @@
+# VERSION_BIENVENIDA_PALMERAS_DIRECTA_20260925
 # VERSION_BIENVENIDA_PALMERAS_CONVERSACIONAL_20260925
 # VERSION_NUEVO_CEREBRO_PALMERAS_20260925 - conversación progresiva, memoria comercial e intervención Gabriel
 # VERSION_MULTIINTENCION_MENSAJES_8S_20260924 - agrupa 8s y atiende varias solicitudes del mismo bloque
@@ -8425,7 +8426,7 @@ def _palmeras_generar_bienvenida(numero, texto_cliente, modo="informacion"):
             "Explique SOLO lo necesario para este primer paso: ambas fases son 8x16; Fase 1 Q67,200 con piscina y área verde; "
             "Fase 2 Q70,400 con área verde y acceso interno a la piscina de Fase 1 porque las fases estarán conectadas; "
             "ubicación Zona 5 de Retalhuleu, camino a La Verde; y, como máximo, una frase corta indicando que ambas fases son de "
-            "topografía plana y el proyecto contará con sus servicios principales. Luego diga que compartirá los planos y termine "
+            "topografía plana. Luego diga que compartirá los planos y termine "
             "preguntando cuál fase le parece más atractiva. NO explique todavía formas de pago, reserva, requisitos, construcción, "
             "tiempo de urbanización, escrituración, gastos, consumo de agua, garita, muro, renders, ni ningún otro detalle que el cliente no pidió."
         )
@@ -8439,7 +8440,8 @@ Saludo adecuado en Guatemala: {saludo}.
 
 ESTILO OBLIGATORIO DEL PRIMER MENSAJE:
 - Debe sonar como una conversación real de WhatsApp, NO como ficha técnica, brochure, listado de especificaciones ni contrato.
-- Use expresiones naturales como 'Fíjese que...', 'Actualmente le puedo ofrecer...', 'Le cuento...'.
+- Empiece de forma profesional y directa. No use 'Fíjese', 'Mire', 'Le cuento' ni expresiones de demasiada confianza en el primer contacto.
+- Después de presentarse, empiece directamente con 'En Palmeras San Miguel...' o una variante profesional similar.
 - Muy fácil de leer: párrafos cortos y saltos de línea.
 - Use *negritas de WhatsApp* con un solo asterisco para destacar fase/precio/dato clave.
 - Use entre 4 y 7 emojis naturales, bien repartidos y sin saturar.
@@ -8472,7 +8474,8 @@ No invente nada. Redacte con sus propias palabras, como Gabriel Polero atendiend
     if modo == "precios_pagos":
         return formalizar_trato_usted(
             f"¡{saludo}! 👋 Le saluda *Gabriel Polero, asesor de ventas* de *Multiproyectos DIVE* 😊\n\n"
-            "Fíjese que en *Palmeras San Miguel* actualmente tengo disponibles terrenos de *8x16* en *2 fases* 🏡✨\n\n"
+            "En *Palmeras San Miguel* actualmente contamos con *2 fases disponibles* 🏡✨\n\n"
+            "En ambas fases tenemos terrenos de *8x16 m* y topografía plana.\n\n"
             "🏊 *Fase 1:* *Q67,200*, con piscina y área verde.\n"
             "🌳 *Fase 2:* *Q70,400*, con área verde y acceso interno a la piscina de Fase 1.\n\n"
             "También manejamos financiamiento propio de *2 a 8 años*, plan de *1 año sin intereses* y pago de contado 💳👍\n\n"
@@ -8481,7 +8484,8 @@ No invente nada. Redacte con sus propias palabras, como Gabriel Polero atendiend
         )
     return formalizar_trato_usted(
         f"¡{saludo}! 👋 Le saluda *Gabriel Polero, asesor de ventas de Multiproyectos DIVE* 😊\n\n"
-        "Fíjese que en *Palmeras San Miguel* actualmente le puedo ofrecer *2 fases* 🏡✨, ambas con terrenos de *8x16* y topografía plana.\n\n"
+        "En *Palmeras San Miguel* actualmente contamos con *2 fases disponibles* 🏡✨\n\n"
+        "En ambas fases tenemos terrenos de *8x16 m* y topografía plana.\n\n"
         "🏊 *Fase 1:* desde *Q67,200*, con piscina y área verde.\n"
         "🌳 *Fase 2:* desde *Q70,400*, con área verde. Aunque no tiene piscina propia, ambas fases estarán conectadas internamente, por lo que tendrá acceso a la piscina de Fase 1 🔄🏊\n\n"
         "Además, el proyecto está ubicado en *Zona 5 de Retalhuleu, camino a La Verde* 📍👍\n\n"
