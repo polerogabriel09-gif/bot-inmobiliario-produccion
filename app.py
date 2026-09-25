@@ -8442,7 +8442,7 @@ ESTILO OBLIGATORIO DEL PRIMER MENSAJE:
 - Use expresiones naturales como 'Fíjese que...', 'Actualmente le puedo ofrecer...', 'Le cuento...'.
 - Muy fácil de leer: párrafos cortos y saltos de línea.
 - Use *negritas de WhatsApp* con un solo asterisco para destacar fase/precio/dato clave.
-- Use entre 2 y 5 emojis naturales.
+- Use entre 4 y 7 emojis naturales, bien repartidos y sin saturar.
 - No haga un bloque enorme.
 - Haga solamente UNA pregunta al final.
 - No envíe links.
@@ -8471,21 +8471,21 @@ No invente nada. Redacte con sus propias palabras, como Gabriel Polero atendiend
 
     if modo == "precios_pagos":
         return formalizar_trato_usted(
-            f"¡{saludo}! 👋 Le saluda *Gabriel Polero, asesor de ventas*.\n\n"
-            "En *Palmeras San Miguel* tenemos terrenos de 8x16 en dos fases:\n\n"
-            "🏊 *Fase 1:* Q67,200, con piscina y área verde.\n"
-            "🌳 *Fase 2:* Q70,400, con área verde y acceso interno a la piscina de Fase 1.\n\n"
-            "Manejamos financiamiento propio de 2 a 8 años, plan de 1 año sin intereses y pago de contado 💳.\n\n"
-            "Le comparto los planos para que pueda comparar ambas opciones.\n\n"
+            f"¡{saludo}! 👋 Le saluda *Gabriel Polero, asesor de ventas* de *Multiproyectos DIVE* 😊\n\n"
+            "Fíjese que en *Palmeras San Miguel* actualmente tengo disponibles terrenos de *8x16* en *2 fases* 🏡✨\n\n"
+            "🏊 *Fase 1:* *Q67,200*, con piscina y área verde.\n"
+            "🌳 *Fase 2:* *Q70,400*, con área verde y acceso interno a la piscina de Fase 1.\n\n"
+            "También manejamos financiamiento propio de *2 a 8 años*, plan de *1 año sin intereses* y pago de contado 💳👍\n\n"
+            "Le comparto los planos para que pueda comparar ambas opciones 📄😊\n\n"
             "*¿Cuál de las dos fases le interesa más?*"
         )
     return formalizar_trato_usted(
-        f"¡{saludo}! 👋 Le saluda *Gabriel Polero, asesor de ventas de Multiproyectos DIVE*.\n\n"
-        "Fíjese que en *Palmeras San Miguel* actualmente le puedo ofrecer *2 fases*, ambas con terrenos de 8x16 y topografía plana 🏡\n\n"
+        f"¡{saludo}! 👋 Le saluda *Gabriel Polero, asesor de ventas de Multiproyectos DIVE* 😊\n\n"
+        "Fíjese que en *Palmeras San Miguel* actualmente le puedo ofrecer *2 fases* 🏡✨, ambas con terrenos de *8x16* y topografía plana.\n\n"
         "🏊 *Fase 1:* desde *Q67,200*, con piscina y área verde.\n"
-        "🌳 *Fase 2:* desde *Q70,400*, con área verde. Aunque no tiene piscina propia, ambas fases estarán conectadas internamente, por lo que tendrá acceso a la piscina de Fase 1.\n\n"
-        "El proyecto está ubicado en *Zona 5 de Retalhuleu, camino a La Verde* 📍\n\n"
-        "Le comparto los planos para que pueda comparar ambas opciones 😊\n\n"
+        "🌳 *Fase 2:* desde *Q70,400*, con área verde. Aunque no tiene piscina propia, ambas fases estarán conectadas internamente, por lo que tendrá acceso a la piscina de Fase 1 🔄🏊\n\n"
+        "Además, el proyecto está ubicado en *Zona 5 de Retalhuleu, camino a La Verde* 📍👍\n\n"
+        "Le comparto los planos para que pueda comparar ambas opciones 📄😊\n\n"
         "*¿Cuál de las dos fases le parece más atractiva?*"
     )
 
@@ -8500,6 +8500,14 @@ def _palmeras_enviar_planos_protocolo(numero, fase=None):
             continue
         if enviar_documento_url_whatsapp(numero, plano["url"], plano["archivo"], caption=plano["nombre"]):
             enviados += 1
+
+    if enviados > 0:
+        enviar_whatsapp(
+            numero,
+            "Para que pueda identificarlo mejor en el plano 😊\n\n"
+            "🟢 *Disponible*\n"
+            "🔴 *Vendido*"
+        )
     return enviados > 0
 
 
