@@ -1,3 +1,5 @@
+# VERSION_PALMERAS_CAMBIO_MODALIDAD_PRIORITARIO_20260925
+# VERSION_VIDEO_PALMERAS_SIN_DUPLICADO_Y_CAPTION_CONTEXTUAL_20260925
 # VERSION_VIDEO_PALMERAS_LOGICA_Y_COMPRESION_20260925
 # VERSION_BIENVENIDA_PALMERAS_GUIADA_20260925 - bienvenida IA guiada, no fija
 # VERSION_BIENVENIDA_PALMERAS_DIRECTA_20260925
@@ -8379,9 +8381,13 @@ def _palmeras_texto_tiene_intencion_alta(texto):
 
 def _palmeras_reaccion_positiva(texto):
     t = normalizar_ventas(texto)
+    # Una frase como "me interesa el plan sin intereses" NO es solo una reacción:
+    # contiene una decisión comercial y debe procesarse primero como cambio de modalidad.
+    if _palmeras_detectar_modalidad(texto):
+        return False
     return any(x in t for x in [
         "que bonito", "que bonita", "muy bonito", "muy bonita", "me gusta",
-        "esta bonito", "esta bonita", "se ve bien", "me interesa", "me parece bien",
+        "esta bonito", "esta bonita", "se ve bien", "me parece bien",
         "perfecto", "excelente", "gracias por el video", "gracias"
     ])
 
@@ -8568,25 +8574,28 @@ def _palmeras_enviar_planos_protocolo(numero, fase=None):
     return enviados > 0
 
 
-def _palmeras_enviar_video_protocolo(numero):
+def _palmeras_enviar_video_protocolo(numero, contexto="general"):
     """
-    Envía el video de referencia únicamente si existe y Meta lo acepta.
-    El texto que anuncia el video va como caption del propio video para evitar
-    decir que se enviará algo cuando, por cualquier motivo, el envío falle.
+    Envía el video de referencia con un caption coherente con el momento de la conversación.
+    No envía un texto previo separado, para evitar mensajes duplicados.
     """
     ruta = PALMERAS_VIDEO_PROTOCOLO if os.path.exists(PALMERAS_VIDEO_PROTOCOLO) else PALMERAS_VIDEO_FALLBACK
     if not os.path.exists(ruta):
         print("PALMERAS VIDEO PROTOCOLO NO ENCONTRADO:", ruta)
         return False
 
-    return enviar_video_whatsapp(
-        numero,
-        ruta,
-        caption=(
+    if contexto == "pagos":
+        caption = (
             "Mientras revisa las opciones de pago, le comparto este pequeño video de referencia "
             "para que pueda darse una idea del tipo de espacios y amenidades que desarrollamos 🏡✨"
         )
-    )
+    else:
+        caption = (
+            "Le comparto este pequeño video de referencia para que pueda darse una idea del tipo "
+            "de espacios y amenidades que desarrollamos 🏡✨"
+        )
+
+    return enviar_video_whatsapp(numero, ruta, caption=caption)
 
 
 def _palmeras_enviar_fotos_protocolo(numero):
@@ -8952,8 +8961,7 @@ def manejar_nuevo_cerebro_palmeras(numero, texto, message_id=None):
             _palmeras_enviar_y_recordar(numero, "Claro 😊 Le comparto algunos *renders de referencia* de cómo quedarán los espacios y amenidades de Palmeras San Miguel.")
             _palmeras_enviar_fotos_protocolo(numero)
         if especiales["videos"]:
-            _palmeras_enviar_y_recordar(numero, "También le comparto un video de referencia para que pueda darse una mejor idea del proyecto 🏡✨.")
-            _palmeras_enviar_video_protocolo(numero)
+            _palmeras_enviar_video_protocolo(numero, contexto="general")
         return True
 
     # Si el cliente ya pidió que confirmemos algo, puede seguir preguntando otras cosas;
@@ -8986,7 +8994,7 @@ def manejar_nuevo_cerebro_palmeras(numero, texto, message_id=None):
             palmeras_pregunta_pendiente="qué modalidad de pago le interesa"
         )
         _palmeras_enviar_y_recordar(numero, _palmeras_explicar_modalidades())
-        video_enviado = _palmeras_enviar_video_protocolo(numero)
+        video_enviado = _palmeras_enviar_video_protocolo(numero, contexto="pagos")
         _actualizar_estado_palmeras(numero, palmeras_video_enviado=bool(video_enviado))
         if not video_enviado:
             print("PALMERAS: no fue posible enviar el video de referencia; no se anunció al cliente para evitar incoherencias.")
@@ -9059,12 +9067,10 @@ def manejar_nuevo_cerebro_palmeras(numero, texto, message_id=None):
             _palmeras_marcar_crm(numero, "Interesado", f"Eligió {'Fase 1' if fase == 'fase_1' else 'Fase 2'}; esperando modalidad de pago")
             respuesta = _palmeras_explicar_modalidades()
             _palmeras_enviar_y_recordar(numero, respuesta)
-            _palmeras_enviar_y_recordar(
-                numero,
-                "Mientras lo revisa, le comparto un pequeño video de referencia para que pueda darse una idea del tipo de espacios y amenidades que desarrollamos 🏡✨."
-            )
-            _palmeras_enviar_video_protocolo(numero)
-            _actualizar_estado_palmeras(numero, palmeras_video_enviado=True)
+            video_enviado = _palmeras_enviar_video_protocolo(numero, contexto="pagos")
+            _actualizar_estado_palmeras(numero, palmeras_video_enviado=bool(video_enviado))
+            if not video_enviado:
+                print("PALMERAS: no fue posible enviar el video de referencia después de mostrar las modalidades.")
             return True
 
         # Responder pregunta lateral sin perder la fase pendiente.
@@ -9101,11 +9107,21 @@ def manejar_nuevo_cerebro_palmeras(numero, texto, message_id=None):
         _palmeras_enviar_y_recordar(numero, respuesta)
         return True
 
-    # Propuesta ya enviada: resolver preguntas y conducir suavemente a visita.
+    # Propuesta ya enviada: primero respetar cualquier CAMBIO DE MODALIDAD que el
+    # cliente exprese. Ej.: "mejor me interesa el plan sin intereses".
+    # Esto tiene prioridad sobre interpretar "me interesa" como una reacción positiva
+    # o intentar llevarlo a visita.
     if etapa in {"propuesta_enviada", "conversacion_abierta", "requiere_gabriel"}:
         fase = estado.get("palmeras_fase")
         modalidad = estado.get("palmeras_forma_pago")
-        plazo = _palmeras_detectar_plazo(texto)
+        nueva_modalidad = _palmeras_detectar_modalidad(texto)
+        nuevo_plazo = _palmeras_detectar_plazo(texto)
+
+        if fase in {"fase_1", "fase_2"} and nueva_modalidad:
+            _palmeras_aplicar_propuesta(numero, fase, nueva_modalidad, nuevo_plazo)
+            return True
+
+        plazo = nuevo_plazo
         if modalidad in {"financiamiento", "todas"} and plazo and fase in PALMERAS_CUOTAS_FINANCIAMIENTO:
             cuota = PALMERAS_CUOTAS_FINANCIAMIENTO[fase].get(plazo)
             if cuota:
