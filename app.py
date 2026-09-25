@@ -1,3 +1,4 @@
+# VERSION_ESTADO_COMERCIAL_PERSISTENTE_PALMERAS_20260925 - visita/reserva no cierran la conversación; dudas conocidas siguen y desconocidas escalan
 # VERSION_FORMATO_VISUAL_GLOBAL_PALMERAS_20260925 - respuestas mas faciles de leer con saltos, negritas y emojis
 # VERSION_AJUSTES_CONVERSACION_PALMERAS_20260925 - cierres lógicos, cambios de fase naturales, sin firma y gestor USA
 # VERSION_PALMERAS_VISITAS_NATURALES_20260925 - reconoce dia+hora natural y evita preguntas redundantes
@@ -1753,7 +1754,12 @@ def obtener_estado_conversacion(numero):
             "palmeras_esperando_cliente": False,
             "palmeras_esperando_gabriel": False,
             "palmeras_requiere_intervencion": False,
-            "palmeras_ultima_propuesta": None
+            "palmeras_ultima_propuesta": None,
+            "palmeras_visita_agendada": False,
+            "palmeras_visita_dia": None,
+            "palmeras_visita_hora": None,
+            "palmeras_reserva_en_curso": False,
+            "palmeras_reserva_fase": None
         }
 
     return estado_conversacion[numero]
@@ -8335,6 +8341,11 @@ def _estado_palmeras(numero):
         "palmeras_esperando_gabriel": False,
         "palmeras_requiere_intervencion": False,
         "palmeras_ultima_propuesta": None,
+        "palmeras_visita_agendada": False,
+        "palmeras_visita_dia": None,
+        "palmeras_visita_hora": None,
+        "palmeras_reserva_en_curso": False,
+        "palmeras_reserva_fase": None,
     }
     for clave, valor in defaults.items():
         estado.setdefault(clave, valor)
@@ -9157,6 +9168,9 @@ def _palmeras_manejar_visita(numero, texto):
         _actualizar_estado_palmeras(
             numero,
             palmeras_etapa="visita_agendada",
+            palmeras_visita_agendada=True,
+            palmeras_visita_dia=estado.get("dia"),
+            palmeras_visita_hora=estado.get("hora"),
             palmeras_esperando_cliente=False,
             palmeras_pregunta_pendiente=None,
         )
@@ -9203,25 +9217,31 @@ def _palmeras_manejar_visita(numero, texto):
 
 def _palmeras_respuesta_reserva(numero, texto):
     fase = _palmeras_detectar_fase(texto)
+    cambios = {
+        "palmeras_etapa": "reserva",
+        "palmeras_reserva_en_curso": True,
+        "palmeras_esperando_cliente": True,
+        "palmeras_pregunta_pendiente": "fase para reservar",
+    }
     if fase in {"fase_1", "fase_2"}:
-        _actualizar_estado_palmeras(numero, palmeras_fase=fase)
-    _actualizar_estado_palmeras(
-        numero,
-        palmeras_etapa="reserva",
-        palmeras_esperando_cliente=True,
-        palmeras_pregunta_pendiente="fase para reservar"
-    )
+        cambios["palmeras_fase"] = fase
+        cambios["palmeras_reserva_fase"] = fase
+    _actualizar_estado_palmeras(numero, **cambios)
     _palmeras_marcar_crm(numero, "Interesado", "Cliente interesado en reservar Palmeras")
+
     if fase in {"fase_1", "fase_2"}:
         nombre = "Fase 1" if fase == "fase_1" else "Fase 2"
+        # La disponibilidad de un lote específico nunca se asume. Se escala a Gabriel,
+        # pero el cliente puede seguir haciendo preguntas mientras se confirma.
         _palmeras_marcar_intervencion(numero, f"Confirmar disponibilidad para reserva en {nombre}")
         return (
-            "Claro 😊 La reserva se realiza con *Q3,000* y DPI o pasaporte. Ese monto forma parte del enganche y el lote queda apartado durante *15 días* mientras completa requisitos y define la forma de pago.\n\n"
+            "Claro 😊 La reserva se realiza con *Q3,000* y DPI o pasaporte. Ese monto forma parte del enganche y el lote queda apartado durante *15 días* mientras completa requisitos y define la forma de pago. 🔑\n\n"
             "Si la operación no se completa dentro de ese plazo, el lote se libera y la reserva no es reembolsable.\n\n"
-            f"Como le interesa *{nombre}*, permítame confirmar la disponibilidad del lote que desea antes de indicarle el siguiente paso."
+            f"Como le interesa *{nombre}*, permítame confirmar la disponibilidad antes de indicarle el siguiente paso. Mientras tanto, con gusto puedo resolver cualquier duda que tenga sobre el proyecto 😊."
         )
+
     return (
-        "Claro 😊 Para reservar un terreno en *Palmeras San Miguel* puede hacerlo con *Q3,000* y presentar DPI o pasaporte. "
+        "Claro 😊 Para reservar un terreno en *Palmeras San Miguel* puede hacerlo con *Q3,000* y presentar DPI o pasaporte. 🔑\n\n"
         "La reserva forma parte del enganche y aparta el terreno durante *15 días* mientras completa requisitos y define la forma de pago.\n\n"
         "Si la operación no se completa dentro de ese plazo, el terreno se libera y la reserva no es reembolsable.\n\n"
         "*¿Ya tiene en mente Fase 1 o Fase 2?* 🏡"
@@ -9328,6 +9348,7 @@ def _palmeras_generar_abierto(numero, texto_cliente):
     meta_crm = crm_obtener_meta(numero)
     etapa_crm = str(meta_crm.get("etapa") or "")
     cliente_ya_compro = etapa_crm.strip().lower() == "venta"
+    visita_actual = dict(estado_visitas.get(numero, {})) if numero in estado_visitas else {}
     estado_resumido = {
         "fase": estado.get("palmeras_fase"),
         "forma_pago": estado.get("palmeras_forma_pago"),
@@ -9338,6 +9359,11 @@ def _palmeras_generar_abierto(numero, texto_cliente):
         "pregunta_pendiente": estado.get("palmeras_pregunta_pendiente"),
         "cotizacion_enviada": estado.get("palmeras_cotizacion_enviada"),
         "video_enviado": estado.get("palmeras_video_enviado"),
+        "visita_agendada": bool(estado.get("palmeras_visita_agendada") or visita_actual.get("cerrada")),
+        "visita_dia": estado.get("palmeras_visita_dia") or visita_actual.get("dia"),
+        "visita_hora": estado.get("palmeras_visita_hora") or visita_actual.get("hora"),
+        "reserva_en_curso": bool(estado.get("palmeras_reserva_en_curso")),
+        "reserva_fase": estado.get("palmeras_reserva_fase"),
     }
     instrucciones = f"""
 Usted ES Gabriel Polero atendiendo personalmente por WhatsApp.
@@ -9352,7 +9378,11 @@ ESTADO COMERCIAL ACTUAL:
 
 REGLAS DE CONVERSACIÓN:
 - El mensaje actual SIEMPRE tiene prioridad. El cliente puede cambiar de tema, fase, forma de pago, visita o reserva en cualquier momento.
+- ESTADO COMERCIAL y TEMA ACTUAL son cosas distintas. Haber agendado una visita, estar reservando o haber avanzado en la compra NUNCA cierra la conversación. El cliente puede seguir haciendo todas las consultas que quiera.
 - Responda primero exactamente lo que el cliente acaba de preguntar. No obligue al cliente a volver al paso anterior del protocolo.
+- Si visita_agendada es true, conserve día y hora en memoria. Responda dudas posteriores normalmente y NO vuelva a ofrecer, pedir ni agendar otra visita, salvo que el cliente expresamente quiera cambiarla, cancelarla, confirmar el horario o pregunte por la cita.
+- Si reserva_en_curso es true, responda dudas posteriores normalmente. No vuelva a explicar ni ofrecer la reserva en cada respuesta. No diga que un lote específico ya quedó reservado o disponible mientras esa disponibilidad no haya sido confirmada.
+- Después de una visita agendada o una reserva iniciada, use TODA la ficha oficial para contestar preguntas de precios, pagos, servicios, construcción, agua, requisitos, escrituras, ubicación y amenidades igual que antes.
 - NUNCA repita ni copie la pregunta del cliente como primera línea, encabezado o cita. Empiece directamente con la respuesta.
 - No vuelva a mandar toda la información del proyecto.
 - No interrogue. Como máximo UNA pregunta al final. La pregunta final es OPCIONAL: si no aporta valor, termine la respuesta sin preguntar nada.
@@ -9382,9 +9412,11 @@ REGLAS DE CONVERSACIÓN:
 - Si el cliente dice que lo pensará, respete su decisión y no presione.
 
 IMPORTANTE SOBRE DATOS DESCONOCIDOS:
-Si la pregunta NO puede responderse de forma segura usando únicamente la ficha oficial y el historial, NO invente.
+Si la pregunta NO puede responderse de forma segura usando únicamente la ficha oficial y el historial, NO invente ni complete por intuición.
+Esto aplica especialmente a disponibilidad de lotes específicos, aprobaciones especiales, fechas exactas no indicadas, procesos legales no documentados, tarifas no indicadas o cualquier dato del que no esté seguro.
 En ese caso establezca "puede_responder" en false y escriba una respuesta natural en primera persona como:
 "Permítame confirmarle ese detalle para darle la información correcta 😊."
+El sistema avisará a Gabriel para intervención. Aunque exista una duda pendiente de Gabriel, el cliente puede seguir haciendo otras preguntas y usted debe responder las que sí estén respaldadas por la ficha.
 
 Devuelva EXCLUSIVAMENTE JSON válido con este formato:
 {{"puede_responder": true, "mensaje": "texto para el cliente", "sugerir_visita": false}}
@@ -9795,6 +9827,23 @@ def manejar_nuevo_cerebro_palmeras(numero, texto, message_id=None):
             _actualizar_estado_palmeras(
                 numero,
                 palmeras_etapa="coordinando_visita",
+                palmeras_esperando_gabriel=False,
+                palmeras_requiere_intervencion=False,
+            )
+        elif estado.get("palmeras_visita_agendada") or cita_ya_cerrada(numero):
+            # La conversación sigue abierta, pero la cita permanece como estado comercial
+            # para no volver a pedir día/hora ni ofrecer otra visita por accidente.
+            _actualizar_estado_palmeras(
+                numero,
+                palmeras_etapa="visita_agendada",
+                palmeras_visita_agendada=True,
+                palmeras_esperando_gabriel=False,
+                palmeras_requiere_intervencion=False,
+            )
+        elif estado.get("palmeras_reserva_en_curso"):
+            _actualizar_estado_palmeras(
+                numero,
+                palmeras_etapa="reserva",
                 palmeras_esperando_gabriel=False,
                 palmeras_requiere_intervencion=False,
             )
