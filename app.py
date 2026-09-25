@@ -1,3 +1,4 @@
+# VERSION_BIENVENIDA_PALMERAS_GUIADA_20260925 - bienvenida IA guiada, no fija
 # VERSION_BIENVENIDA_PALMERAS_DIRECTA_20260925
 # VERSION_BIENVENIDA_PALMERAS_CONVERSACIONAL_20260925
 # VERSION_NUEVO_CEREBRO_PALMERAS_20260925 - conversación progresiva, memoria comercial e intervención Gabriel
@@ -8422,12 +8423,15 @@ def _palmeras_generar_bienvenida(numero, texto_cliente, modo="informacion"):
         objetivo = (
             "Este es un cliente que pidió información general. NO convierta la respuesta en una ficha técnica ni en un catálogo. "
             "Preséntese como Gabriel Polero, asesor de ventas de Multiproyectos DIVE y converse de forma natural. "
-            "Use una frase como 'Fíjese que en Palmeras San Miguel actualmente le puedo ofrecer dos fases' o una variante natural. "
-            "Explique SOLO lo necesario para este primer paso: ambas fases son 8x16; Fase 1 Q67,200 con piscina y área verde; "
-            "Fase 2 Q70,400 con área verde y acceso interno a la piscina de Fase 1 porque las fases estarán conectadas; "
-            "ubicación Zona 5 de Retalhuleu, camino a La Verde; y, como máximo, una frase corta indicando que ambas fases son de "
-            "topografía plana. Luego diga que compartirá los planos y termine "
-            "preguntando cuál fase le parece más atractiva. NO explique todavía formas de pago, reserva, requisitos, construcción, "
+            "La respuesta debe seguir ESTA SECUENCIA COMERCIAL, aunque puede variar ligeramente las palabras: "
+            "1) saludo + presentación; 2) decir que en Palmeras San Miguel hay 2 fases disponibles; "
+            "3) indicar que en ambas fases hay terrenos 8x16 y topografía plana; "
+            "4) presentar Fase 1 Q67,200 con piscina y área verde; "
+            "5) presentar Fase 2 Q70,400 con área verde y acceso interno a la piscina de Fase 1; "
+            "6) ubicación Zona 5 de Retalhuleu, camino a La Verde; "
+            "7) decir que compartirá los planos; 8) cerrar preguntando cuál fase le parece más atractiva. "
+            "NO cambie el orden general. NO agregue otros temas. NO use expresiones como 'Fíjese', 'Mire' o 'Le cuento'. "
+            "NO use palabras innecesariamente técnicas como 'parcelas'. NO explique todavía formas de pago, reserva, requisitos, construcción, "
             "tiempo de urbanización, escrituración, gastos, consumo de agua, garita, muro, renders, ni ningún otro detalle que el cliente no pidió."
         )
 
@@ -8445,10 +8449,27 @@ ESTILO OBLIGATORIO DEL PRIMER MENSAJE:
 - Muy fácil de leer: párrafos cortos y saltos de línea.
 - Use *negritas de WhatsApp* con un solo asterisco para destacar fase/precio/dato clave.
 - Use entre 4 y 7 emojis naturales, bien repartidos y sin saturar.
+- Mantenga una estructura visual parecida al EJEMPLO GUÍA de abajo: presentación, introducción, fases, ubicación, planos y pregunta final.
+- Puede variar palabras y pequeñas frases para sonar humano, pero NO debe alterar el orden, inventar apartados ni convertirlo en ficha técnica.
 - No haga un bloque enorme.
 - Haga solamente UNA pregunta al final.
 - No envíe links.
 - NO entregue información que corresponde a pasos posteriores del protocolo.
+
+EJEMPLO GUÍA DE TONO Y ESTRUCTURA (NO COPIAR LITERALMENTE; USARLO COMO MODELO):
+¡{saludo}! 👋 Le saluda *Gabriel Polero, asesor de ventas de Multiproyectos DIVE* 😊
+
+En *Palmeras San Miguel* actualmente contamos con *2 fases disponibles* 🏡✨
+En ambas fases tenemos terrenos de *8x16 m* y topografía plana.
+
+🏊 *Fase 1:* desde *Q67,200*, con piscina y área verde.
+🌳 *Fase 2:* desde *Q70,400*, con área verde y acceso interno a la piscina de Fase 1.
+
+El proyecto está ubicado en *Zona 5 de Retalhuleu, camino a La Verde* 📍
+
+Le comparto los planos para que pueda comparar ambas opciones 📄😊
+
+*¿Cuál de las dos fases le parece más atractiva?*
 
 DATOS OFICIALES:
 {PALMERAS_FICHA_OFICIAL}
@@ -8466,8 +8487,39 @@ No invente nada. Redacte con sus propias palabras, como Gabriel Polero atendiend
             input=[{"role": "user", "content": texto_cliente}]
         )
         salida = formalizar_trato_usted((r.output_text or "").strip())
-        if salida:
+        salida_norm = normalizar_ventas(salida)
+        requeridos = [
+            "gabriel polero", "multiproyectos dive", "palmeras san miguel",
+            "fase 1", "67200", "fase 2", "70400", "8x16",
+            "zona 5", "la verde", "plano"
+        ]
+        prohibidos = ["fijese", "mire", "le cuento", "parcelas disponibles", "ficha tecnica"]
+        es_valida = bool(salida) and all(x in salida_norm.replace(",", "") for x in requeridos) and not any(x in salida_norm for x in prohibidos)
+        if es_valida:
             return salida
+
+        # Si la primera redacción se aleja del protocolo, pedimos una segunda versión
+        # manteniendo libertad de palabras pero siguiendo mucho más de cerca la estructura guía.
+        correccion = f"""
+Reescriba su respuesta anterior. Mantenga un tono humano, pero siga muy de cerca esta secuencia:
+1. {saludo} + presentación como Gabriel Polero, asesor de ventas de Multiproyectos DIVE.
+2. Palmeras San Miguel: 2 fases disponibles.
+3. Ambas fases: terrenos 8x16 y topografía plana.
+4. Fase 1: Q67,200, piscina y área verde.
+5. Fase 2: Q70,400, área verde y acceso interno a piscina de Fase 1.
+6. Ubicación: Zona 5 de Retalhuleu, camino a La Verde.
+7. Indicar que compartirá los planos.
+8. Una sola pregunta final: cuál fase le parece más atractiva.
+Use párrafos cortos, negritas de WhatsApp y emojis naturales. No use 'Fíjese', 'Mire', 'Le cuento' ni 'parcelas'. No agregue pagos, requisitos ni otros temas. No copie mecánicamente; redacte con sus palabras.
+"""
+        r2 = client.responses.create(
+            model="gpt-5-mini",
+            instructions=instrucciones + "\n" + correccion,
+            input=[{"role": "user", "content": texto_cliente}]
+        )
+        salida2 = formalizar_trato_usted((r2.output_text or "").strip())
+        if salida2:
+            return salida2
     except Exception as exc:
         print("PALMERAS BIENVENIDA IA ERROR:", exc)
 
