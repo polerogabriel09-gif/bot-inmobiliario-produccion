@@ -1,3 +1,4 @@
+# VERSION_PRIORIDADES_INTENCION_Y_SIN_ECO_20260925 - giros libres + no repetir pregunta del cliente
 # VERSION_PALMERAS_CAMBIO_MODALIDAD_PRIORITARIO_20260925
 # VERSION_VIDEO_PALMERAS_SIN_DUPLICADO_Y_CAPTION_CONTEXTUAL_20260925
 # VERSION_VIDEO_PALMERAS_LOGICA_Y_COMPRESION_20260925
@@ -226,6 +227,57 @@ def formalizar_trato_usted(texto):
             flags=re.IGNORECASE,
         )
     return texto
+
+
+def eliminar_eco_pregunta_cliente(respuesta, mensaje_cliente):
+    """
+    Evita que una respuesta de IA empiece repitiendo literalmente la pregunta
+    del cliente. Solo elimina el eco cuando aparece al INICIO; no toca citas o
+    referencias posteriores que sí sean útiles para la conversación.
+    """
+    respuesta = str(respuesta or "").strip()
+    mensaje_cliente = str(mensaje_cliente or "").strip()
+    if not respuesta or not mensaje_cliente:
+        return respuesta
+
+    def _norm(s):
+        s = normalizar_ventas(str(s or "")) if 'normalizar_ventas' in globals() else str(s or "").lower()
+        s = re.sub(r"[^a-z0-9áéíóúüñ\s]", " ", s, flags=re.IGNORECASE)
+        return " ".join(s.split())
+
+    objetivo = _norm(mensaje_cliente)
+    if not objetivo:
+        return respuesta
+
+    lineas = respuesta.splitlines()
+    # Quita líneas vacías iniciales sin alterar el resto del formato.
+    while lineas and not lineas[0].strip():
+        lineas.pop(0)
+    if not lineas:
+        return respuesta
+
+    primera = lineas[0].strip().strip('\"“”')
+    primera_norm = _norm(primera)
+
+    # Caso típico: el modelo imprime exactamente la pregunta como primera línea.
+    if primera_norm == objetivo:
+        lineas.pop(0)
+        while lineas and not lineas[0].strip():
+            lineas.pop(0)
+        return "\n".join(lineas).strip()
+
+    # Variante: "Pregunta del cliente: ..." / "Cliente: ...".
+    prefijos = ["pregunta del cliente", "cliente", "pregunta"]
+    for prefijo in prefijos:
+        if primera_norm.startswith(prefijo + " "):
+            resto = primera_norm[len(prefijo):].strip()
+            if resto == objetivo:
+                lineas.pop(0)
+                while lineas and not lineas[0].strip():
+                    lineas.pop(0)
+                return "\n".join(lineas).strip()
+
+    return respuesta
 
 # ============================================================
 # NTFY - NOTIFICACIONES NATIVAS EN ANDROID
@@ -5769,6 +5821,10 @@ REGLA CRITICA: NUNCA MEZCLAR PROYECTOS
 REGLA CRITICA: RESPONDER COMO VENDEDOR, NO COMO MENU
 ============================================================
 
+NUNCA repita, copie ni cite la pregunta del cliente como encabezado o primera línea.
+Responda directamente. Si el cliente pregunta "¿Puedo abonar más dinero?", empiece con
+"Sí, puede..." y NO vuelva a escribir la pregunta.
+
 Interpreta la intención REAL del cliente usando el mensaje actual, el historial,
 el proyecto activo y lo que ya se le respondió o envió.
 
@@ -6959,7 +7015,8 @@ Debes:
         )
 
 
-        texto_respuesta = respuesta.output_text
+        texto_respuesta = eliminar_eco_pregunta_cliente(respuesta.output_text, mensaje_cliente)
+        texto_respuesta = formalizar_trato_usted(texto_respuesta)
 
 
         # ====================================================
@@ -8358,6 +8415,122 @@ def _palmeras_detectar_modalidad(texto):
     return None
 
 
+def _palmeras_modalidades_mencionadas(texto):
+    """Devuelve las modalidades realmente mencionadas, sin escoger una por error."""
+    t = normalizar_ventas(texto)
+    mods = []
+    if any(x in t for x in ["semicontado", "semi contado", "1 ano sin intereses", "un ano sin intereses", "11 cuotas", "sin intereses"]):
+        mods.append("semicontado")
+    if any(x in t for x in ["contado", "de una vez", "pago completo", "pagar todo"]):
+        mods.append("contado")
+    if any(x in t for x in ["financiamiento", "financiado", "a cuotas", "mensual", "2 anos", "3 anos", "4 anos", "5 anos", "6 anos", "7 anos", "8 anos"]):
+        mods.append("financiamiento")
+    return list(dict.fromkeys(mods))
+
+
+def _palmeras_modalidad_unica(texto):
+    t = normalizar_ventas(texto)
+    if any(x in t for x in ["las tres", "los tres", "todas las opciones", "las 3", "3 opciones"]):
+        return "todas"
+    mods = _palmeras_modalidades_mencionadas(texto)
+    return mods[0] if len(mods) == 1 else None
+
+
+def _palmeras_es_eleccion_modalidad(texto):
+    """
+    Distingue escoger/cambiar de plan de simplemente hacer una pregunta sobre él.
+    "financiamiento" o "mejor quiero contado" sí;
+    "¿el financiamiento tiene intereses?" no.
+    """
+    modalidad = _palmeras_modalidad_unica(texto)
+    if modalidad not in {"financiamiento", "semicontado", "contado", "todas"}:
+        return None
+    t = normalizar_ventas(texto).strip()
+    simples = {
+        "financiamiento", "financiado", "a cuotas",
+        "semicontado", "semi contado", "sin intereses", "plan sin intereses",
+        "contado", "de contado", "las tres", "todas", "todas las opciones"
+    }
+    if t in simples:
+        return modalidad
+    indicadores = [
+        "me interesa", "prefiero", "quiero", "mejor", "escojo", "elijo",
+        "me quedo con", "muestreme", "muestreme", "quiero ver", "revisemos",
+        "quiero revisar", "veamos"
+    ]
+    if any(x in t for x in indicadores):
+        return modalidad
+    return None
+
+
+def _palmeras_consulta_monto_modalidad(texto):
+    """Detecta cuando pide el monto concreto de una sola modalidad."""
+    modalidad = _palmeras_modalidad_unica(texto)
+    if modalidad not in {"financiamiento", "semicontado", "contado"}:
+        return None
+    t = normalizar_ventas(texto)
+    claves = [
+        "cuanto", "precio", "cuota", "mensualidad", "cuanto queda",
+        "cuanto seria", "cuanto pago", "en cuanto queda", "valor"
+    ]
+    return modalidad if any(x in t for x in claves) else None
+
+
+def _palmeras_es_eleccion_fase(texto):
+    """
+    Distingue elegir/cambiar de fase de simplemente preguntar por una fase.
+    Ej.: "mejor quiero Fase 2" sí cambia; "¿Fase 2 tiene piscina?" no.
+    """
+    fase = _palmeras_detectar_fase(texto)
+    if fase not in {"fase_1", "fase_2"}:
+        return None
+    t = normalizar_ventas(texto).strip()
+    simples_f1 = {"fase 1", "fase1", "primera fase", "la primera", "primera"}
+    simples_f2 = {"fase 2", "fase2", "segunda fase", "la segunda", "segunda"}
+    if t in simples_f1 | simples_f2:
+        return fase
+    indicadores = [
+        "me interesa", "me gusta mas", "prefiero", "quiero la fase",
+        "quiero fase", "mejor fase", "mejor la fase", "mejor quiero",
+        "elijo", "escojo", "me quedo con", "tomemos", "revisemos"
+    ]
+    if any(x in t for x in indicadores):
+        return fase
+    return None
+
+
+def _palmeras_tiene_pregunta_real(texto):
+    t = str(texto or "").strip()
+    tn = normalizar_ventas(t)
+    return ("?" in t or "¿" in t or any(tn.startswith(x) for x in [
+        "cuanto", "como", "donde", "cuando", "que", "cual", "puedo",
+        "tiene", "hay", "se puede", "y si", "por que", "porque"
+    ]))
+
+
+def _palmeras_intencion_actual(texto):
+    """Capa general de prioridades para permitir giros naturales de conversación."""
+    especiales = _palmeras_es_pregunta_conocida_especial(texto) if '_palmeras_es_pregunta_conocida_especial' in globals() else {}
+    fase_elegida = _palmeras_es_eleccion_fase(texto)
+    modalidades = _palmeras_modalidades_mencionadas(texto)
+    modalidad = _palmeras_modalidad_unica(texto)
+    modalidad_elegida = _palmeras_es_eleccion_modalidad(texto)
+    consulta_monto_modalidad = _palmeras_consulta_monto_modalidad(texto)
+    return {
+        "visita": bool(especiales.get("visita")),
+        "reserva": bool(especiales.get("reserva")),
+        "fase_elegida": fase_elegida,
+        "fase_mencionada": _palmeras_detectar_fase(texto),
+        "modalidades": modalidades,
+        "modalidad": modalidad,
+        "modalidad_elegida": modalidad_elegida,
+        "consulta_monto_modalidad": consulta_monto_modalidad,
+        "compara_modalidades": len(modalidades) > 1,
+        "plazo": _palmeras_detectar_plazo(texto),
+        "pregunta": _palmeras_tiene_pregunta_real(texto),
+    }
+
+
 def _palmeras_detectar_plazo(texto):
     t = normalizar_ventas(texto)
     m = re.search(r"\b([2-8])\s*(?:anos|ano)\b", t)
@@ -8493,7 +8666,8 @@ No invente nada. Redacte con sus propias palabras, como Gabriel Polero atendiend
             instructions=instrucciones,
             input=[{"role": "user", "content": texto_cliente}]
         )
-        salida = formalizar_trato_usted((r.output_text or "").strip())
+        salida = eliminar_eco_pregunta_cliente((r.output_text or "").strip(), texto_cliente)
+        salida = formalizar_trato_usted(salida)
         salida_norm = normalizar_ventas(salida)
         requeridos = [
             "gabriel polero", "multiproyectos dive", "palmeras san miguel",
@@ -8524,7 +8698,8 @@ Use párrafos cortos, negritas de WhatsApp y emojis naturales. No use 'Fíjese',
             instructions=instrucciones + "\n" + correccion,
             input=[{"role": "user", "content": texto_cliente}]
         )
-        salida2 = formalizar_trato_usted((r2.output_text or "").strip())
+        salida2 = eliminar_eco_pregunta_cliente((r2.output_text or "").strip(), texto_cliente)
+        salida2 = formalizar_trato_usted(salida2)
         if salida2:
             return salida2
     except Exception as exc:
@@ -8848,14 +9023,18 @@ ESTADO COMERCIAL ACTUAL:
 {json.dumps(estado_resumido, ensure_ascii=False)}
 
 REGLAS DE CONVERSACIÓN:
-- Responda primero exactamente lo que el cliente acaba de preguntar.
+- El mensaje actual SIEMPRE tiene prioridad. El cliente puede cambiar de tema, fase, forma de pago, visita o reserva en cualquier momento.
+- Responda primero exactamente lo que el cliente acaba de preguntar. No obligue al cliente a volver al paso anterior del protocolo.
+- NUNCA repita ni copie la pregunta del cliente como primera línea, encabezado o cita. Empiece directamente con la respuesta.
 - No vuelva a mandar toda la información del proyecto.
 - No interrogue. Como máximo UNA pregunta al final.
+- No invente procedimientos que no estén en la ficha (por ejemplo, no ofrezca explicar "cómo registrar un abono" si ese procedimiento no está documentado).
+- Una pregunta técnica o informativa NO es por sí sola una señal para pedir visita. Responda y deje respirar la conversación.
 - Use párrafos cortos, saltos de línea, *negritas de WhatsApp* y 1-4 emojis cuando ayuden.
 - No envíe enlaces de Google Maps.
 - No invente disponibilidad, descuentos superiores al 3%, plazos legales, fechas exactas ni datos que no aparezcan en la ficha.
 - Si el cliente muestra intención alta, avance hacia visita o reserva sin obligarlo a seguir el protocolo inicial.
-- Si ya recibió una propuesta económica y muestra interés positivo, puede sugerir de manera natural conocer el proyecto, sin presionar.
+- Solo sugiera visita cuando el mensaje actual muestre interés claro en conocer el proyecto, una reacción positiva a una propuesta económica o intención de avanzar. No sugiera visita automáticamente después de preguntas técnicas.
 - Si existe una pregunta pendiente, puede retomarla solamente si resulta natural después de responder el mensaje actual.
 - Si el cliente dice que lo pensará, respete su decisión y no presione.
 
@@ -8882,7 +9061,8 @@ Devuelva EXCLUSIVAMENTE JSON válido con este formato:
         raw = (r.output_text or "").strip()
         m = re.search(r"\{.*\}", raw, flags=re.S)
         data = json.loads(m.group(0) if m else raw)
-        mensaje = formalizar_trato_usted(str(data.get("mensaje") or "").strip())
+        mensaje = eliminar_eco_pregunta_cliente(str(data.get("mensaje") or "").strip(), texto_cliente)
+        mensaje = formalizar_trato_usted(mensaje)
         return bool(data.get("puede_responder", True)), mensaje, bool(data.get("sugerir_visita", False))
     except Exception as exc:
         print("PALMERAS IA ABIERTA ERROR:", exc)
@@ -8921,6 +9101,18 @@ def manejar_nuevo_cerebro_palmeras(numero, texto, message_id=None):
     guardar_mensaje(numero, "user", texto)
 
     especiales = _palmeras_es_pregunta_conocida_especial(texto)
+    intencion = _palmeras_intencion_actual(texto)
+
+    # Capturamos decisiones explícitas ANTES de ejecutar una acción de mayor prioridad.
+    # Así, un bloque como "Fase 2, contado y quiero ir el sábado" no pierde Fase 2/contado
+    # aunque la visita sea lo primero que atendamos.
+    if intencion.get("fase_elegida") in {"fase_1", "fase_2"}:
+        estado["palmeras_fase"] = intencion["fase_elegida"]
+    if intencion.get("modalidad_elegida") in {"financiamiento", "semicontado", "contado"}:
+        estado["palmeras_forma_pago"] = intencion["modalidad_elegida"]
+    if intencion.get("plazo"):
+        estado["palmeras_plazo"] = intencion["plazo"]
+    persistir_cliente(numero)
 
     # Intención alta siempre rompe el protocolo.
     if especiales["visita"]:
@@ -8970,22 +9162,89 @@ def manejar_nuevo_cerebro_palmeras(numero, texto, message_id=None):
     entrada = _palmeras_detectar_entrada(texto)
     etapa = estado.get("palmeras_etapa")
     fase_directa = _palmeras_detectar_fase(texto)
-    modalidad_directa = _palmeras_detectar_modalidad(texto)
-    plazo_directo = _palmeras_detectar_plazo(texto)
+    fase_elegida = intencion.get("fase_elegida")
+    modalidad_directa = intencion.get("modalidad")
+    modalidad_elegida = intencion.get("modalidad_elegida")
+    consulta_monto_modalidad = intencion.get("consulta_monto_modalidad")
+    plazo_directo = intencion.get("plazo")
+
+    # ========================================================
+    # PRIORIDADES GENERALES DE CONVERSACIÓN
+    # ========================================================
+    # El protocolo es una ruta sugerida, no una cárcel. Una decisión nueva del
+    # cliente tiene prioridad sin importar en qué etapa venía la conversación.
+
+    # Cambio/elección explícita de fase durante una conversación ya avanzada.
+    if fase_elegida in {"fase_1", "fase_2"} and etapa not in {None, "inicio", "esperando_fase", "reserva"}:
+        fase_anterior = estado.get("palmeras_fase")
+        _actualizar_estado_palmeras(numero, palmeras_fase=fase_elegida)
+
+        # Si en el mismo mensaje también escogió modalidad o plazo, respondemos todo junto.
+        modalidad_para_propuesta = modalidad_elegida or consulta_monto_modalidad
+        if modalidad_para_propuesta or plazo_directo:
+            _palmeras_aplicar_propuesta(
+                numero,
+                fase_elegida,
+                modalidad_para_propuesta or "financiamiento",
+                plazo_directo
+            )
+            return True
+
+        # Si solamente cambió de fase, no imponemos una propuesta vieja.
+        nombre_fase = "Fase 1" if fase_elegida == "fase_1" else "Fase 2"
+        _actualizar_estado_palmeras(
+            numero,
+            palmeras_etapa="conversacion_abierta",
+            palmeras_esperando_cliente=False,
+            palmeras_pregunta_pendiente=None
+        )
+        _palmeras_enviar_y_recordar(
+            numero,
+            f"Perfecto 😊 Tomamos *{nombre_fase}* como la opción que desea revisar ahora. La mantengo como referencia para las siguientes preguntas."
+        )
+        return True
+
+    # Cambio de modalidad en CUALQUIER etapa cuando ya conocemos la fase.
+    # No depende de frases exactas como "me interesa": basta con que exista una
+    # única modalidad clara en el mensaje.
+    fase_contexto = estado.get("palmeras_fase")
+    modalidad_para_propuesta = modalidad_elegida or consulta_monto_modalidad
+    if (
+        fase_contexto in {"fase_1", "fase_2"}
+        and modalidad_para_propuesta in {"financiamiento", "semicontado", "contado", "todas"}
+        and etapa not in {None, "inicio", "esperando_fase"}
+    ):
+        _palmeras_aplicar_propuesta(numero, fase_contexto, modalidad_para_propuesta, plazo_directo)
+        return True
+
+    # Un plazo concreto siempre se interpreta como financiamiento si la fase ya está definida.
+    if (
+        fase_contexto in {"fase_1", "fase_2"}
+        and plazo_directo
+        and etapa not in {None, "inicio", "esperando_fase"}
+        and not intencion.get("compara_modalidades")
+    ):
+        _palmeras_aplicar_propuesta(numero, fase_contexto, "financiamiento", plazo_directo)
+        return True
+
+    # Si compara dos modalidades (ej. "contado o financiamiento"), NO escogemos una
+    # por él. Dejamos que la conversación abierta responda la comparación.
 
     # Si el cliente ya viene diciendo fase + forma/plazo, no lo obligamos a
     # recorrer preguntas que ya respondió. Saltamos directamente a su propuesta.
-    if not etapa and fase_directa in {"fase_1", "fase_2"} and (modalidad_directa or plazo_directo):
-        modalidad_directa = modalidad_directa or "financiamiento"
+    modalidad_inicial = modalidad_elegida or consulta_monto_modalidad
+    if not etapa and fase_elegida in {"fase_1", "fase_2"} and (modalidad_inicial or plazo_directo):
+        modalidad_inicial = modalidad_inicial or "financiamiento"
         _palmeras_enviar_y_recordar(
             numero,
-            f"Perfecto 😊 Tomo como referencia *{'Fase 1' if fase_directa == 'fase_1' else 'Fase 2'}* y la modalidad que me indicó."
+            f"Perfecto 😊 Tomo como referencia *{'Fase 1' if fase_elegida == 'fase_1' else 'Fase 2'}* y la modalidad que me indicó."
         )
-        _palmeras_aplicar_propuesta(numero, fase_directa, modalidad_directa, plazo_directo)
+        _palmeras_aplicar_propuesta(numero, fase_elegida, modalidad_inicial, plazo_directo)
         return True
 
     # Si simplemente eligió una fase desde el primer mensaje, avanzamos a formas de pago.
-    if not etapa and fase_directa in {"fase_1", "fase_2"}:
+    if not etapa and fase_elegida in {"fase_1", "fase_2"}:
+        fase_directa = fase_elegida
         _actualizar_estado_palmeras(
             numero,
             palmeras_fase=fase_directa,
@@ -9037,7 +9296,10 @@ def manejar_nuevo_cerebro_palmeras(numero, texto, message_id=None):
 
     # Esperando que escoja fase.
     if etapa in {"esperando_fase", "reserva"}:
-        fase = _palmeras_detectar_fase(texto)
+        fase_mencionada = _palmeras_detectar_fase(texto)
+        fase = _palmeras_es_eleccion_fase(texto)
+        if fase_mencionada == "ambas" and not _palmeras_tiene_pregunta_real(texto):
+            fase = "ambas"
         if fase == "ambas":
             respuesta = (
                 "Claro 😊 Puede revisar ambas. La *Fase 1* está en Q67,200 y la *Fase 2* en Q70,400.\n\n"
@@ -9047,7 +9309,7 @@ def manejar_nuevo_cerebro_palmeras(numero, texto, message_id=None):
             _actualizar_estado_palmeras(numero, palmeras_esperando_cliente=True, palmeras_pregunta_pendiente="qué fase revisar primero")
             return True
         if fase in {"fase_1", "fase_2"}:
-            modalidad_mismo_bloque = _palmeras_detectar_modalidad(texto)
+            modalidad_mismo_bloque = _palmeras_es_eleccion_modalidad(texto) or _palmeras_consulta_monto_modalidad(texto)
             plazo_mismo_bloque = _palmeras_detectar_plazo(texto)
 
             if modalidad_mismo_bloque or plazo_mismo_bloque:
@@ -9084,7 +9346,10 @@ def manejar_nuevo_cerebro_palmeras(numero, texto, message_id=None):
 
     # Esperando modalidad después del video.
     if etapa == "esperando_modalidad":
-        modalidad = _palmeras_detectar_modalidad(texto)
+        modalidad = _palmeras_es_eleccion_modalidad(texto) or _palmeras_consulta_monto_modalidad(texto)
+        # Si responde simplemente "financiamiento", "contado" o "sin intereses", es una elección.
+        if not modalidad and not _palmeras_tiene_pregunta_real(texto):
+            modalidad = _palmeras_modalidad_unica(texto)
         fase = estado.get("palmeras_fase")
         if modalidad:
             _palmeras_aplicar_propuesta(numero, fase, modalidad, _palmeras_detectar_plazo(texto))
@@ -9114,7 +9379,7 @@ def manejar_nuevo_cerebro_palmeras(numero, texto, message_id=None):
     if etapa in {"propuesta_enviada", "conversacion_abierta", "requiere_gabriel"}:
         fase = estado.get("palmeras_fase")
         modalidad = estado.get("palmeras_forma_pago")
-        nueva_modalidad = _palmeras_detectar_modalidad(texto)
+        nueva_modalidad = _palmeras_es_eleccion_modalidad(texto) or _palmeras_consulta_monto_modalidad(texto)
         nuevo_plazo = _palmeras_detectar_plazo(texto)
 
         if fase in {"fase_1", "fase_2"} and nueva_modalidad:
@@ -9148,7 +9413,11 @@ def manejar_nuevo_cerebro_palmeras(numero, texto, message_id=None):
         _palmeras_marcar_intervencion(numero, texto)
     else:
         _actualizar_estado_palmeras(numero, palmeras_etapa="conversacion_abierta", palmeras_esperando_gabriel=False, palmeras_requiere_intervencion=False)
-        if sugerir_visita and not cita_ya_cerrada(numero) and "?" not in respuesta[-8:]:
+        # No convierta cada respuesta técnica en una invitación a visitar.
+        # Solo aceptamos la sugerencia de la IA si el MENSAJE ACTUAL muestra una
+        # señal comercial clara.
+        señal_visita = _palmeras_texto_tiene_intencion_alta(texto) or _palmeras_reaccion_positiva(texto)
+        if sugerir_visita and señal_visita and not cita_ya_cerrada(numero) and "?" not in respuesta[-8:]:
             respuesta += "\n\n*¿Le gustaría que coordinemos una visita al proyecto?*"
             _actualizar_estado_palmeras(numero, palmeras_esperando_cliente=True, palmeras_pregunta_pendiente="si desea visitar")
     _palmeras_enviar_y_recordar(numero, respuesta)
