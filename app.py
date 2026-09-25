@@ -1,3 +1,4 @@
+# VERSION_SEGUIMIENTO_CONTROL_1_3_5_7_20260925 - seguimiento contextual + alertas Gabriel por inactividad
 # VERSION_VISITA_COMPLETA_PUNTO_ABIERTA_PALMERAS_20260925 - visita día+hora+punto, conversación siempre abierta
 # VERSION_ALERTAS_CRM_RESERVA_VISITA_PALMERAS_20260925 - alertas comerciales + entrada de reserva progresiva
 # VERSION_RELEVANCIA_RESPUESTA_PALMERAS_20260925 - responde solo lo pedido y evita informacion correcta pero innecesaria
@@ -8688,9 +8689,58 @@ def _palmeras_formatear_visual(texto):
     return "\n\n".join(resultado).strip()
 
 
+def _palmeras_extraer_ultima_pregunta_respuesta(texto):
+    """Extrae la última pregunta real de una respuesta para seguimientos coherentes."""
+    contenido = str(texto or "").strip()
+    if "?" not in contenido:
+        return None
+
+    # Trabajamos por bloques/líneas para evitar guardar todo el mensaje como pendiente.
+    candidatos = []
+    for bloque in re.split(r"[\n]+", contenido):
+        bloque = bloque.strip().strip("* ")
+        if "?" in bloque:
+            candidatos.append(bloque)
+
+    if not candidatos:
+        return None
+
+    pregunta = candidatos[-1].strip()
+    # Si la línea trae texto antes de la apertura de pregunta, nos quedamos con la pregunta.
+    pos = pregunta.rfind("¿")
+    if pos >= 0:
+        pregunta = pregunta[pos:]
+    pregunta = pregunta.strip().strip("* ")
+    return pregunta[:220] if pregunta else None
+
+
 def _palmeras_enviar_y_recordar(numero, texto):
     texto = formalizar_trato_usted(texto)
     texto = _palmeras_formatear_visual(texto)
+
+    # La última pregunta del bot define qué quedó pendiente. Así el seguimiento
+    # de 10 minutos / día 1 puede ser coherente incluso en conversación libre.
+    try:
+        estado = _estado_palmeras(numero)
+        if not estado.get("palmeras_esperando_gabriel") and not estado.get("palmeras_requiere_intervencion"):
+            pregunta = _palmeras_extraer_ultima_pregunta_respuesta(texto)
+            if pregunta:
+                _actualizar_estado_palmeras(
+                    numero,
+                    palmeras_esperando_cliente=True,
+                    palmeras_pregunta_pendiente=pregunta,
+                )
+            else:
+                # Si la respuesta no dejó ninguna pregunta, no perseguimos al cliente
+                # por inactividad solamente porque el bot terminó de responder.
+                _actualizar_estado_palmeras(
+                    numero,
+                    palmeras_esperando_cliente=False,
+                    palmeras_pregunta_pendiente=None,
+                )
+    except Exception as exc:
+        print("PALMERAS PENDIENTE SEGUIMIENTO ERROR:", exc)
+
     enviar_whatsapp(numero, texto)
     guardar_mensaje(numero, "assistant", texto)
     return texto
@@ -10174,14 +10224,24 @@ def _seguimiento_debe_detenerse(numero, version):
             return True
     if crm_esta_manual(numero):
         return True
-    if cita_ya_cerrada(numero):
-        return True
+
     meta = crm_obtener_meta(numero)
-    if meta.get("etapa") in {"Venta", "Reserva", "Perdido"}:
+    # Una reserva o una visita NO cierran la conversación. Solo detenemos
+    # definitivamente la secuencia si el lead ya está vendido/perdido.
+    if meta.get("etapa") in {"Venta", "Perdido"}:
         return True
+
     estado = obtener_estado_conversacion(numero)
     if estado.get("palmeras_esperando_gabriel") or estado.get("palmeras_requiere_intervencion"):
         return True
+
+    # En Palmeras solo damos seguimiento automático cuando el BOT dejó una
+    # pregunta real pendiente. Esto evita perseguir al cliente después de una
+    # confirmación de visita, una respuesta informativa o un cierre natural.
+    proyecto = estado.get("proyecto_actual") or proyecto_activo.get(numero)
+    if proyecto == "palmeras" and not estado.get("palmeras_esperando_cliente"):
+        return True
+
     return False
 
 
@@ -10198,34 +10258,67 @@ def _seguimiento_contexto(numero):
 
 def _mensaje_seguimiento_contextual(numero, momento="10m"):
     proyecto, nombre, estado = _seguimiento_contexto(numero)
-    pendiente = str(estado.get("palmeras_pregunta_pendiente") or "").lower() if proyecto == "palmeras" else ""
+    pendiente_raw = str(estado.get("palmeras_pregunta_pendiente") or "").strip() if proyecto == "palmeras" else ""
+    pendiente = pendiente_raw.lower()
 
     if momento == "10m":
         if proyecto == "palmeras":
+            if "punto" in pendiente and "visita" in pendiente:
+                return (
+                    "Quedó pendiente definir dónde nos encontramos para su visita 😊. "
+                    "Puede ser *directamente en Palmeras San Miguel* o en *Centro Comercial La Trinidad*. "
+                    "*¿Cuál le queda más cómodo?* 📍"
+                )
+            if "día y hora" in pendiente or ("día" in pendiente and "hora" in pendiente):
+                return (
+                    "Quedó pendiente coordinar su visita a *Palmeras San Miguel* 😊. "
+                    "*¿Qué día y a qué hora le quedaría bien?* 📅"
+                )
+            if "hora" in pendiente and "visita" in pendiente:
+                return "Quedó pendiente la hora de su visita 😊. *¿A qué hora le quedaría bien?* 📅"
+            if "día" in pendiente and "visita" in pendiente:
+                return "Quedó pendiente el día de su visita 😊. *¿Qué día le quedaría bien?* 📅"
             if "fase" in pendiente:
                 return (
                     "Quedó pendiente saber cuál de las dos fases le parece más atractiva 😊. "
-                    "¿Le interesa más *Fase 1* o *Fase 2*?"
+                    "*¿Le interesa más Fase 1 o Fase 2?* 🏡"
                 )
             if "modalidad" in pendiente or "forma de pago" in pendiente:
                 return (
                     "Quedó pendiente la forma de pago 😊. "
-                    "¿Le gustaría revisar *financiamiento*, *1 año sin intereses* o *contado*?"
+                    "*¿Le gustaría revisar financiamiento, semicontado o contado?* 💳"
                 )
-            if "visita" in pendiente or "día" in pendiente or "hora" in pendiente:
+            if "planos" in pendiente or "se los comparta" in pendiente:
                 return (
-                    "Quedó pendiente coordinar su visita a *Palmeras San Miguel* 😊. "
-                    "¿Qué día le quedaría bien?"
+                    "Quedó pendiente si desea conocer los *planos y las fases disponibles* de Palmeras San Miguel 😊. "
+                    "*¿Desea que se los comparta?* 📄"
                 )
-            if "propuesta" in pendiente or "qué le parece" in pendiente:
-                return "¿Qué le pareció la propuesta que le compartí? 😊"
+            if "construir" in pendiente and "invers" in pendiente:
+                return (
+                    "Para poder orientarle mejor 😊, quedó pendiente saber si su idea es *construir más adelante* "
+                    "o si está viendo el terreno más como *inversión*. 🏡"
+                )
+            if "propuesta" in pendiente or "qué le parece" in pendiente or "que le parece" in pendiente:
+                return "Quedó pendiente saber qué le pareció la opción que revisamos 😊. *¿Cómo la ve hasta ahora?*"
+
+            # Conversación libre: reutilizamos únicamente la última pregunta que
+            # realmente dejó el bot. No agregamos información ni inventamos temas.
+            if pendiente_raw:
+                pregunta = pendiente_raw
+                if not pregunta.endswith("?"):
+                    pregunta += "?"
+                return (
+                    "Quedó pendiente esta parte de nuestra conversación 😊. "
+                    f"*{pregunta}*"
+                )
+
         return (
             f"Quedó pendiente nuestra conversación sobre *{nombre}* 😊. "
             "Si desea, continuamos desde donde quedamos."
         )
 
-    # Día 1: retoma la conversación sin repetir todo el paquete.
-    if proyecto == "palmeras":
+    # Día 1: retoma exactamente el pendiente sin volver a soltar toda la información.
+    if proyecto == "palmeras" and pendiente_raw:
         if "fase" in pendiente:
             return (
                 "¡Hola! 👋 Ayer dejamos pendiente cuál fase de *Palmeras San Miguel* le interesaba más. "
@@ -10236,15 +10329,47 @@ def _mensaje_seguimiento_contextual(numero, momento="10m"):
                 "¡Hola! 👋 Ayer dejamos pendiente revisar la forma de pago que mejor se adapte a usted en *Palmeras San Miguel*. "
                 "Con gusto continuamos desde donde quedamos 😊."
             )
-        if "visita" in pendiente or "día" in pendiente or "hora" in pendiente:
+        if "visita" in pendiente or "día" in pendiente or "hora" in pendiente or "punto" in pendiente:
             return (
-                "¡Hola! 👋 Ayer quedó pendiente coordinar su visita a *Palmeras San Miguel*. "
-                "Si todavía desea conocerlo, dígame qué día le queda cómodo y con gusto lo coordinamos 😊."
+                "¡Hola! 👋 Ayer dejamos pendiente un detalle para coordinar su visita a *Palmeras San Miguel*. "
+                "Si todavía desea conocerlo, con gusto continuamos desde donde quedamos 😊."
             )
+        return (
+            "¡Hola! 👋 Ayer quedó pendiente una parte de nuestra conversación sobre *Palmeras San Miguel*. "
+            f"Si desea, retomamos desde aquí: *{pendiente_raw}* 😊"
+        )
+
     return (
         f"¡Hola! 👋 Ayer dejamos pendiente la información de *{nombre}*. "
         "Si todavía desea continuar, con gusto retomamos desde donde quedamos 😊."
     )
+
+
+def _notificar_gabriel_sin_respuesta(numero, hito):
+    """
+    Avisa a Gabriel en sus notificaciones del CRM cuando el cliente sigue sin
+    responder en Día 1 / 3 / 5 / 7. La alerta NO pausa al bot y NO se envía al cliente.
+    """
+    proyecto, nombre, estado = _seguimiento_contexto(numero)
+    pendiente = str(estado.get("palmeras_pregunta_pendiente") or "").strip()
+    detalle = f"\nPendiente: {pendiente[:150]}" if pendiente else ""
+    aviso = (
+        f"⏳ Cliente sin responder · {hito} · {nombre}"
+        f"{detalle}\nPuede revisar el chat y darle seguimiento manual si lo considera conveniente."
+    )
+    event_id = f"sin-respuesta-{numero}-{hito}-{time.time_ns()}"
+
+    # Mismo esquema de alertas que usa el CRM para los mensajes entrantes.
+    try:
+        Thread(target=enviar_push_crm, args=(numero, aviso, event_id), daemon=True).start()
+    except Exception as exc:
+        print("ALERTA SIN RESPUESTA PUSH ERROR:", exc)
+    try:
+        Thread(target=enviar_ntfy_crm, args=(numero, aviso, event_id), daemon=True).start()
+    except Exception as exc:
+        print("ALERTA SIN RESPUESTA NTFY ERROR:", exc)
+
+    return True
 
 
 def enviar_template_whatsapp(numero, template_name):
@@ -10287,57 +10412,63 @@ def _enviar_seguimiento_libre(numero, texto):
 
 def programar_seguimiento_inactividad(numero):
     """
-    Cadencia global tras quedar el CLIENTE pendiente de responder:
-    - 10 minutos: seguimiento contextual.
-    - Día 1: seguimiento contextual dentro de 24h.
-    - Día 3 / 5 / 7: plantilla aprobada por Meta, si está configurada.
+    Cadencia global cuando el BOT dejó una pregunta pendiente y el cliente no responde:
+    - 10 minutos: UN solo seguimiento contextual.
+    - Día 1: seguimiento contextual dentro de la ventana de 24h + alerta a Gabriel.
+    - Día 3 / 5 / 7: plantilla aprobada por Meta (si está configurada) + alerta a Gabriel.
 
-    Cualquier mensaje nuevo del cliente cancela toda la secuencia anterior.
-    También se detiene si Gabriel toma control manual, hay visita cerrada,
-    reserva/venta/perdido o el bot está esperando una confirmación de Gabriel.
+    Si el cliente responde en cualquier momento, cancelar_seguimiento() invalida TODA
+    esta secuencia y la siguiente se calcula desde la nueva conversación. Gabriel también
+    puede tomar control manual y detenerla.
     """
     with lock_seguimiento:
         version = seguimiento_version.get(numero, 0) + 1
         seguimiento_version[numero] = version
 
     def esperar_y_enviar():
+        # 10 MINUTOS: exactamente un recordatorio, coherente con lo último pendiente.
         time.sleep(SEGUIMIENTO_10_MIN)
         if _seguimiento_debe_detenerse(numero, version):
             return
         _enviar_seguimiento_libre(numero, _mensaje_seguimiento_contextual(numero, "10m"))
 
-        # Total aproximado: 23h desde que se programó.
+        # DÍA 1 (23h para mantener el mensaje libre dentro de la ventana de WhatsApp).
         time.sleep(max(0, SEGUIMIENTO_DIA1 - SEGUIMIENTO_10_MIN))
         if _seguimiento_debe_detenerse(numero, version):
             return
+        _notificar_gabriel_sin_respuesta(numero, "Día 1")
         _enviar_seguimiento_libre(numero, _mensaje_seguimiento_contextual(numero, "dia1"))
 
-        # Día 3: requiere plantilla aprobada.
+        # DÍA 3: fuera de 24h, el cliente solo recibe mensaje si hay plantilla aprobada.
+        # La alerta de Gabriel SIEMPRE se genera aunque la plantilla todavía no exista.
         time.sleep(SEGUIMIENTO_DIA3_ESPERA)
         if _seguimiento_debe_detenerse(numero, version):
             return
+        _notificar_gabriel_sin_respuesta(numero, "Día 3")
         if WA_TEMPLATE_SEGUIMIENTO_DIA3:
             enviar_template_whatsapp(numero, WA_TEMPLATE_SEGUIMIENTO_DIA3)
         else:
-            print("SEGUIMIENTO DIA 3 OMITIDO: falta WA_TEMPLATE_SEGUIMIENTO_DIA3")
+            print("SEGUIMIENTO DIA 3 OMITIDO AL CLIENTE: falta WA_TEMPLATE_SEGUIMIENTO_DIA3")
 
-        # Día 5.
+        # DÍA 5.
         time.sleep(SEGUIMIENTO_DIA5_ESPERA)
         if _seguimiento_debe_detenerse(numero, version):
             return
+        _notificar_gabriel_sin_respuesta(numero, "Día 5")
         if WA_TEMPLATE_SEGUIMIENTO_DIA5:
             enviar_template_whatsapp(numero, WA_TEMPLATE_SEGUIMIENTO_DIA5)
         else:
-            print("SEGUIMIENTO DIA 5 OMITIDO: falta WA_TEMPLATE_SEGUIMIENTO_DIA5")
+            print("SEGUIMIENTO DIA 5 OMITIDO AL CLIENTE: falta WA_TEMPLATE_SEGUIMIENTO_DIA5")
 
-        # Día 7.
+        # DÍA 7: último intento automático. Después termina la secuencia.
         time.sleep(SEGUIMIENTO_DIA7_ESPERA)
         if _seguimiento_debe_detenerse(numero, version):
             return
+        _notificar_gabriel_sin_respuesta(numero, "Día 7")
         if WA_TEMPLATE_SEGUIMIENTO_DIA7:
             enviar_template_whatsapp(numero, WA_TEMPLATE_SEGUIMIENTO_DIA7)
         else:
-            print("SEGUIMIENTO DIA 7 OMITIDO: falta WA_TEMPLATE_SEGUIMIENTO_DIA7")
+            print("SEGUIMIENTO DIA 7 OMITIDO AL CLIENTE: falta WA_TEMPLATE_SEGUIMIENTO_DIA7")
 
         with lock_seguimiento:
             if seguimiento_version.get(numero) == version:
