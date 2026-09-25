@@ -21,6 +21,7 @@
 # VERSION_TRATO_USTED_GENERAL_20260831
 # VERSION_PREGUNTA_CALIDA_ABONOS_PALMERAS_20260925
 # VERSION_ESTILO_DINAMICO_PALMERAS_20260925
+# VERSION_ENTRADA_PRECIOS_PALMERAS_20260925 - entrada de precios/pagos reconoce la intención antes de presentar fases
 from flask import Flask, request, Response, redirect, url_for, render_template_string, jsonify, send_from_directory
 from openai import OpenAI
 from dotenv import load_dotenv
@@ -8683,10 +8684,16 @@ def _palmeras_generar_bienvenida(numero, texto_cliente, modo="informacion"):
     saludo = _palmeras_saludo_actual()
     if modo == "precios_pagos":
         objetivo = (
-            "El cliente pidió precios y formas de pago. Responda primero eso de forma CONVERSACIONAL y breve: "
-            "Fase 1 Q67,200 y Fase 2 Q70,400; mencione únicamente que manejamos financiamiento propio de 2 a 8 años, "
-            "plan semicontado de 11 meses sin intereses después del enganche y pago de contado. NO mande cuotas todavía. "
-            "Indique que compartirá los planos y termine preguntando cuál fase le interesa más."
+            "El cliente entró específicamente preguntando por PRECIOS Y FORMAS DE PAGO. "
+            "NO responda como si hubiera pedido información general sin reconocer su intención. "
+            "Después del saludo y la presentación, incluya una frase cálida y natural equivalente a: "
+            "'Con gusto le comparto los precios y opciones de pago 😊. Primero, permítame comentarle brevemente las opciones que tenemos en Palmeras San Miguel.' "
+            "Luego siga esta secuencia: 1) decir que hay 2 fases disponibles; 2) ambas son 8x16 m y topografía plana; "
+            "3) Fase 1 Q67,200 con piscina y área verde; 4) Fase 2 Q70,400 con área verde y acceso interno a la piscina de Fase 1; "
+            "5) ubicación Zona 5 de Retalhuleu, camino a La Verde; 6) decir que compartirá los planos; "
+            "7) terminar preguntando cuál fase le parece más atractiva para mostrarle las opciones de pago correspondientes. "
+            "NO mande todavía cuotas, cálculos ni detalles extensos de financiamiento. NO repita dos veces que compartirá precios. "
+            "La respuesta debe sentirse distinta de la entrada de información general porque reconoce desde el inicio que el cliente pidió precios/pagos."
         )
     else:
         objetivo = (
@@ -8714,7 +8721,8 @@ Saludo adecuado en Guatemala: {saludo}.
 ESTILO OBLIGATORIO DEL PRIMER MENSAJE:
 - Debe sonar como una conversación real de WhatsApp, NO como ficha técnica, brochure, listado de especificaciones ni contrato.
 - Empiece de forma profesional y directa. No use 'Fíjese', 'Mire', 'Le cuento' ni expresiones de demasiada confianza en el primer contacto.
-- Después de presentarse, empiece directamente con 'En Palmeras San Miguel...' o una variante profesional similar.
+- Si el modo es información general, después de presentarse puede empezar directamente con 'En Palmeras San Miguel...' o una variante profesional similar.
+- Si el modo es precios/pagos, después de presentarse RECONOZCA primero la solicitud con una frase cálida tipo 'Con gusto le comparto los precios y opciones de pago 😊' y luego introduzca las fases.
 - Muy fácil de leer: párrafos cortos y saltos de línea.
 - Use *negritas de WhatsApp* con un solo asterisco para destacar fase/precio/dato clave.
 - Use entre 4 y 7 emojis naturales, bien repartidos y sin saturar.
@@ -8724,6 +8732,12 @@ ESTILO OBLIGATORIO DEL PRIMER MENSAJE:
 - Haga solamente UNA pregunta al final.
 - No envíe links.
 - NO entregue información que corresponde a pasos posteriores del protocolo.
+
+REGLA ESPECIAL SI modo = precios_pagos:
+- El cliente ya dijo qué busca. Reconózcalo explícitamente antes de presentar las fases.
+- Puede usar una transición natural como: 'Con gusto le comparto los precios y opciones de pago 😊. Primero, permítame comentarle brevemente las opciones disponibles.'
+- NO convierta esa frase en una promesa de cotización exacta si todavía no ha elegido fase/plazo.
+- Después presente fases, ubicación y planos, y pregunte cuál fase quiere revisar para continuar con el pago.
 
 EJEMPLO GUÍA DE TONO Y ESTRUCTURA (NO COPIAR LITERALMENTE; USARLO COMO MODELO):
 ¡{saludo}! 👋 Le saluda *Gabriel Polero, asesor de ventas de Multiproyectos DIVE* 😊
