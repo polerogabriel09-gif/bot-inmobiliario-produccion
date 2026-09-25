@@ -1,3 +1,4 @@
+# VERSION_AJUSTES_CONVERSACION_PALMERAS_20260925 - cierres lógicos, cambios de fase naturales, sin firma y gestor USA
 # VERSION_PALMERAS_VISITAS_NATURALES_20260925 - reconoce dia+hora natural y evita preguntas redundantes
 # VERSION_PRIORIDADES_INTENCION_Y_SIN_ECO_20260925 - giros libres + no repetir pregunta del cliente
 # VERSION_PALMERAS_CAMBIO_MODALIDAD_PRIORITARIO_20260925
@@ -8292,6 +8293,8 @@ REQUISITOS ESTADOS UNIDOS / EXTRANJERO:
 - Enganche.
 - Constancia/comprobantes de remesas.
 - Datos generales del comprador.
+- Se necesita un gestor de confianza en Guatemala que firme en representación del comprador; puede ser un familiar o amigo de confianza.
+- El gestor únicamente firma en representación del comprador dentro del proceso. No se convierte en dueño, no adquiere derechos sobre el terreno y no tiene potestad para disponer de él. El propietario es únicamente el comprador que figura como titular.
 
 ESCRITURACIÓN:
 - Se firma contrato de compraventa.
@@ -9142,14 +9145,60 @@ def _palmeras_marcar_intervencion(numero, pregunta):
         print("PALMERAS NTFY INTERVENCION ERROR:", exc)
 
 
+def _palmeras_quitar_firma_innecesaria(mensaje):
+    """El cliente ya conversa con Gabriel; nunca añadimos una firma al final."""
+    texto = str(mensaje or "").strip()
+    if not texto:
+        return texto
+    # Firma al final de la misma línea: "... — Gabriel" / "... - Gabriel Polero".
+    texto = re.sub(
+        r"\s*[—–-]\s*Gabriel(?:\s+Polero)?\s*[.!]*\s*$",
+        "",
+        texto,
+        flags=re.IGNORECASE,
+    ).rstrip()
+    # Firma en una línea independiente al final.
+    texto = re.sub(
+        r"(?:\n\s*)+(?:[—–-]\s*)?Gabriel(?:\s+Polero)?\s*[.!]*\s*$",
+        "",
+        texto,
+        flags=re.IGNORECASE,
+    ).rstrip()
+    return texto
+
+
+def _palmeras_quitar_cierre_abono_incoherente(mensaje, cliente_ya_compro=False):
+    """Evita preguntas como '¿Desea hacer un abono ahora?' cuando aún es prospecto."""
+    texto = str(mensaje or "").strip()
+    if cliente_ya_compro or not texto:
+        return texto
+    parrafos = re.split(r"\n\s*\n", texto)
+    if not parrafos:
+        return texto
+    ultimo = normalizar_ventas(parrafos[-1])
+    patrones = [
+        "hacer un abono", "realizar un abono", "registrar un abono",
+        "programar un abono", "programarlos", "aplicar un abono",
+        "hacer el abono", "realizar el abono", "abono extra ahora",
+    ]
+    if "?" in parrafos[-1] and any(p in ultimo for p in patrones):
+        parrafos = parrafos[:-1]
+    return "\n\n".join(p for p in parrafos if p.strip()).strip()
+
+
 def _palmeras_generar_abierto(numero, texto_cliente):
     estado = _estado_palmeras(numero)
     historial = obtener_historial(numero)[-10:]
+    meta_crm = crm_obtener_meta(numero)
+    etapa_crm = str(meta_crm.get("etapa") or "")
+    cliente_ya_compro = etapa_crm.strip().lower() == "venta"
     estado_resumido = {
         "fase": estado.get("palmeras_fase"),
         "forma_pago": estado.get("palmeras_forma_pago"),
         "plazo": estado.get("palmeras_plazo"),
         "etapa": estado.get("palmeras_etapa"),
+        "etapa_crm": etapa_crm,
+        "cliente_ya_compro": cliente_ya_compro,
         "pregunta_pendiente": estado.get("palmeras_pregunta_pendiente"),
         "cotizacion_enviada": estado.get("palmeras_cotizacion_enviada"),
         "video_enviado": estado.get("palmeras_video_enviado"),
@@ -9170,11 +9219,16 @@ REGLAS DE CONVERSACIÓN:
 - Responda primero exactamente lo que el cliente acaba de preguntar. No obligue al cliente a volver al paso anterior del protocolo.
 - NUNCA repita ni copie la pregunta del cliente como primera línea, encabezado o cita. Empiece directamente con la respuesta.
 - No vuelva a mandar toda la información del proyecto.
-- No interrogue. Como máximo UNA pregunta al final.
+- No interrogue. Como máximo UNA pregunta al final. La pregunta final es OPCIONAL: si no aporta valor, termine la respuesta sin preguntar nada.
+- Antes de hacer una pregunta final, compruebe que tenga sentido con la etapa real del cliente y con lo que ya se sabe de la conversación.
+- Si cliente_ya_compro es false, NUNCA pregunte si desea hacer, registrar, programar o aplicar un abono ahora. El cliente todavía está evaluando la compra. Puede explicar cómo funcionan los abonos, pero no actuar como si ya tuviera una deuda activa.
 - No invente procedimientos que no estén en la ficha (por ejemplo, no ofrezca explicar "cómo registrar un abono" si ese procedimiento no está documentado).
+- No ofrezca ejecutar acciones que el sistema no puede realizar directamente, como cobrar, registrar pagos o aplicar abonos.
 - Una pregunta técnica o informativa NO es por sí sola una señal para pedir visita. Responda y deje respirar la conversación.
 - Use párrafos cortos, saltos de línea, *negritas de WhatsApp* y 1-4 emojis cuando ayuden.
+- Revise ortografía, concordancia y sentido antes de responder. Evite frases poco naturales o ambiguas.
 - Responda con calidez y lenguaje cotidiano de un asesor por WhatsApp; evite sonar técnico, jurídico o como manual salvo que el cliente realmente pregunte algo técnico.
+- NUNCA firme los mensajes con "Gabriel", "Gabriel Polero", "— Gabriel", "- Gabriel" ni despedidas de firma. El cliente ya está hablando directamente con Gabriel desde el inicio.
 - No envíe enlaces de Google Maps.
 - No invente disponibilidad, descuentos superiores al 3%, plazos legales, fechas exactas ni datos que no aparezcan en la ficha.
 - Si el cliente muestra intención alta, avance hacia visita o reserva sin obligarlo a seguir el protocolo inicial.
@@ -9207,6 +9261,8 @@ Devuelva EXCLUSIVAMENTE JSON válido con este formato:
         data = json.loads(m.group(0) if m else raw)
         mensaje = eliminar_eco_pregunta_cliente(str(data.get("mensaje") or "").strip(), texto_cliente)
         mensaje = formalizar_trato_usted(mensaje)
+        mensaje = _palmeras_quitar_firma_innecesaria(mensaje)
+        mensaje = _palmeras_quitar_cierre_abono_incoherente(mensaje, cliente_ya_compro=cliente_ya_compro)
         return bool(data.get("puede_responder", True)), mensaje, bool(data.get("sugerir_visita", False))
     except Exception as exc:
         print("PALMERAS IA ABIERTA ERROR:", exc)
@@ -9339,18 +9395,42 @@ def manejar_nuevo_cerebro_palmeras(numero, texto, message_id=None):
             )
             return True
 
-        # Si solamente cambió de fase, no imponemos una propuesta vieja.
+        # Si solamente cambió de fase, evitamos mensajes de sistema como
+        # "la mantengo como referencia". Respondemos con algo útil y natural.
         nombre_fase = "Fase 1" if fase_elegida == "fase_1" else "Fase 2"
+        modalidad_actual = estado.get("palmeras_forma_pago")
+        plazo_actual = estado.get("palmeras_plazo")
+
+        # Si ya veníamos revisando una modalidad concreta, mostramos la misma
+        # modalidad aplicada a la nueva fase: es la continuación más natural.
+        if modalidad_actual in {"financiamiento", "semicontado", "contado"}:
+            _palmeras_aplicar_propuesta(
+                numero,
+                fase_elegida,
+                modalidad_actual,
+                plazo_actual if modalidad_actual == "financiamiento" else None,
+            )
+            return True
+
         _actualizar_estado_palmeras(
             numero,
             palmeras_etapa="conversacion_abierta",
-            palmeras_esperando_cliente=False,
-            palmeras_pregunta_pendiente=None
+            palmeras_esperando_cliente=True,
+            palmeras_pregunta_pendiente="qué desea revisar de la fase elegida"
         )
-        _palmeras_enviar_y_recordar(
-            numero,
-            f"Perfecto 😊 Tomamos *{nombre_fase}* como la opción que desea revisar ahora. La mantengo como referencia para las siguientes preguntas."
-        )
+        if fase_elegida == "fase_1":
+            respuesta_fase = (
+                "Claro 😊 La *Fase 1* tiene terrenos de *8x16 m* desde *Q67,200*, "
+                "con piscina y área verde 🏊🌳.\n\n"
+                "*¿Qué le gustaría revisar de esta opción?*"
+            )
+        else:
+            respuesta_fase = (
+                "Claro 😊 La *Fase 2* tiene terrenos de *8x16 m* desde *Q70,400*, "
+                "con área verde y acceso interno a la piscina de Fase 1 🌳🏊.\n\n"
+                "*¿Qué le gustaría revisar de esta opción?*"
+            )
+        _palmeras_enviar_y_recordar(numero, respuesta_fase)
         return True
 
     # Cambio de modalidad en CUALQUIER etapa cuando ya conocemos la fase.
@@ -9384,10 +9464,6 @@ def manejar_nuevo_cerebro_palmeras(numero, texto, message_id=None):
     modalidad_inicial = modalidad_elegida or consulta_monto_modalidad
     if not etapa and fase_elegida in {"fase_1", "fase_2"} and (modalidad_inicial or plazo_directo):
         modalidad_inicial = modalidad_inicial or "financiamiento"
-        _palmeras_enviar_y_recordar(
-            numero,
-            f"Perfecto 😊 Tomo como referencia *{'Fase 1' if fase_elegida == 'fase_1' else 'Fase 2'}* y la modalidad que me indicó."
-        )
         _palmeras_aplicar_propuesta(numero, fase_elegida, modalidad_inicial, plazo_directo)
         return True
 
