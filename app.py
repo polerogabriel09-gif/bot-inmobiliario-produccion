@@ -1,3 +1,5 @@
+# VERSION_ALERTAS_CRM_RESERVA_VISITA_PALMERAS_20260925 - alertas comerciales + entrada de reserva progresiva
+# VERSION_RELEVANCIA_RESPUESTA_PALMERAS_20260925 - responde solo lo pedido y evita informacion correcta pero innecesaria
 # VERSION_ESTADO_COMERCIAL_PERSISTENTE_PALMERAS_20260925 - visita/reserva no cierran la conversación; dudas conocidas siguen y desconocidas escalan
 # VERSION_FORMATO_VISUAL_GLOBAL_PALMERAS_20260925 - respuestas mas faciles de leer con saltos, negritas y emojis
 # VERSION_AJUSTES_CONVERSACION_PALMERAS_20260925 - cierres lógicos, cambios de fase naturales, sin firma y gestor USA
@@ -1759,7 +1761,11 @@ def obtener_estado_conversacion(numero):
             "palmeras_visita_dia": None,
             "palmeras_visita_hora": None,
             "palmeras_reserva_en_curso": False,
-            "palmeras_reserva_fase": None
+            "palmeras_reserva_fase": None,
+            "palmeras_alerta_visita_enviada": False,
+            "palmeras_alerta_visita_agendada_enviada": False,
+            "palmeras_alerta_reserva_enviada": False,
+            "palmeras_reserva_presentacion_ofrecida": False
         }
 
     return estado_conversacion[numero]
@@ -8346,6 +8352,10 @@ def _estado_palmeras(numero):
         "palmeras_visita_hora": None,
         "palmeras_reserva_en_curso": False,
         "palmeras_reserva_fase": None,
+        "palmeras_alerta_visita_enviada": False,
+        "palmeras_alerta_visita_agendada_enviada": False,
+        "palmeras_alerta_reserva_enviada": False,
+        "palmeras_reserva_presentacion_ofrecida": False,
     }
     for clave, valor in defaults.items():
         estado.setdefault(clave, valor)
@@ -8604,7 +8614,7 @@ def _palmeras_formatear_visual(texto):
     # Resalta cifras/datos muy frecuentes cuando la IA los dejó en texto plano.
     patrones_negrita = [
         r"(?<!\*)Q\s?\d[\d,]*(?:\.\d{1,2})?(?!\*)",
-        r"(?<!\*)\d{1,3}%(?!\*)",
+        r"(?<![\d*])\d{1,3}%(?!\*)",
         r"(?<!\*)\b2\s+a\s+8\s+años\b(?!\*)",
         r"(?<!\*)\b11\s+cuotas\b(?!\*)",
         r"(?<!\*)\b15\s+días\b(?!\*)",
@@ -8688,6 +8698,86 @@ def _palmeras_marcar_crm(numero, etapa=None, accion=""):
         etapa or meta.get("etapa") or "Nuevo lead",
         accion,
         meta.get("proxima_accion_fecha") or ""
+    )
+
+
+def _palmeras_alertar_interes_comercial(numero, tipo, detalle=""):
+    """
+    Marca en el CRM y envía una alerta especial cuando el cliente expresa
+    intención de visitar o reservar. No interrumpe la conversación del bot.
+    Las alertas se envían una sola vez por intención para evitar spam.
+    """
+    estado = _estado_palmeras(numero)
+    tipo = str(tipo or "").strip().lower()
+
+    if tipo == "visita":
+        clave = "palmeras_alerta_visita_enviada"
+        if estado.get(clave):
+            return False
+        estado[clave] = True
+        accion = "📅 Cliente quiere visitar Palmeras San Miguel"
+        etapa = "Visita pendiente"
+        aviso = "📅 Cliente quiere coordinar una visita a Palmeras San Miguel"
+    elif tipo == "visita_agendada":
+        clave = "palmeras_alerta_visita_agendada_enviada"
+        if estado.get(clave):
+            return False
+        estado[clave] = True
+        detalle_txt = str(detalle or "").strip()
+        accion = f"✅ Visita agendada Palmeras{': ' + detalle_txt if detalle_txt else ''}"
+        etapa = "Visita pendiente"
+        aviso = f"✅ Visita agendada en Palmeras{': ' + detalle_txt if detalle_txt else ''}"
+    elif tipo == "reserva":
+        clave = "palmeras_alerta_reserva_enviada"
+        if estado.get(clave):
+            return False
+        estado[clave] = True
+        detalle_txt = str(detalle or "").strip()
+        accion = f"🔑 Cliente quiere reservar en Palmeras{': ' + detalle_txt if detalle_txt else ''}"
+        etapa = "Interesado"
+        aviso = f"🔑 Cliente quiere reservar un terreno en Palmeras San Miguel{': ' + detalle_txt if detalle_txt else ''}"
+    else:
+        return False
+
+    persistir_cliente(numero)
+    _palmeras_marcar_crm(numero, etapa, accion)
+    try:
+        Thread(
+            target=enviar_ntfy_crm,
+            args=(numero, aviso, f"palmeras-{tipo}-{time.time_ns()}"),
+            daemon=True,
+        ).start()
+    except Exception as exc:
+        print("PALMERAS ALERTA COMERCIAL ERROR:", exc)
+    return True
+
+
+def _palmeras_respuesta_presentacion_reserva():
+    """Presenta las fases solo después de que el interesado en reservar acepta conocerlas."""
+    return (
+        "Claro 😊 En *Palmeras San Miguel* contamos con *2 fases disponibles* 🏡\n\n"
+        "Ambas fases tienen terrenos de *8x16 m* y topografía plana.\n\n"
+        "🏊 *Fase 1:* desde *Q67,200*, con piscina y área verde.\n"
+        "🌳 *Fase 2:* desde *Q70,400*, con área verde y acceso interno a la piscina de Fase 1.\n\n"
+        "📍 Estamos ubicados en *Zona 5 de Retalhuleu, camino a La Verde*.\n\n"
+        "Le comparto los planos para que pueda comparar ambas opciones 📄😊"
+    )
+
+
+def _palmeras_respuesta_afirmativa(texto):
+    t = normalizar_ventas(texto).strip()
+    afirmaciones = {
+        "si", "sí", "claro", "por favor", "si por favor", "sí por favor",
+        "dale", "de acuerdo", "esta bien", "está bien", "ok", "okay",
+        "mandelos", "mándelos", "mandemelos", "mándemelos", "compartalos",
+        "compártalos", "quiero verlos", "quiero ver las fases", "muestremelos",
+        "muéstremelos", "envielos", "envíelos"
+    }
+    return t in {normalizar_ventas(x) for x in afirmaciones} or any(
+        frase in t for frase in [
+            "si quiero ver", "si compartame", "sí compártame", "si mandeme",
+            "sí mándeme", "quiero conocer las fases", "quiero ver los planos"
+        ]
     )
 
 
@@ -9125,6 +9215,9 @@ def _palmeras_mensaje_aporta_dato_visita(texto):
 
 
 def _palmeras_manejar_visita(numero, texto):
+    # Gabriel recibe una alerta especial apenas el cliente muestra intención de visitar.
+    _palmeras_alertar_interes_comercial(numero, "visita")
+
     estado = estado_visitas.setdefault(
         numero,
         {"dia": None, "hora": None, "proyecto": "palmeras", "cerrada": False},
@@ -9174,6 +9267,11 @@ def _palmeras_manejar_visita(numero, texto):
             palmeras_esperando_cliente=False,
             palmeras_pregunta_pendiente=None,
         )
+        _palmeras_alertar_interes_comercial(
+            numero,
+            "visita_agendada",
+            f"{estado.get('dia')} {estado.get('hora')}",
+        )
         return (
             f"Perfecto 😊 Queda coordinada su visita a *Palmeras San Miguel* para *{estado['dia']} a las {estado['hora']}*.\n\n"
             "Podemos encontrarnos directamente en el proyecto o, si le queda más cómodo, en *Centro Comercial La Trinidad*."
@@ -9216,35 +9314,88 @@ def _palmeras_manejar_visita(numero, texto):
 
 
 def _palmeras_respuesta_reserva(numero, texto):
-    fase = _palmeras_detectar_fase(texto)
-    cambios = {
-        "palmeras_etapa": "reserva",
-        "palmeras_reserva_en_curso": True,
-        "palmeras_esperando_cliente": True,
-        "palmeras_pregunta_pendiente": "fase para reservar",
-    }
-    if fase in {"fase_1", "fase_2"}:
-        cambios["palmeras_fase"] = fase
-        cambios["palmeras_reserva_fase"] = fase
-    _actualizar_estado_palmeras(numero, **cambios)
-    _palmeras_marcar_crm(numero, "Interesado", "Cliente interesado en reservar Palmeras")
+    estado = _estado_palmeras(numero)
+    etapa_previa = estado.get("palmeras_etapa")
+    fase_mencionada = _palmeras_detectar_fase(texto)
+    fase_guardada = estado.get("palmeras_fase")
+    fase = fase_mencionada if fase_mencionada in {"fase_1", "fase_2"} else (
+        fase_guardada if fase_guardada in {"fase_1", "fase_2"} else None
+    )
 
+    # La intención de reserva merece una alerta especial en el CRM, pero no pausa la IA.
+    detalle_alerta = "Fase 1" if fase == "fase_1" else ("Fase 2" if fase == "fase_2" else "")
+    _palmeras_alertar_interes_comercial(numero, "reserva", detalle_alerta)
+
+    # Si ya sabemos qué fase está revisando, no lo hacemos retroceder ni repetimos presentación.
     if fase in {"fase_1", "fase_2"}:
         nombre = "Fase 1" if fase == "fase_1" else "Fase 2"
-        # La disponibilidad de un lote específico nunca se asume. Se escala a Gabriel,
-        # pero el cliente puede seguir haciendo preguntas mientras se confirma.
-        _palmeras_marcar_intervencion(numero, f"Confirmar disponibilidad para reserva en {nombre}")
+        _actualizar_estado_palmeras(
+            numero,
+            palmeras_etapa="reserva_esperando_modalidad",
+            palmeras_reserva_en_curso=True,
+            palmeras_fase=fase,
+            palmeras_reserva_fase=fase,
+            palmeras_reserva_presentacion_ofrecida=True,
+            palmeras_esperando_cliente=True,
+            palmeras_pregunta_pendiente="qué modalidad de pago desea para la reserva",
+        )
+        _palmeras_marcar_crm(
+            numero,
+            "Interesado",
+            f"🔑 Cliente quiere reservar Palmeras - {nombre}",
+        )
         return (
-            "Claro 😊 La reserva se realiza con *Q3,000* y DPI o pasaporte. Ese monto forma parte del enganche y el lote queda apartado durante *15 días* mientras completa requisitos y define la forma de pago. 🔑\n\n"
-            "Si la operación no se completa dentro de ese plazo, el lote se libera y la reserva no es reembolsable.\n\n"
-            f"Como le interesa *{nombre}*, permítame confirmar la disponibilidad antes de indicarle el siguiente paso. Mientras tanto, con gusto puedo resolver cualquier duda que tenga sobre el proyecto 😊."
+            f"Claro 😊 Para reservar un terreno en *Palmeras San Miguel - {nombre}* puede hacerlo con *Q3,000* y presentar *DPI o pasaporte* 🔑\n\n"
+            "Ese monto *forma parte del enganche* y mantiene el terreno apartado durante *15 días*, mientras completa los requisitos y define la forma de pago 🏡\n\n"
+            "Para avanzar, *¿qué forma de pago le gustaría revisar: financiamiento, semicontado o contado?* 💳"
         )
 
+    # Si el cliente ya conoció las fases/planos en la conversación, no los presentamos otra vez.
+    ya_conoce_fases = etapa_previa in {
+        "esperando_fase", "esperando_modalidad", "propuesta_enviada", "conversacion_abierta",
+        "coordinando_visita", "visita_agendada", "requiere_gabriel", "reserva_esperando_fase"
+    }
+    if ya_conoce_fases:
+        _actualizar_estado_palmeras(
+            numero,
+            palmeras_etapa="reserva_esperando_fase",
+            palmeras_reserva_en_curso=True,
+            palmeras_esperando_cliente=True,
+            palmeras_pregunta_pendiente="en qué fase desea reservar",
+        )
+        _palmeras_marcar_crm(
+            numero,
+            "Interesado",
+            "🔑 Cliente quiere reservar Palmeras - esperando elección de fase",
+        )
+        return (
+            "Claro 😊 Para reservar un terreno en *Palmeras San Miguel* puede hacerlo con *Q3,000* y presentar *DPI o pasaporte* 🔑\n\n"
+            "Ese monto *forma parte del enganche* y mantiene el terreno apartado durante *15 días*, mientras completa los requisitos y define la forma de pago 🏡\n\n"
+            "Como ya conoce las opciones, *¿en cuál de las dos fases le gustaría realizar su reserva: Fase 1 o Fase 2?* 😊"
+        )
+
+    # Entrada del anuncio / primera consulta de reserva: responde primero cómo reservar
+    # y luego ofrece presentar las fases. No mostramos de entrada la condición de no reembolso.
+    _actualizar_estado_palmeras(
+        numero,
+        palmeras_etapa="reserva_esperando_planos",
+        palmeras_reserva_en_curso=True,
+        palmeras_reserva_presentacion_ofrecida=True,
+        palmeras_esperando_cliente=True,
+        palmeras_pregunta_pendiente="si desea conocer planos y fases disponibles",
+    )
+    _palmeras_marcar_crm(
+        numero,
+        "Interesado",
+        "🔑 Cliente quiere reservar Palmeras - esperando conocer fase",
+    )
+    saludo = _palmeras_saludo_actual()
     return (
-        "Claro 😊 Para reservar un terreno en *Palmeras San Miguel* puede hacerlo con *Q3,000* y presentar DPI o pasaporte. 🔑\n\n"
-        "La reserva forma parte del enganche y aparta el terreno durante *15 días* mientras completa requisitos y define la forma de pago.\n\n"
-        "Si la operación no se completa dentro de ese plazo, el terreno se libera y la reserva no es reembolsable.\n\n"
-        "*¿Ya tiene en mente Fase 1 o Fase 2?* 🏡"
+        f"¡{saludo}! 👋 Le saluda *Gabriel Polero, asesor de ventas de Multiproyectos DIVE* 😊\n\n"
+        "Para reservar un terreno en *Palmeras San Miguel* puede hacerlo con *Q3,000* y presentar *DPI o pasaporte* 🔑\n\n"
+        "Ese monto *forma parte del enganche* y mantiene el terreno apartado durante *15 días*, mientras completa los requisitos y define la forma de pago 🏡\n\n"
+        "Si gusta, puedo compartirle los *planos y las dos fases disponibles* para que conozca cuál se adapta mejor a lo que está buscando 📄✨\n\n"
+        "*¿Desea que se los comparta?* 😊"
     )
 
 
@@ -9380,6 +9531,13 @@ REGLAS DE CONVERSACIÓN:
 - El mensaje actual SIEMPRE tiene prioridad. El cliente puede cambiar de tema, fase, forma de pago, visita o reserva en cualquier momento.
 - ESTADO COMERCIAL y TEMA ACTUAL son cosas distintas. Haber agendado una visita, estar reservando o haber avanzado en la compra NUNCA cierra la conversación. El cliente puede seguir haciendo todas las consultas que quiera.
 - Responda primero exactamente lo que el cliente acaba de preguntar. No obligue al cliente a volver al paso anterior del protocolo.
+- PRINCIPIO DE RESPUESTA MINIMA SUFICIENTE: antes de escribir, identifique la pregunta o intención ACTUAL y responda solo con la información necesaria para resolverla. Que un dato sea verdadero NO significa que deba incluirlo.
+- Puede añadir como máximo UN detalle relacionado si realmente ayuda a entender la respuesta o evita una confusión. No agregue datos solo "por si acaso".
+- NO mezcle temas no solicitados. Por ejemplo, si preguntan por financiamiento o comparan financiamiento vs. semicontado, NO agregue construcción, servicios, documentos, compra desde EE. UU., escrituración, reserva o amenidades salvo que el cliente también haya preguntado por alguno de esos temas o sea indispensable para responder.
+- Si el cliente pide una comparación entre dos modalidades, compare SOLO las diferencias relevantes entre esas modalidades: enganche, plazo, interés, cuotas y abonos cuando correspondan. Termine con una pregunta breve que ayude a elegir o avanzar.
+- Si el cliente expresa una decisión y además hace una pregunta en el mismo bloque, no envíe primero una ficha completa de la decisión y luego otra respuesta. Integre ambos mensajes en UNA respuesta coherente centrada en la pregunta actual.
+- Solo entregue una explicación amplia del proyecto cuando el cliente pida explícitamente "toda la información", "explíqueme todo", "qué incluye" o una solicitud equivalente.
+- Evite convertir cada respuesta en una ficha técnica. Una pregunta sencilla merece una respuesta sencilla. Una comparación puede ser un poco más completa, pero siempre enfocada.
 - Si visita_agendada es true, conserve día y hora en memoria. Responda dudas posteriores normalmente y NO vuelva a ofrecer, pedir ni agendar otra visita, salvo que el cliente expresamente quiera cambiarla, cancelarla, confirmar el horario o pregunte por la cita.
 - Si reserva_en_curso es true, responda dudas posteriores normalmente. No vuelva a explicar ni ofrecer la reserva en cada respuesta. No diga que un lote específico ya quedó reservado o disponible mientras esa disponibilidad no haya sido confirmada.
 - Después de una visita agendada o una reserva iniciada, use TODA la ficha oficial para contestar preguntas de precios, pagos, servicios, construcción, agua, requisitos, escrituras, ubicación y amenidades igual que antes.
@@ -9389,6 +9547,7 @@ REGLAS DE CONVERSACIÓN:
 - Antes de hacer una pregunta final, compruebe que tenga sentido con la etapa real del cliente y con lo que ya se sabe de la conversación.
 - Si cliente_ya_compro es false, NUNCA pregunte si desea hacer, registrar, programar o aplicar un abono ahora. El cliente todavía está evaluando la compra. Puede explicar cómo funcionan los abonos, pero no actuar como si ya tuviera una deuda activa.
 - Si un PROSPECTO pregunta por abonos a capital o por poner dinero extra, NO ofrezca simulaciones, ejemplos de amortización ni cálculos de cómo cambiaría la cuota. Después de responder la duda, la pregunta preferida para mantener viva la conversación es: "¿Su idea sería comprar el terreno para construir más adelante o lo está viendo más como inversión? 😊". Esa pregunta descubre la intención del cliente sin inventar datos.
+- En financiamiento, no diga "simulación" ni "ejemplo de cuotas" cuando ya existen cuotas oficiales cargadas por plazo. Si necesita continuar la conversación, pregunte simplemente qué plazo desea revisar entre 2 y 8 años y responda con la cuota oficial disponible.
 - No invente procedimientos que no estén en la ficha (por ejemplo, no ofrezca explicar "cómo registrar un abono" si ese procedimiento no está documentado).
 - No ofrezca ejecutar acciones que el sistema no puede realizar directamente, como cobrar, registrar pagos o aplicar abonos.
 - Una pregunta técnica o informativa NO es por sí sola una señal para pedir visita. Responda y deje respirar la conversación.
@@ -9556,6 +9715,24 @@ def manejar_nuevo_cerebro_palmeras(numero, texto, message_id=None):
     consulta_monto_modalidad = intencion.get("consulta_monto_modalidad")
     plazo_directo = intencion.get("plazo")
 
+    # Si llegó por la pregunta de RESERVA y aceptó conocer el proyecto,
+    # recién aquí presentamos fases + planos. La reserva sigue siendo el objetivo.
+    if etapa == "reserva_esperando_planos" and _palmeras_respuesta_afirmativa(texto):
+        _palmeras_enviar_y_recordar(numero, _palmeras_respuesta_presentacion_reserva())
+        _palmeras_enviar_planos_protocolo(numero)
+        _actualizar_estado_palmeras(
+            numero,
+            palmeras_etapa="reserva_esperando_fase",
+            palmeras_reserva_en_curso=True,
+            palmeras_esperando_cliente=True,
+            palmeras_pregunta_pendiente="en qué fase desea reservar",
+        )
+        _palmeras_enviar_y_recordar(
+            numero,
+            "*¿En cuál de las dos fases le gustaría realizar su reserva: Fase 1 o Fase 2?* 🔑",
+        )
+        return True
+
     # ========================================================
     # PRIORIDADES GENERALES DE CONVERSACIÓN
     # ========================================================
@@ -9563,7 +9740,7 @@ def manejar_nuevo_cerebro_palmeras(numero, texto, message_id=None):
     # cliente tiene prioridad sin importar en qué etapa venía la conversación.
 
     # Cambio/elección explícita de fase durante una conversación ya avanzada.
-    if fase_elegida in {"fase_1", "fase_2"} and etapa not in {None, "inicio", "esperando_fase", "reserva"}:
+    if fase_elegida in {"fase_1", "fase_2"} and etapa not in {None, "inicio", "esperando_fase", "reserva", "reserva_esperando_fase", "reserva_esperando_planos"}:
         fase_anterior = estado.get("palmeras_fase")
         _actualizar_estado_palmeras(numero, palmeras_fase=fase_elegida)
 
@@ -9703,7 +9880,7 @@ def manejar_nuevo_cerebro_palmeras(numero, texto, message_id=None):
         return True
 
     # Esperando que escoja fase.
-    if etapa in {"esperando_fase", "reserva"}:
+    if etapa in {"esperando_fase", "reserva", "reserva_esperando_fase"}:
         fase_mencionada = _palmeras_detectar_fase(texto)
         fase = _palmeras_es_eleccion_fase(texto)
         if fase_mencionada == "ambas" and not _palmeras_tiene_pregunta_real(texto):
@@ -9717,6 +9894,18 @@ def manejar_nuevo_cerebro_palmeras(numero, texto, message_id=None):
             _actualizar_estado_palmeras(numero, palmeras_esperando_cliente=True, palmeras_pregunta_pendiente="qué fase revisar primero")
             return True
         if fase in {"fase_1", "fase_2"}:
+            venia_de_reserva = etapa == "reserva_esperando_fase" or bool(estado.get("palmeras_reserva_en_curso"))
+            if venia_de_reserva:
+                _actualizar_estado_palmeras(
+                    numero,
+                    palmeras_reserva_en_curso=True,
+                    palmeras_reserva_fase=fase,
+                )
+                _palmeras_marcar_crm(
+                    numero,
+                    "Interesado",
+                    f"🔑 Quiere reservar {'Fase 1' if fase == 'fase_1' else 'Fase 2'}; esperando forma de pago",
+                )
             modalidad_mismo_bloque = _palmeras_es_eleccion_modalidad(texto) or _palmeras_consulta_monto_modalidad(texto)
             plazo_mismo_bloque = _palmeras_detectar_plazo(texto)
 
@@ -9734,7 +9923,8 @@ def manejar_nuevo_cerebro_palmeras(numero, texto, message_id=None):
                 palmeras_esperando_gabriel=False,
                 palmeras_requiere_intervencion=False
             )
-            _palmeras_marcar_crm(numero, "Interesado", f"Eligió {'Fase 1' if fase == 'fase_1' else 'Fase 2'}; esperando modalidad de pago")
+            if not venia_de_reserva:
+                _palmeras_marcar_crm(numero, "Interesado", f"Eligió {'Fase 1' if fase == 'fase_1' else 'Fase 2'}; esperando modalidad de pago")
             respuesta = _palmeras_explicar_modalidades()
             _palmeras_enviar_y_recordar(numero, respuesta)
             video_enviado = _palmeras_enviar_video_protocolo(numero, contexto="pagos")
