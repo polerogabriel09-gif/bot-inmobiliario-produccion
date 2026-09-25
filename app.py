@@ -1,3 +1,4 @@
+# VERSION_VIDEO_PALMERAS_LOGICA_Y_COMPRESION_20260925
 # VERSION_BIENVENIDA_PALMERAS_GUIADA_20260925 - bienvenida IA guiada, no fija
 # VERSION_BIENVENIDA_PALMERAS_DIRECTA_20260925
 # VERSION_BIENVENIDA_PALMERAS_CONVERSACIONAL_20260925
@@ -8568,14 +8569,23 @@ def _palmeras_enviar_planos_protocolo(numero, fase=None):
 
 
 def _palmeras_enviar_video_protocolo(numero):
+    """
+    Envía el video de referencia únicamente si existe y Meta lo acepta.
+    El texto que anuncia el video va como caption del propio video para evitar
+    decir que se enviará algo cuando, por cualquier motivo, el envío falle.
+    """
     ruta = PALMERAS_VIDEO_PROTOCOLO if os.path.exists(PALMERAS_VIDEO_PROTOCOLO) else PALMERAS_VIDEO_FALLBACK
     if not os.path.exists(ruta):
         print("PALMERAS VIDEO PROTOCOLO NO ENCONTRADO:", ruta)
         return False
+
     return enviar_video_whatsapp(
         numero,
         ruta,
-        caption="Video de referencia para conocer mejor el tipo de espacios y amenidades del proyecto 🏡✨"
+        caption=(
+            "Mientras revisa las opciones de pago, le comparto este pequeño video de referencia "
+            "para que pueda darse una idea del tipo de espacios y amenidades que desarrollamos 🏡✨"
+        )
     )
 
 
@@ -8594,11 +8604,11 @@ def _palmeras_enviar_fotos_protocolo(numero):
 
 def _palmeras_explicar_modalidades():
     return (
-        "Perfecto 😊 Para esa fase contamos con tres maneras de realizar la compra:\n\n"
+        "Perfecto 😊 Para esa fase contamos con *tres formas de pago*:\n\n"
         "💳 *Financiamiento propio:* de 2 a 8 años, sin banco de por medio.\n"
         "💰 *Plan semicontado:* enganche + 11 cuotas mensuales sin intereses.\n"
         "✅ *Contado:* inicialmente 3% de descuento; dependiendo de la cantidad de lotes puede llegar hasta 5%.\n\n"
-        "*¿Cuál modalidad le gustaría revisar, o prefiere que le muestre las tres?*"
+        "*¿Cuál de estas modalidades le gustaría revisar, o prefiere que le muestre las tres?*"
     )
 
 
@@ -8976,12 +8986,10 @@ def manejar_nuevo_cerebro_palmeras(numero, texto, message_id=None):
             palmeras_pregunta_pendiente="qué modalidad de pago le interesa"
         )
         _palmeras_enviar_y_recordar(numero, _palmeras_explicar_modalidades())
-        _palmeras_enviar_y_recordar(
-            numero,
-            "Mientras lo revisa, le comparto un pequeño video de referencia para que pueda darse una idea del tipo de espacios y amenidades que desarrollamos 🏡✨."
-        )
-        _palmeras_enviar_video_protocolo(numero)
-        _actualizar_estado_palmeras(numero, palmeras_video_enviado=True)
+        video_enviado = _palmeras_enviar_video_protocolo(numero)
+        _actualizar_estado_palmeras(numero, palmeras_video_enviado=bool(video_enviado))
+        if not video_enviado:
+            print("PALMERAS: no fue posible enviar el video de referencia; no se anunció al cliente para evitar incoherencias.")
         return True
 
     # Inicio genérico o entrada desde FAQ de información.
