@@ -1,3 +1,4 @@
+# VERSION_ALTAMIRA_AD_IDS_20260927
 # VERSION_ALTAMIRA_PALESTINA_PREAPERTURA_20260927 - proyecto nuevo, clasificacion apertura/posterior, sin inventar precios
 # VERSION_SEGUIMIENTO_CONTROL_1_3_5_7_20260925 - seguimiento contextual + alertas Gabriel por inactividad
 # VERSION_VISITA_COMPLETA_PUNTO_ABIERTA_PALMERAS_20260925 - visita día+hora+punto, conversación siempre abierta
@@ -1490,6 +1491,11 @@ ANUNCIOS_META_PROYECTO = {
     "120248129777940634": "vista_hermosa",  # AD VID - 01 - VTH
     "120248129694970634": "vista_hermosa",  # AD IMG - 01 - VTH
     "120248129773580634": "vista_hermosa",  # AD IMG - 02 - VTH
+
+    # Altamira · Palestina de los Altos - apertura septiembre 2026
+    "120248779000070634": "altamira",
+    "120248778866970634": "altamira",
+    "120248778728750634": "altamira",
 }
 
 PROYECTO_CAMPANA_ACTIVA = "altamira"
@@ -1553,16 +1559,15 @@ def proyecto_desde_referencia_anuncio(mensaje):
         if proyecto:
             print(f"ANUNCIO META DETECTADO: {anuncio_id} -> {proyecto}")
             return proyecto
-        # Un ID no mapeado pertenece a la campaña activa actual (Altamira).
-        if referral:
-            print(f"ANUNCIO META ID NO MAPEADO ({anuncio_id}); FALLBACK ACTUAL -> altamira")
-            return PROYECTO_CAMPANA_ACTIVA
+        # Seguridad: si el ID no está mapeado NO lo asignamos automáticamente
+        # a Altamira. Así evitamos mover por error prospectos de campañas antiguas.
+        print(f"ANUNCIO META ID NO MAPEADO ({anuncio_id}); se conserva contexto existente")
+        return None
 
-    # Si existe referral pero Meta no incluyó source_id/ad_id, igualmente sabemos
-    # que la campaña activa actual es Altamira Palestina de los Altos.
+    # Si Meta envía referral sin ID, no adivinamos el proyecto.
+    # El texto específico de apertura/Altamira se detecta después como respaldo.
     if referral:
-        print("ANUNCIO META CON REFERRAL SIN ID; FALLBACK ACTUAL -> altamira")
-        return PROYECTO_CAMPANA_ACTIVA
+        print("ANUNCIO META CON REFERRAL SIN ID; no se fuerza proyecto")
 
     return None
 
@@ -1595,9 +1600,9 @@ def fijar_proyecto_desde_anuncio(numero, mensaje):
             existente = obtener_proyecto_actual(numero)
             if existente:
                 return existente
-            if texto and _mensaje_generico_de_anuncio(texto):
-                proyecto = PROYECTO_CAMPANA_ACTIVA
-                print(f"FALLBACK MENSAJE DE CAMPANA: {numero} -> altamira | texto={texto!r}")
+            # Un CTA genérico como "información" o "precio" ya no fuerza Altamira.
+            # Altamira solo se fija por sus IDs explícitos o por texto inequívoco
+            # ("apertura", "Altamira", "Palestina de los Altos").
 
     if not proyecto:
         return None
@@ -11249,10 +11254,20 @@ def _altamira_respuesta_reserva():
 
 
 def _altamira_enviar_plano(numero):
-    if ALTAMIRA_PLANO_URL:
+    # Si Gabriel configura una URL externa, tiene prioridad.
+    url_plano = ALTAMIRA_PLANO_URL
+
+    # De lo contrario usamos el PDF incluido con el bot y servido públicamente
+    # por el mismo Render mediante /messenger-media/.
+    if not url_plano:
+        base = _messenger_base_publica()
+        if base:
+            url_plano = f"{base}/messenger-media/planos/altamira-palestina.pdf"
+
+    if url_plano:
         return enviar_documento_url_whatsapp(
             numero,
-            ALTAMIRA_PLANO_URL,
+            url_plano,
             "Plano_Altamira_Palestina_de_los_Altos.pdf",
             caption="Plano general de Altamira · Palestina de los Altos 📄🏡"
         )
