@@ -1,3 +1,4 @@
+# VERSION_ALTAMIRA_PALESTINA_PREAPERTURA_20260927 - proyecto nuevo, clasificacion apertura/posterior, sin inventar precios
 # VERSION_SEGUIMIENTO_CONTROL_1_3_5_7_20260925 - seguimiento contextual + alertas Gabriel por inactividad
 # VERSION_VISITA_COMPLETA_PUNTO_ABIERTA_PALMERAS_20260925 - visita día+hora+punto, conversación siempre abierta
 # VERSION_ALERTAS_CRM_RESERVA_VISITA_PALMERAS_20260925 - alertas comerciales + entrada de reserva progresiva
@@ -668,7 +669,8 @@ def respuesta_cuota_especifica(proyecto, texto):
     nombres = {
         "palmeras": "Palmeras San Miguel",
         "vista_hermosa": "Vista Hermosa",
-        "buenaventura": "Buenaventura Cuyotenango"
+        "buenaventura": "Buenaventura Cuyotenango",
+        "altamira": "Altamira · Palestina de los Altos"
     }
 
     nombre = nombres.get(proyecto, "el proyecto")
@@ -1490,7 +1492,7 @@ ANUNCIOS_META_PROYECTO = {
     "120248129773580634": "vista_hermosa",  # AD IMG - 02 - VTH
 }
 
-PROYECTO_CAMPANA_ACTIVA = "buenaventura"
+PROYECTO_CAMPANA_ACTIVA = "altamira"
 
 
 def _mensaje_generico_de_anuncio(texto):
@@ -1508,7 +1510,14 @@ def _mensaje_generico_de_anuncio(texto):
         "quiero conocer precios y cuotas",
         "quiero ver la ubicacion del proyecto",
         "quiero conocer lotes disponibles",
-        "quiero agendar una visita"
+        "quiero agendar una visita",
+        # Campaña de apertura Altamira / Palestina de los Altos.
+        "quiero recibir info de la apertura",
+        "quiero recibir informacion de la apertura",
+        "quiero informacion de la apertura",
+        "quiero info de la apertura",
+        "quiero conocer altamira",
+        "quiero informacion de altamira"
     }
     return t in exactos
 
@@ -1517,9 +1526,9 @@ def proyecto_desde_referencia_anuncio(mensaje):
     """
     Detecta el proyecto desde anuncios de Meta.
 
-    Para la campaña actual, todos los anuncios activos corresponden a Buenaventura Cuyotenango.
-    Si Meta entrega un referral de anuncio pero cambia/omite el ID esperado, usamos Buenaventura
-    como respaldo para no perder el contexto comercial.
+    Para la campaña de apertura actual, los anuncios no mapeados se consideran Altamira
+    Palestina de los Altos. Los IDs ya conocidos de Palmeras, Buenaventura y Vista Hermosa
+    siguen respetando su mapeo explícito.
     """
     mensaje = mensaje or {}
     referral = mensaje.get("referral") or {}
@@ -1544,15 +1553,15 @@ def proyecto_desde_referencia_anuncio(mensaje):
         if proyecto:
             print(f"ANUNCIO META DETECTADO: {anuncio_id} -> {proyecto}")
             return proyecto
-        # Todos los anuncios de la campaña activa actual corresponden a Buenaventura.
+        # Un ID no mapeado pertenece a la campaña activa actual (Altamira).
         if referral:
-            print(f"ANUNCIO META ID NO MAPEADO ({anuncio_id}); FALLBACK ACTUAL -> buenaventura")
+            print(f"ANUNCIO META ID NO MAPEADO ({anuncio_id}); FALLBACK ACTUAL -> altamira")
             return PROYECTO_CAMPANA_ACTIVA
 
     # Si existe referral pero Meta no incluyó source_id/ad_id, igualmente sabemos
-    # que la campaña activa actual es Buenaventura Cuyotenango.
+    # que la campaña activa actual es Altamira Palestina de los Altos.
     if referral:
-        print("ANUNCIO META CON REFERRAL SIN ID; FALLBACK ACTUAL -> buenaventura")
+        print("ANUNCIO META CON REFERRAL SIN ID; FALLBACK ACTUAL -> altamira")
         return PROYECTO_CAMPANA_ACTIVA
 
     return None
@@ -1562,18 +1571,33 @@ def fijar_proyecto_desde_anuncio(numero, mensaje):
     proyecto = proyecto_desde_referencia_anuncio(mensaje)
 
     # Respaldo adicional: Meta permite que el usuario quite los datos de referencia.
-    # Como EN ESTE MOMENTO la campaña activa es Buenaventura, si llega
+    # Como EN ESTE MOMENTO la campaña activa es Altamira, si llega
     # una conversación todavía sin proyecto y el texto es el típico CTA corto del anuncio
-    # (por ejemplo "Ubicación" o "Información"), la fijamos como Buenaventura.
+    # (por ejemplo "Ubicación" o "Información"), la fijamos como Altamira.
     if not proyecto:
-        existente = obtener_proyecto_actual(numero)
-        if existente:
-            return existente
+        # Los CTA de APERTURA de Altamira son suficientemente específicos para
+        # cambiar el proyecto incluso si este número había consultado antes otro
+        # residencial. Esto evita que un prospecto antiguo de Palmeras/Buenaventura
+        # quede pegado al proyecto anterior al responder el anuncio nuevo.
+        texto = ""
         if (mensaje or {}).get("type") == "text":
             texto = ((mensaje or {}).get("text") or {}).get("body", "")
-            if _mensaje_generico_de_anuncio(texto):
+            t_altamira = normalizar_ventas(texto)
+            if any(frase in t_altamira for frase in [
+                "info de la apertura", "informacion de la apertura",
+                "quiero recibir info de la apertura", "quiero recibir informacion de la apertura",
+                "altamira", "palestina de los altos"
+            ]):
+                proyecto = "altamira"
+                print(f"CTA ALTAMIRA DETECTADO: {numero} -> altamira | texto={texto!r}")
+
+        if not proyecto:
+            existente = obtener_proyecto_actual(numero)
+            if existente:
+                return existente
+            if texto and _mensaje_generico_de_anuncio(texto):
                 proyecto = PROYECTO_CAMPANA_ACTIVA
-                print(f"FALLBACK MENSAJE DE CAMPANA: {numero} -> buenaventura | texto={texto!r}")
+                print(f"FALLBACK MENSAJE DE CAMPANA: {numero} -> altamira | texto={texto!r}")
 
     if not proyecto:
         return None
@@ -1768,7 +1792,19 @@ def obtener_estado_conversacion(numero):
             "palmeras_alerta_visita_enviada": False,
             "palmeras_alerta_visita_agendada_enviada": False,
             "palmeras_alerta_reserva_enviada": False,
-            "palmeras_reserva_presentacion_ofrecida": False
+            "palmeras_reserva_presentacion_ofrecida": False,
+
+            # Altamira - Palestina de los Altos (apertura 28/09/2026).
+            "altamira_etapa": None,
+            "altamira_pregunta_pendiente": None,
+            "altamira_esperando_cliente": False,
+            "altamira_esperando_gabriel": False,
+            "altamira_requiere_intervencion": False,
+            "altamira_intencion_compra": "explorando",
+            "altamira_preferencia_ubicacion": None,
+            "altamira_alerta_alta_enviada": False,
+            "altamira_alerta_posterior_enviada": False,
+            "altamira_reserva_interes": False
         }
 
     return estado_conversacion[numero]
@@ -1780,6 +1816,15 @@ def detectar_proyecto_en_texto(texto):
     No usamos palabras genéricas como "zona", "carretera", "ubicación", etc.
     """
     t = texto.lower()
+
+    if any(x in t for x in [
+        "altamira palestina",
+        "altamira",
+        "alta mira",
+        "palestina de los altos",
+        "palestina altos"
+    ]):
+        return "altamira"
 
     if any(x in t for x in [
         "palmeras san miguel",
@@ -1839,6 +1884,12 @@ def es_seleccion_simple_de_proyecto(texto):
         },
         "vista_hermosa": {
             "vista hermosa",
+        },
+        "altamira": {
+            "altamira",
+            "altamira palestina",
+            "alta mira",
+            "palestina de los altos",
         },
     }
 
@@ -2586,7 +2637,8 @@ def nombre_proyecto_plano(proyecto):
     return {
         "palmeras": "Palmeras San Miguel",
         "vista_hermosa": "Vista Hermosa",
-        "buenaventura": "Buenaventura Cuyotenango"
+        "buenaventura": "Buenaventura Cuyotenango",
+        "altamira": "Altamira · Palestina de los Altos"
     }.get(proyecto, "el proyecto")
 
 
@@ -2649,7 +2701,8 @@ def respuesta_diferencia_fases(numero):
 
     nombres = {
         "palmeras": "Palmeras San Miguel",
-        "buenaventura": "Buenaventura Cuyotenango"
+        "buenaventura": "Buenaventura Cuyotenango",
+        "altamira": "Altamira · Palestina de los Altos"
     }
     nombre = nombres.get(proyecto, "el proyecto")
     return (
@@ -2878,7 +2931,8 @@ def respuesta_plazo_entrega_urbanizacion(proyecto):
     nombres = {
         "palmeras": "Palmeras San Miguel",
         "vista_hermosa": "Vista Hermosa",
-        "buenaventura": "Buenaventura Cuyotenango"
+        "buenaventura": "Buenaventura Cuyotenango",
+        "altamira": "Altamira · Palestina de los Altos"
     }
 
     nombre = nombres.get(proyecto, "el proyecto")
@@ -2949,7 +3003,8 @@ def respuesta_amenidad(proyecto, amenidad, texto_cliente=""):
     nombres = {
         "palmeras": "Palmeras San Miguel",
         "vista_hermosa": "Vista Hermosa",
-        "buenaventura": "Buenaventura Cuyotenango"
+        "buenaventura": "Buenaventura Cuyotenango",
+        "altamira": "Altamira · Palestina de los Altos"
     }
 
     nombre = nombres.get(proyecto, "el proyecto")
@@ -3177,7 +3232,8 @@ def respuesta_punto_encuentro(numero, proyecto):
     nombres = {
         "palmeras": "Palmeras San Miguel",
         "vista_hermosa": "Vista Hermosa",
-        "buenaventura": "Buenaventura Cuyotenango"
+        "buenaventura": "Buenaventura Cuyotenango",
+        "altamira": "Altamira · Palestina de los Altos"
     }
 
     nombre = nombres.get(proyecto, "el proyecto")
@@ -3681,7 +3737,8 @@ def resumen_cita_cerrada(numero):
     nombres = {
         "palmeras": "Palmeras San Miguel",
         "vista_hermosa": "Vista Hermosa",
-        "buenaventura": "Buenaventura Cuyotenango"
+        "buenaventura": "Buenaventura Cuyotenango",
+        "altamira": "Altamira · Palestina de los Altos"
     }
 
     nombre = nombres.get(
@@ -3759,7 +3816,8 @@ def respuesta_enganche(proyecto=None, texto=""):
     nombres = {
         "palmeras": "Palmeras San Miguel",
         "vista_hermosa": "Vista Hermosa",
-        "buenaventura": "Buenaventura Cuyotenango"
+        "buenaventura": "Buenaventura Cuyotenango",
+        "altamira": "Altamira · Palestina de los Altos"
     }
 
     try:
@@ -4488,6 +4546,9 @@ def importar_respaldo_clientes(data):
         "Palmeras San Miguel": "palmeras",
         "Buenaventura Cuyotenango": "buenaventura",
         "Buenaventura": "buenaventura",
+        "Altamira": "altamira",
+        "Altamira Palestina": "altamira",
+        "Altamira · Palestina de los Altos": "altamira",
     }
     importados = 0
     mensajes_total = 0
@@ -4499,7 +4560,7 @@ def importar_respaldo_clientes(data):
         if not numero:
             continue
         proyecto_txt = info.get("proyecto")
-        proyecto = mapa_proyectos.get(proyecto_txt, proyecto_txt if proyecto_txt in {"vista_hermosa", "palmeras", "buenaventura"} else None)
+        proyecto = mapa_proyectos.get(proyecto_txt, proyecto_txt if proyecto_txt in {"vista_hermosa", "palmeras", "buenaventura", "altamira"} else None)
         mensajes = info.get("mensajes") or []
         if not isinstance(mensajes, list):
             mensajes = []
@@ -5500,7 +5561,8 @@ def crm_nombre_proyecto(numero):
     nombres = {
         "palmeras": "Palmeras San Miguel",
         "vista_hermosa": "Vista Hermosa",
-        "buenaventura": "Buenaventura Cuyotenango"
+        "buenaventura": "Buenaventura Cuyotenango",
+        "altamira": "Altamira · Palestina de los Altos"
     }
     return nombres.get(
         proyecto_activo.get(numero),
@@ -5757,7 +5819,8 @@ def generar_respuesta(numero_cliente, mensaje_cliente):
         nombres_proyecto = {
             "palmeras": "Palmeras San Miguel",
             "vista_hermosa": "Vista Hermosa",
-            "buenaventura": "Buenaventura Cuyotenango"
+            "buenaventura": "Buenaventura Cuyotenango",
+            "altamira": "Altamira · Palestina de los Altos"
         }
 
         proyecto_actual_texto = nombres_proyecto.get(
@@ -7130,7 +7193,8 @@ def nombre_proyecto_contexto(numero):
     nombres = {
         "palmeras": "Palmeras San Miguel",
         "vista_hermosa": "Vista Hermosa",
-        "buenaventura": "Buenaventura Cuyotenango"
+        "buenaventura": "Buenaventura Cuyotenango",
+        "altamira": "Altamira · Palestina de los Altos"
     }
 
     return nombres.get(proyecto, "ningún proyecto definido todavía")
@@ -7960,7 +8024,8 @@ def enviar_multimedia_del_proyecto(
     nombres = {
         "palmeras": "Palmeras San Miguel",
         "vista_hermosa": "Vista Hermosa",
-        "buenaventura": "Buenaventura Cuyotenango"
+        "buenaventura": "Buenaventura Cuyotenango",
+        "altamira": "Altamira · Palestina de los Altos"
     }
 
     nombre = nombres.get(proyecto, "el proyecto")
@@ -8054,7 +8119,8 @@ def enviar_solo_fotos_del_proyecto(numero, proyecto):
     nombres = {
         "palmeras": "Palmeras San Miguel",
         "vista_hermosa": "Vista Hermosa",
-        "buenaventura": "Buenaventura Cuyotenango"
+        "buenaventura": "Buenaventura Cuyotenango",
+        "altamira": "Altamira · Palestina de los Altos"
     }
 
     nombre = nombres.get(proyecto, "el proyecto")
@@ -8099,7 +8165,8 @@ def enviar_solo_videos_del_proyecto(numero, proyecto):
     nombres = {
         "palmeras": "Palmeras San Miguel",
         "vista_hermosa": "Vista Hermosa",
-        "buenaventura": "Buenaventura Cuyotenango"
+        "buenaventura": "Buenaventura Cuyotenango",
+        "altamira": "Altamira · Palestina de los Altos"
     }
 
     nombre = nombres.get(proyecto, "el proyecto")
@@ -8622,6 +8689,7 @@ def _palmeras_formatear_visual(texto):
         r"(?<!\*)Q\s?\d[\d,]*(?:\.\d{1,2})?(?!\*)",
         r"(?<![\d*])\d{1,3}%(?!\*)",
         r"(?<!\*)\b2\s+a\s+8\s+años\b(?!\*)",
+        r"(?<!\*)\b1\s+a\s+8\s+años\b(?!\*)",
         r"(?<!\*)\b11\s+cuotas\b(?!\*)",
         r"(?<!\*)\b15\s+días\b(?!\*)",
         r"(?<!\*)\bFase\s+[12]\b(?!\*)",
@@ -10234,12 +10302,16 @@ def _seguimiento_debe_detenerse(numero, version):
     estado = obtener_estado_conversacion(numero)
     if estado.get("palmeras_esperando_gabriel") or estado.get("palmeras_requiere_intervencion"):
         return True
+    if estado.get("altamira_esperando_gabriel") or estado.get("altamira_requiere_intervencion"):
+        return True
 
-    # En Palmeras solo damos seguimiento automático cuando el BOT dejó una
+    # En Palmeras y Altamira solo damos seguimiento automático cuando el BOT dejó una
     # pregunta real pendiente. Esto evita perseguir al cliente después de una
     # confirmación de visita, una respuesta informativa o un cierre natural.
     proyecto = estado.get("proyecto_actual") or proyecto_activo.get(numero)
     if proyecto == "palmeras" and not estado.get("palmeras_esperando_cliente"):
+        return True
+    if proyecto == "altamira" and not estado.get("altamira_esperando_cliente"):
         return True
 
     return False
@@ -10252,13 +10324,19 @@ def _seguimiento_contexto(numero):
         "palmeras": "Palmeras San Miguel",
         "buenaventura": "Buenaventura Cuyotenango",
         "vista_hermosa": "Vista Hermosa",
+        "altamira": "Altamira · Palestina de los Altos",
     }
     return proyecto, nombres.get(proyecto, "el proyecto"), estado
 
 
 def _mensaje_seguimiento_contextual(numero, momento="10m"):
     proyecto, nombre, estado = _seguimiento_contexto(numero)
-    pendiente_raw = str(estado.get("palmeras_pregunta_pendiente") or "").strip() if proyecto == "palmeras" else ""
+    if proyecto == "palmeras":
+        pendiente_raw = str(estado.get("palmeras_pregunta_pendiente") or "").strip()
+    elif proyecto == "altamira":
+        pendiente_raw = str(estado.get("altamira_pregunta_pendiente") or "").strip()
+    else:
+        pendiente_raw = ""
     pendiente = pendiente_raw.lower()
 
     if momento == "10m":
@@ -10312,6 +10390,13 @@ def _mensaje_seguimiento_contextual(numero, momento="10m"):
                     f"*{pregunta}*"
                 )
 
+        if proyecto == "altamira" and pendiente_raw:
+            pregunta = pendiente_raw if pendiente_raw.endswith("?") else pendiente_raw + "?"
+            return (
+                "Quedó pendiente esta parte de nuestra conversación sobre *Altamira* 😊. "
+                f"*{pregunta}*"
+            )
+
         return (
             f"Quedó pendiente nuestra conversación sobre *{nombre}* 😊. "
             "Si desea, continuamos desde donde quedamos."
@@ -10339,6 +10424,12 @@ def _mensaje_seguimiento_contextual(numero, momento="10m"):
             f"Si desea, retomamos desde aquí: *{pendiente_raw}* 😊"
         )
 
+    if proyecto == "altamira" and pendiente_raw:
+        return (
+            "¡Hola! 👋 Ayer quedó pendiente una parte de nuestra conversación sobre *Altamira*. "
+            f"Si desea, retomamos desde aquí: *{pendiente_raw}* 😊"
+        )
+
     return (
         f"¡Hola! 👋 Ayer dejamos pendiente la información de *{nombre}*. "
         "Si todavía desea continuar, con gusto retomamos desde donde quedamos 😊."
@@ -10351,7 +10442,12 @@ def _notificar_gabriel_sin_respuesta(numero, hito):
     responder en Día 1 / 3 / 5 / 7. La alerta NO pausa al bot y NO se envía al cliente.
     """
     proyecto, nombre, estado = _seguimiento_contexto(numero)
-    pendiente = str(estado.get("palmeras_pregunta_pendiente") or "").strip()
+    if proyecto == "palmeras":
+        pendiente = str(estado.get("palmeras_pregunta_pendiente") or "").strip()
+    elif proyecto == "altamira":
+        pendiente = str(estado.get("altamira_pregunta_pendiente") or "").strip()
+    else:
+        pendiente = ""
     detalle = f"\nPendiente: {pendiente[:150]}" if pendiente else ""
     aviso = (
         f"⏳ Cliente sin responder · {hito} · {nombre}"
@@ -10850,6 +10946,465 @@ def manejar_intenciones_multiples(numero, texto, proyecto, message_id):
 
 
 # ============================================================
+# CEREBRO DE ALTAMIRA - PALESTINA DE LOS ALTOS
+# APERTURA 28/09/2026
+# ============================================================
+
+ALTAMIRA_FECHA_APERTURA = "2026-09-28"
+ALTAMIRA_PLANO_URL = os.getenv("ALTAMIRA_PLANO_URL", "").strip()
+
+ALTAMIRA_FICHA_OFICIAL = """
+PROYECTO: Altamira.
+UBICACIÓN CONFIRMADA: Palestina de los Altos, Quetzaltenango.
+APERTURA OFICIAL: lunes 28 de septiembre de 2026.
+
+ESTADO DE PRECIOS:
+- Antes de la apertura, los precios oficiales todavía NO están liberados.
+- Hasta que Gabriel cargue la tabla oficial, NO inventar, estimar ni calcular precios o cuotas.
+- Si preguntan precio/cuota antes de tenerlos cargados, explicar con transparencia que serán liberados con la apertura y ofrecer únicamente la información ya confirmada.
+
+DISPONIBILIDAD GENERAL DE APERTURA:
+- Actualmente hay opciones en diferentes sectores del proyecto.
+- Hay opciones cercanas a la entrada.
+- Hay esquinas.
+- Hay opciones cercanas a las amenidades.
+- Hay otras ubicaciones interiores.
+- NUNCA afirmar que un lote/número específico está disponible sin confirmación de Gabriel, porque la disponibilidad cambia en vivo.
+
+PROYECTO / SERVICIOS:
+- El proyecto contará con servicios y amenidades.
+- No detallar amenidades específicas si Gabriel no las ha confirmado.
+- No mencionar garita ni muro perimetral de forma espontánea.
+- Si preguntan directamente por garita, muro, una amenidad específica o un detalle técnico no cargado, pedir tiempo para confirmarlo y activar intervención.
+
+FINANCIAMIENTO Y COMPRA:
+- Financiamiento propio directamente con la empresa, sin banco.
+- Plazo: 1 a 8 años.
+- Interés: 17% anual sobre saldos.
+- Enganche: Q6,000.
+- Reserva: desde Q5,000.
+- Abonos a capital: desde Q2,000 a partir del primer mes, sin penalización.
+- Si cancela el 100% del saldo pendiente, no paga intereses futuros.
+- Semicontado: enganche de Q6,000 + saldo restante dividido en 11 cuotas mensuales sin intereses. NO calcular las cuotas hasta tener precio oficial.
+- Contado: se puede ofrecer inicialmente 3% de descuento. Dependiendo de cantidad de lotes puede llegar hasta 5%, pero cualquier descuento mayor al 3% debe confirmarse. NO calcular el monto final hasta tener precio oficial.
+
+REQUISITOS EN GUATEMALA:
+- DPI.
+- Enganche.
+- Estados de cuenta O carta/constancia de ingresos.
+- Recibo de luz o agua.
+- Datos generales del comprador.
+
+COMPRA DESDE ESTADOS UNIDOS / EXTRANJERO:
+- DPI o pasaporte.
+- Enganche.
+- Constancia/comprobantes de remesas.
+- Datos generales del comprador.
+- Gestor de confianza en Guatemala que firme en representación; puede ser familiar o amigo.
+- El gestor NO se convierte en propietario ni adquiere potestad sobre el terreno. El propietario es únicamente el comprador.
+
+NO CONFIRMADO / NO INVENTAR:
+- Precio por lote.
+- Cuotas exactas por plazo.
+- Medidas exactas si no están en el plano/ficha cargada.
+- Garita o muro perimetral.
+- Lista exacta de amenidades.
+- Costos de mantenimiento/agua/escrituración de este proyecto si no han sido cargados.
+- Fecha de urbanización/construcción.
+- Dirección exacta o enlace de Maps.
+- Disponibilidad de un número de lote específico.
+"""
+
+
+def _estado_altamira(numero):
+    estado = obtener_estado_conversacion(numero)
+    estado["proyecto_actual"] = "altamira"
+    proyecto_activo[numero] = "altamira"
+    return estado
+
+
+def _altamira_status_precios():
+    hoy = datetime.now(ZoneInfo("America/Guatemala")).date().isoformat()
+    if hoy < ALTAMIRA_FECHA_APERTURA:
+        return "preapertura"
+    if hoy == ALTAMIRA_FECHA_APERTURA:
+        return "apertura_sin_precios_cargados"
+    return "sin_precios_cargados"
+
+
+def _altamira_saludo_actual():
+    hora = datetime.now(ZoneInfo("America/Guatemala")).hour
+    if hora < 12:
+        return "¡Buenos días!"
+    if hora < 19:
+        return "¡Buenas tardes!"
+    return "¡Buenas noches!"
+
+
+def _altamira_normalizar(texto):
+    return normalizar_ventas(str(texto or ""))
+
+
+def _altamira_es_entrada_general(texto):
+    t = _altamira_normalizar(texto)
+    frases = [
+        "quiero recibir info de la apertura", "quiero recibir informacion de la apertura",
+        "quiero informacion de la apertura", "quiero info de la apertura",
+        "quiero mas informacion", "quiero informacion", "mas informacion",
+        "informacion de altamira", "info de altamira", "quiero conocer altamira",
+        "altamira", "palestina de los altos"
+    ]
+    if any(f in t for f in frases):
+        # Preguntas concretas deben resolverse como tales, no como bienvenida general.
+        concretas = ["precio", "cuota", "financ", "reserva", "apartar", "requisito", "donde", "ubicacion", "plano", "amenidad", "garita", "muro"]
+        return not any(c in t for c in concretas)
+    return False
+
+
+def _altamira_pide_precio_o_cuota(texto):
+    t = _altamira_normalizar(texto)
+    return any(x in t for x in [
+        "precio", "precios", "cuanto cuesta", "cuanto vale", "valor", "cotizacion", "cotizar",
+        "cuota", "cuotas", "mensualidad", "pago mensual", "a 1 ano", "a 2 anos", "a 3 anos",
+        "a 4 anos", "a 5 anos", "a 6 anos", "a 7 anos", "a 8 anos"
+    ])
+
+
+def _altamira_pide_reserva(texto):
+    t = _altamira_normalizar(texto)
+    return any(x in t for x in ["reservar", "reserva", "apartar", "apartarlo", "separar un lote", "asegurar un lote"])
+
+
+def _altamira_pide_plano(texto):
+    t = _altamira_normalizar(texto)
+    return any(x in t for x in ["plano", "croquis", "mapa de lotes", "distribucion de lotes"])
+
+
+def _altamira_preferencia_ubicacion(texto):
+    t = _altamira_normalizar(texto)
+    if "esquina" in t:
+        return "esquina"
+    if any(x in t for x in ["entrada", "cerca de la entrada", "por la entrada"]):
+        return "cerca de la entrada"
+    if any(x in t for x in ["amenidad", "amenidades", "cerca de las amenidades"]):
+        return "cerca de las amenidades"
+    if any(x in t for x in ["interior", "adentro", "parte interna"]):
+        return "ubicación interior"
+    return None
+
+
+def _altamira_clasificar_intencion(texto):
+    """Distingue comprador de apertura vs. interesado que decidirá después."""
+    t = _altamira_normalizar(texto)
+
+    posterior = [
+        "primero quiero ver precios", "primero ver precios", "quiero ver los precios primero",
+        "cuando salgan los precios", "despues de ver precios", "mas adelante", "mas adelante compro",
+        "no tengo prisa", "lo voy a pensar", "voy a pensarlo", "consultarlo con mi familia",
+        "consultar con mi familia", "solo estoy viendo", "solo quiero informacion", "solo quiero info"
+    ]
+    if any(x in t for x in posterior):
+        return "posterior"
+
+    alta = [
+        "quiero comprar manana", "quiero comprar en apertura", "quiero comprar desde apertura",
+        "quiero escoger desde apertura", "quiero escoger en apertura", "quiero elegir desde apertura",
+        "quiero reservar", "quiero apartar", "quiero asegurar", "quiero uno de esquina",
+        "quiero una esquina", "quiero uno cerca de la entrada", "quiero cerca de la entrada",
+        "quiero uno cerca de las amenidades", "quiero cerca de las amenidades",
+        "no quiero que me lo ganen", "no quiero que me ganen", "quiero ser de los primeros",
+        "quiero comprar ya", "quiero apartarlo ya", "lo quiero reservar"
+    ]
+    if any(x in t for x in alta):
+        return "apertura"
+
+    # Una preferencia concreta solo cuenta como intención alta cuando el cliente
+    # expresa deseo personal. Preguntar "¿hay esquinas?" NO basta para etiquetarlo.
+    pref = _altamira_preferencia_ubicacion(texto)
+    if pref and any(x in t for x in [
+        "quiero", "busco", "me interesa", "prefiero", "necesito",
+        "me gustaria", "quisiera", "quiero uno", "quiero una"
+    ]):
+        return "apertura"
+    return None
+
+
+def _altamira_marcar_crm(numero, etapa=None, accion=""):
+    meta = crm_obtener_meta(numero)
+    crm_guardar_meta(
+        numero,
+        etapa or meta.get("etapa") or "Nuevo lead",
+        accion,
+        meta.get("proxima_accion_fecha") or ""
+    )
+
+
+def _altamira_alertar_clasificacion(numero, clasificacion, detalle=""):
+    estado = _estado_altamira(numero)
+    detalle = str(detalle or "").strip()
+    if clasificacion == "apertura":
+        estado["altamira_intencion_compra"] = "apertura"
+        if estado.get("altamira_alerta_alta_enviada"):
+            persistir_cliente(numero)
+            return
+        estado["altamira_alerta_alta_enviada"] = True
+        accion = "🔥 PRIORIDAD APERTURA · Altamira" + (f" · {detalle}" if detalle else "")
+        _altamira_marcar_crm(numero, "Interesado", accion)
+        aviso = "🔥 Cliente con intención alta de comprar/escoger en la apertura de Altamira"
+        if detalle:
+            aviso += f"\nPreferencia: {detalle}"
+        event_id = f"altamira-alta-{numero}-{time.time_ns()}"
+        try:
+            Thread(target=enviar_push_crm, args=(numero, aviso, event_id), daemon=True).start()
+            Thread(target=enviar_ntfy_crm, args=(numero, aviso, event_id), daemon=True).start()
+        except Exception as exc:
+            print("ALTAMIRA ALERTA ALTA ERROR:", exc)
+    elif clasificacion == "posterior":
+        estado["altamira_intencion_compra"] = "posterior"
+        if not estado.get("altamira_alerta_posterior_enviada"):
+            estado["altamira_alerta_posterior_enviada"] = True
+            accion = "🟡 Interesado · decidirá después de conocer precios de Altamira"
+            _altamira_marcar_crm(numero, "Interesado", accion)
+    persistir_cliente(numero)
+
+
+def _altamira_marcar_intervencion(numero, pregunta):
+    estado = _estado_altamira(numero)
+    estado["altamira_esperando_gabriel"] = True
+    estado["altamira_requiere_intervencion"] = True
+    estado["altamira_esperando_cliente"] = False
+    estado["altamira_pregunta_pendiente"] = None
+    persistir_cliente(numero)
+    texto = str(pregunta or "").strip()
+    accion = "⚠️ Requiere intervención · Altamira"
+    if texto:
+        accion += f" · {texto[:100]}"
+    _altamira_marcar_crm(numero, crm_obtener_meta(numero).get("etapa") or "Interesado", accion)
+    aviso = "⚠️ Altamira requiere su intervención"
+    if texto:
+        aviso += f"\nCliente preguntó: {texto[:180]}"
+    event_id = f"altamira-intervencion-{numero}-{time.time_ns()}"
+    try:
+        Thread(target=enviar_push_crm, args=(numero, aviso, event_id), daemon=True).start()
+        Thread(target=enviar_ntfy_crm, args=(numero, aviso, event_id), daemon=True).start()
+    except Exception as exc:
+        print("ALTAMIRA INTERVENCION ERROR:", exc)
+
+
+def _altamira_enviar_y_recordar(numero, texto):
+    texto = formalizar_trato_usted(texto)
+    texto = _palmeras_formatear_visual(texto)
+    estado = _estado_altamira(numero)
+    if not estado.get("altamira_esperando_gabriel") and not estado.get("altamira_requiere_intervencion"):
+        pregunta = _palmeras_extraer_ultima_pregunta_respuesta(texto)
+        estado["altamira_pregunta_pendiente"] = pregunta
+        estado["altamira_esperando_cliente"] = bool(pregunta)
+        persistir_cliente(numero)
+    enviar_whatsapp(numero, texto)
+    guardar_mensaje(numero, "assistant", texto)
+    return texto
+
+
+def _altamira_presentacion_base():
+    status = _altamira_status_precios()
+    if status == "preapertura":
+        precios = "Los *precios oficiales se liberan mañana con la apertura*; prefiero no adelantarle una cifra que pueda cambiar. 💰"
+    elif status == "apertura_sin_precios_cargados":
+        precios = "Los *precios oficiales se liberan hoy con la apertura*. Todavía no tengo cargada la tabla final, así que prefiero no inventarle un monto. 💰"
+    else:
+        precios = "Aún no tengo cargada la *tabla oficial de precios*, así que prefiero no inventarle un monto. 💰"
+    return (
+        f"{_altamira_saludo_actual()} 👋 Le saluda *Gabriel Polero, asesor de ventas de Multiproyectos DIVE* 😊\n\n"
+        "Le comparto información de nuestra nueva residencial *Altamira*, en *Palestina de los Altos, Quetzaltenango* 🏡⛰️\n\n"
+        "El proyecto contará con *servicios y amenidades*, y para la apertura tenemos opciones en distintos sectores: "
+        "*cerca de la entrada, esquinas, próximas a las amenidades y ubicaciones interiores*. 📍\n\n"
+        f"{precios}\n\n"
+        "*Para orientarle mejor, ¿su idea es escoger una buena ubicación desde la apertura o prefiere conocer primero los precios y decidir con más calma?* 😊"
+    )
+
+
+def _altamira_respuesta_precio():
+    status = _altamira_status_precios()
+    if status == "preapertura":
+        inicio = "Los *precios y cuotas oficiales todavía no han sido liberados*; se conocerán mañana con la apertura. 💰"
+    elif status == "apertura_sin_precios_cargados":
+        inicio = "Los *precios oficiales se están liberando con la apertura de hoy*, pero todavía no tengo cargada la tabla final. Prefiero no darle una cifra incorrecta. 💰"
+    else:
+        inicio = "Todavía no tengo cargada la *tabla oficial de precios y cuotas*, por lo que prefiero no darle una cifra incorrecta. 💰"
+    return (
+        f"{inicio}\n\n"
+        "💳 Sí puedo confirmarle que manejamos *financiamiento propio de 1 a 8 años*, directamente con la empresa, y la *reserva es desde Q5,000*.\n\n"
+        "En cuanto tenga el precio oficial cargado, podré darle la cuota exacta según el plazo que le interese.\n\n"
+        "*¿Está buscando alguna ubicación en especial: esquina, cerca de la entrada o próxima a las amenidades?* 🏡"
+    )
+
+
+def _altamira_respuesta_reserva():
+    return (
+        "Claro 😊 En *Altamira* la reserva se maneja *desde Q5,000* 🔑\n\n"
+        "Ese monto le permite avanzar con el proceso sobre una opción disponible, pero antes de confirmar un lote específico debo validar su disponibilidad en ese momento. 🏡\n\n"
+        "Para compra manejamos los mismos requisitos habituales y *financiamiento propio de 1 a 8 años*.\n\n"
+        "*¿Qué ubicación le gustaría priorizar: esquina, cerca de la entrada, próxima a las amenidades o una ubicación interior?* 📍"
+    )
+
+
+def _altamira_enviar_plano(numero):
+    if ALTAMIRA_PLANO_URL:
+        return enviar_documento_url_whatsapp(
+            numero,
+            ALTAMIRA_PLANO_URL,
+            "Plano_Altamira_Palestina_de_los_Altos.pdf",
+            caption="Plano general de Altamira · Palestina de los Altos 📄🏡"
+        )
+    return False
+
+
+def _altamira_generar_respuesta(numero, texto_cliente):
+    estado = _estado_altamira(numero)
+    historial = obtener_historial(numero)[-10:]
+    status_precios = _altamira_status_precios()
+    resumen_estado = {
+        "intencion_compra": estado.get("altamira_intencion_compra"),
+        "preferencia_ubicacion": estado.get("altamira_preferencia_ubicacion"),
+        "estado_precios": status_precios,
+        "esperando_gabriel": estado.get("altamira_esperando_gabriel"),
+    }
+    instrucciones = f"""
+Usted ES Gabriel Polero atendiendo personalmente por WhatsApp.
+TRATO OBLIGATORIO: SIEMPRE use usted, le, su, sus. Nunca use tú, vos, te o ti.
+No diga que es IA, bot o asistente. No firme al final como Gabriel.
+
+DATOS OFICIALES DE ALTAMIRA:
+{ALTAMIRA_FICHA_OFICIAL}
+
+ESTADO DEL CLIENTE:
+{json.dumps(resumen_estado, ensure_ascii=False)}
+
+REGLAS:
+- Responda PRIMERO exactamente lo que el cliente preguntó. No convierta cada respuesta en una ficha completa.
+- Use respuesta mínima suficiente: datos correctos, párrafos cortos, 2 a 5 emojis naturales y *negritas de WhatsApp* para lo importante.
+- Como máximo UNA pregunta al final y solo si ayuda a que la conversación avance.
+- Si el cliente hace varias preguntas en el mismo bloque, responda todas las que estén respaldadas.
+- NO invente precio, cuota, medida, amenidad específica, garita, muro, mantenimiento, fechas, disponibilidad exacta ni ubicación precisa.
+- Si preguntan por precio/cuotas, explique que aún no están cargados y NO haga cálculos estimados.
+- Puede explicar financiamiento 1 a 8 años, reserva Q5,000, enganche Q6,000, 17% sobre saldos, abonos a capital y requisitos porque sí están confirmados.
+- Si preguntan por una ubicación específica del plano, puede decir que existen opciones generales en entrada/esquinas/cerca de amenidades, pero la disponibilidad de un lote concreto debe confirmarse.
+- Si la pregunta no puede contestarse de forma segura con la ficha, devuelva puede_responder=false y una respuesta cálida: "Permítame confirmarle ese detalle para darle la información correcta 😊."
+- No mencione garita ni muro espontáneamente.
+- Si el cliente ya dijo que quiere comprar/reservar en apertura, avance de forma natural preguntando qué sector desea priorizar; no vuelva a preguntarle si comprará en apertura.
+- Si dijo que esperará precios, respete eso y ayúdele a conocer el proyecto sin presión.
+
+Devuelva EXCLUSIVAMENTE JSON válido:
+{{"puede_responder": true, "mensaje": "respuesta para el cliente"}}
+"""
+    mensajes=[]
+    for item in historial:
+        if item.get("role") in {"user","assistant"}:
+            mensajes.append({"role":item["role"],"content":str(item.get("content") or "")})
+    if not (mensajes and mensajes[-1].get("role")=="user" and str(mensajes[-1].get("content") or "").strip()==str(texto_cliente or "").strip()):
+        mensajes.append({"role":"user","content":texto_cliente})
+    try:
+        r=client.responses.create(model="gpt-5-mini", instructions=instrucciones, input=mensajes)
+        raw=(r.output_text or "").strip()
+        m=re.search(r"\{.*\}",raw,flags=re.S)
+        data=json.loads(m.group(0) if m else raw)
+        msg=eliminar_eco_pregunta_cliente(str(data.get("mensaje") or "").strip(), texto_cliente)
+        msg=formalizar_trato_usted(msg)
+        msg=_palmeras_quitar_firma_innecesaria(msg)
+        return bool(data.get("puede_responder",True)), msg
+    except Exception as exc:
+        print("ALTAMIRA IA ERROR:",exc)
+        return False,"Permítame confirmarle ese detalle para darle la información correcta 😊."
+
+
+def manejar_cerebro_altamira(numero, texto, message_id=None):
+    if not texto:
+        return False
+    # Comparaciones explícitas entre proyectos se dejan al motor general.
+    tnorm=_altamira_normalizar(texto)
+    otros=sum(1 for x in ["palmeras","buenaventura","vista hermosa"] if x in tnorm)
+    if otros and ("altamira" in tnorm or "palestina" in tnorm):
+        return False
+
+    estado=_estado_altamira(numero)
+    primer_contacto=necesita_presentacion_inicial(numero)
+    marcar_cliente_presentado(numero)
+    guardar_mensaje(numero,"user",texto)
+
+    preferencia=_altamira_preferencia_ubicacion(texto)
+    if preferencia:
+        estado["altamira_preferencia_ubicacion"]=preferencia
+
+    clasificacion=_altamira_clasificar_intencion(texto)
+    if clasificacion:
+        _altamira_alertar_clasificacion(numero,clasificacion,preferencia or "")
+
+    # Pregunta general del anuncio/preapertura.
+    if _altamira_es_entrada_general(texto):
+        estado["altamira_etapa"]="clasificando_apertura"
+        persistir_cliente(numero)
+        _altamira_enviar_y_recordar(numero,_altamira_presentacion_base())
+        return True
+
+    # Precio o cuota: nunca estimar mientras la tabla no esté cargada.
+    if _altamira_pide_precio_o_cuota(texto):
+        _altamira_enviar_y_recordar(numero,_altamira_respuesta_precio())
+        return True
+
+    # Reserva = intención alta, aun si la frase no coincidió con el clasificador.
+    if _altamira_pide_reserva(texto):
+        estado["altamira_reserva_interes"]=True
+        _altamira_alertar_clasificacion(numero,"apertura",preferencia or "reserva")
+        _altamira_enviar_y_recordar(numero,_altamira_respuesta_reserva())
+        return True
+
+    # Plano: si ya tenemos URL pública lo enviamos. Si todavía no está cargado,
+    # no fingimos haberlo enviado y Gabriel recibe intervención.
+    if _altamira_pide_plano(texto):
+        if _altamira_enviar_plano(numero):
+            _altamira_enviar_y_recordar(
+                numero,
+                "Le compartí el *plano general de Altamira* 📄🏡. Tenemos opciones en distintos sectores del proyecto.\n\n*¿Qué ubicación le llama más la atención: esquina, entrada o cerca de las amenidades?* 😊"
+            )
+        else:
+            _altamira_marcar_intervencion(numero,"Solicitó el plano de Altamira y ALTAMIRA_PLANO_URL todavía no está configurada")
+            _altamira_enviar_y_recordar(numero,"Permítame compartirle el plano correcto de *Altamira* en un momento 😊📄.")
+        return True
+
+    # Respuestas directas a la pregunta de clasificación inicial.
+    if clasificacion == "apertura":
+        pref=estado.get("altamira_preferencia_ubicacion")
+        if pref:
+            respuesta=(
+                f"Perfecto 😊 Entonces voy a tomar como prioridad que está buscando *{pref}* en *Altamira* 🏡\n\n"
+                "Para la apertura tenemos opciones en distintos sectores, pero la disponibilidad cambia conforme se van eligiendo lotes.\n\n"
+                "*¿Desea que le avise cuál opción disponible encaja mejor con esa ubicación cuando se liberen los precios?* 🔥"
+            )
+        else:
+            respuesta=(
+                "Perfecto 😊 Si su idea es escoger desde la *apertura*, conviene definir desde ahora qué ubicación quiere priorizar. 🏡\n\n"
+                "📍 Tenemos opciones *cerca de la entrada, en esquina, próximas a las amenidades y ubicaciones interiores*.\n\n"
+                "*¿Cuál de esas ubicaciones le interesaría más?*"
+            )
+        _altamira_enviar_y_recordar(numero,respuesta)
+        return True
+
+    if clasificacion == "posterior":
+        _altamira_enviar_y_recordar(
+            numero,
+            "Claro 😊 Podemos esperar a conocer los *precios oficiales* para que tome la decisión con toda la información.\n\nMientras tanto, puedo ayudarle a identificar qué sector del proyecto le gusta más para que ya tenga una referencia cuando salgan los precios. 🏡\n\n*¿Le llama más la atención una esquina, estar cerca de la entrada o cerca de las amenidades?* 📍"
+        )
+        return True
+
+    # Cualquier otra consulta entra a IA con ficha cerrada y libertad conversacional.
+    puede,mensaje=_altamira_generar_respuesta(numero,texto)
+    if not puede:
+        _altamira_marcar_intervencion(numero,texto)
+    _altamira_enviar_y_recordar(numero,mensaje)
+    return True
+
+
+# ============================================================
 # RECIBIR MENSAJES DE WHATSAPP
 # ============================================================
 
@@ -10958,6 +11513,21 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
 
         print("\nMENSAJE DEL CLIENTE:")
         print(texto_cliente)
+
+        # ========================================================
+        # ALTAMIRA PALESTINA - CAMPAÑA DE APERTURA
+        # ========================================================
+        # Se atiende antes de los flujos antiguos para impedir que un lead nuevo
+        # herede datos de Palmeras/Buenaventura/Vista Hermosa. Los anuncios ya
+        # mapeados de los proyectos anteriores siguen conservando su proyecto.
+        proyecto_previo_altamira = detectar_proyecto_en_texto(texto_cliente) or obtener_proyecto_actual(numero_cliente)
+        if proyecto_previo_altamira == "altamira":
+            estado_altamira = obtener_estado_conversacion(numero_cliente)
+            estado_altamira["proyecto_actual"] = "altamira"
+            proyecto_activo[numero_cliente] = "altamira"
+            persistir_cliente(numero_cliente)
+            if manejar_cerebro_altamira(numero_cliente, texto_cliente, message_id):
+                return
 
         # ========================================================
         # NUEVO CEREBRO DE PALMERAS - PRIORIDAD SOBRE FLUJOS VIEJOS
@@ -14002,12 +14572,23 @@ def crm_enviar(numero):
         estado_actual.get("palmeras_esperando_gabriel")
         or estado_actual.get("palmeras_requiere_intervencion")
     )
+    era_intervencion_altamira = bool(
+        estado_actual.get("altamira_esperando_gabriel")
+        or estado_actual.get("altamira_requiere_intervencion")
+    )
+    era_intervencion_ia = era_intervencion_palmeras or era_intervencion_altamira
 
-    if era_intervencion_palmeras:
-        estado_actual["palmeras_esperando_gabriel"] = False
-        estado_actual["palmeras_requiere_intervencion"] = False
-        estado_actual["palmeras_etapa"] = "conversacion_abierta"
-        estado_actual["palmeras_pregunta_pendiente"] = None
+    if era_intervencion_ia:
+        if era_intervencion_palmeras:
+            estado_actual["palmeras_esperando_gabriel"] = False
+            estado_actual["palmeras_requiere_intervencion"] = False
+            estado_actual["palmeras_etapa"] = "conversacion_abierta"
+            estado_actual["palmeras_pregunta_pendiente"] = None
+        if era_intervencion_altamira:
+            estado_actual["altamira_esperando_gabriel"] = False
+            estado_actual["altamira_requiere_intervencion"] = False
+            estado_actual["altamira_etapa"] = "conversacion_abierta"
+            estado_actual["altamira_pregunta_pendiente"] = None
         persistir_cliente(numero)
         crm_poner_ia(numero)
         meta_actual = crm_obtener_meta(numero)
@@ -14042,7 +14623,7 @@ def crm_enviar(numero):
         enviar_whatsapp(numero, mensaje, formalizar=False)
         guardar_mensaje(numero, "assistant", mensaje, formalizar=False)
 
-    if era_intervencion_palmeras:
+    if era_intervencion_ia:
         # Gabriel ya resolvió la duda desconocida y ahora la respuesta queda en
         # memoria. Si el cliente no contesta, retomamos la cadencia normal.
         programar_seguimiento_inactividad(numero)
