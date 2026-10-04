@@ -1,3 +1,4 @@
+# VERSION_INTERVENCION_1357_NOMBRES_CRM_20261004 - seguimientos 10m+1/3/5/7, pausa IA por duda y nombre manual CRM
 # VERSION_CTA_PALMERAS_3_PREGUNTAS_20261004 - info y precios siguen protocolo; visita lo rompe
 # VERSION_PALMERAS_COTIZACIONES_VISUALES_IA_20261004 - restaura imagenes por modalidad + decisiones sin repetir preguntas
 # VERSION_PALMERAS_IA_DECISIONES_MEDIA_CRM_20261004 - IA interpreta decisiones PSM + audio/foto/video visibles en CRM
@@ -246,6 +247,8 @@ CRM_PASSWORD = os.getenv("CRM_PASSWORD")
 # Número interno que recibirá, por WhatsApp, un resumen separado por cada lead.
 # Puede cambiarse luego desde Render > Environment sin tocar el código.
 CRM_SEGUIMIENTO_NUMERO = os.getenv("CRM_SEGUIMIENTO_NUMERO", "50236676447").strip().replace("+", "").replace(" ", "")
+# Número que recibirá alertas cuando la IA se pause por una pregunta no segura.
+CRM_INTERVENCION_NUMERO = os.getenv("CRM_INTERVENCION_NUMERO", CRM_SEGUIMIENTO_NUMERO).strip().replace("+", "").replace(" ", "")
 
 # Web Push para notificaciones reales en computadora y teléfono.
 VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY", "")
@@ -1683,7 +1686,13 @@ def obtener_estado_conversacion(numero):
             "psm_video_amenidades_enviado": False,
             "psm_pregunta_pendiente": None,
             "psm_visita_ofrecida": False,
-            "psm_recordatorio_token": None
+            "psm_recordatorio_token": None,
+            # Control genérico de intervención humana.
+            "requiere_intervencion_ia": False,
+            "esperando_respuesta_gabriel": False,
+            "intervencion_pregunta": None,
+            # Alias/nombre editable manualmente desde el CRM.
+            "crm_nombre_manual": ""
         }
 
     return estado_conversacion[numero]
@@ -4271,6 +4280,22 @@ def crm_identificador_visible(contacto):
     return f"+{contacto}" if contacto else ""
 
 
+def crm_nombre_manual(contacto):
+    """Nombre/etiqueta que Gabriel escribe manualmente desde el CRM."""
+    contacto = str(contacto or "").strip()
+    if not contacto:
+        return ""
+    try:
+        estado = obtener_estado_conversacion(contacto)
+        return str(estado.get("crm_nombre_manual") or "").strip()
+    except Exception:
+        return ""
+
+
+def crm_etiqueta_cliente(contacto):
+    return crm_nombre_manual(contacto) or crm_identificador_visible(contacto)
+
+
 # ============================================================
 # MEMORIA PERSISTENTE DE CLIENTES EN POSTGRESQL
 # ============================================================
@@ -4410,6 +4435,10 @@ def _aplicar_snapshot(numero, snap):
     estado.setdefault("psm_pregunta_pendiente", None)
     estado.setdefault("psm_visita_ofrecida", False)
     estado.setdefault("psm_recordatorio_token", None)
+    estado.setdefault("requiere_intervencion_ia", False)
+    estado.setdefault("esperando_respuesta_gabriel", False)
+    estado.setdefault("intervencion_pregunta", None)
+    estado.setdefault("crm_nombre_manual", "")
     estado_conversacion[numero] = estado
 
     if snap.get("ultima_intencion") is not None:
@@ -5814,6 +5843,105 @@ def crm_guardar_meta(numero, etapa, proxima_accion, proxima_accion_fecha):
 
 
 
+# ============================================================
+# INTERVENCION HUMANA AUTOMATICA
+# ============================================================
+
+def es_intervencion_activa(numero):
+    estado = obtener_estado_conversacion(numero)
+    return bool(
+        estado.get("requiere_intervencion_ia")
+        or estado.get("esperando_respuesta_gabriel")
+    )
+
+
+def limpiar_intervencion_automatica(numero, reanudar_ia=True):
+    estado = obtener_estado_conversacion(numero)
+    estaba = es_intervencion_activa(numero)
+    estado["requiere_intervencion_ia"] = False
+    estado["esperando_respuesta_gabriel"] = False
+    estado["intervencion_pregunta"] = None
+    if estado.get("psm_etapa") == "requiere_gabriel":
+        estado["psm_etapa"] = "conversacion_abierta"
+        estado["psm_pregunta_pendiente"] = None
+    persistir_cliente(numero)
+    if reanudar_ia:
+        crm_poner_ia(numero)
+    return estaba
+
+
+def _alerta_intervencion_texto(numero, pregunta):
+    nombre = crm_nombre_manual(numero)
+    identificador = crm_identificador_visible(numero)
+    proyecto = crm_nombre_proyecto(numero)
+    encabezado = nombre if nombre else identificador
+    return (
+        "⚠️ *IA PAUSADA - REQUIERE RESPUESTA*\n\n"
+        f"Cliente: {encabezado}\n"
+        + (f"Número: {identificador}\n" if nombre else "")
+        + f"Proyecto: {proyecto}\n\n"
+        f"Pregunta/mensaje:\n{str(pregunta or '')[:700]}\n\n"
+        "Ingrese al CRM, responda al cliente y la IA se reanudará automáticamente después de enviar su respuesta."
+    )
+
+
+def marcar_intervencion_automatica(numero, pregunta, motivo="dato no confirmado"):
+    """Pausa IA + seguimientos, marca el CRM y avisa a Gabriel."""
+    numero = str(numero or "").strip()
+    if not numero:
+        return False
+
+    estado = obtener_estado_conversacion(numero)
+    ya_estaba = es_intervencion_activa(numero)
+    estado["requiere_intervencion_ia"] = True
+    estado["esperando_respuesta_gabriel"] = True
+    estado["intervencion_pregunta"] = str(pregunta or "").strip()[:1000]
+    if (estado.get("proyecto_actual") or proyecto_activo.get(numero)) == "palmeras":
+        estado["psm_etapa"] = "requiere_gabriel"
+        estado["psm_pregunta_pendiente"] = None
+
+    # El modo manual impide cualquier respuesta automática hasta que Gabriel conteste.
+    crm_poner_manual(numero)
+    try:
+        cancelar_seguimiento(numero)
+    except Exception:
+        pass
+    persistir_cliente(numero)
+
+    meta = crm_obtener_meta(numero)
+    crm_guardar_meta(
+        numero,
+        meta.get("etapa") if meta.get("etapa") in CRM_ETAPAS else "Interesado",
+        f"⚠️ Responder manualmente: {str(pregunta or '')[:130]}",
+        meta.get("proxima_accion_fecha") or ""
+    )
+
+    # Evita bombardear a Gabriel si el cliente manda varios mensajes mientras ya está pausado.
+    if ya_estaba:
+        return True
+
+    alerta = _alerta_intervencion_texto(numero, pregunta)
+
+    def avisar():
+        try:
+            enviar_push_crm(numero, f"⚠️ IA pausada: {str(pregunta or '')[:180]}")
+        except Exception as exc:
+            print("ALERTA INTERVENCION PUSH ERROR:", exc)
+        try:
+            enviar_ntfy_crm(numero, f"⚠️ IA pausada. Requiere respuesta: {str(pregunta or '')[:250]}")
+        except Exception as exc:
+            print("ALERTA INTERVENCION NTFY ERROR:", exc)
+        try:
+            if CRM_INTERVENCION_NUMERO and not crm_es_facebook(numero):
+                enviar_whatsapp(CRM_INTERVENCION_NUMERO, alerta, formalizar=False)
+        except Exception as exc:
+            print("ALERTA INTERVENCION WHATSAPP ERROR:", exc)
+
+    Thread(target=avisar, daemon=True).start()
+    print("INTERVENCION AUTOMATICA:", numero, motivo, str(pregunta or "")[:180])
+    return True
+
+
 # Maximo de mensajes anteriores que recordara temporalmente.
 MAX_HISTORIAL = 12
 
@@ -5898,6 +6026,29 @@ def guardar_mensaje(numero_cliente, rol, contenido, formalizar=True):
 # ============================================================
 # GENERAR RESPUESTA CON OPENAI
 # ============================================================
+
+# ============================================================
+# GARANTIZAR CONTINUIDAD EN RESPUESTAS GENERADAS POR IA
+# ============================================================
+
+def asegurar_pregunta_final_ia(texto):
+    """Garantiza que toda respuesta visible generada por IA cierre con una pregunta.
+
+    El prompt intenta producir una pregunta natural y contextual. Esta función es
+    únicamente una red de seguridad para que la conversación no muera si el modelo
+    devuelve una respuesta sin pregunta final.
+    """
+    texto = formalizar_trato_usted(str(texto or "").strip())
+    if not texto:
+        return "¿Qué le gustaría conocer sobre nuestros proyectos? 😊"
+
+    # Si ya termina en pregunta (con o sin emoji/signos después), no agregamos otra.
+    cola = texto[-28:]
+    if "?" in cola:
+        return texto
+
+    return texto.rstrip() + "\n\n¿Qué le gustaría revisar a continuación? 😊"
+
 
 def generar_respuesta(numero_cliente, mensaje_cliente):
 
@@ -6334,11 +6485,10 @@ Puntos sugeridos cargados:
 REGLA DE CITA CERRADA:
 Cuando ya exista día y hora definidos para una visita:
 - La cita se considera cerrada.
-- NO hagas preguntas adicionales.
+- NO vuelvas a preguntar día u hora ni reabras la coordinación de la visita.
 - NO ofrezcas indicaciones, ruta, cotizaciones, financiamiento, requisitos ni otra información por iniciativa propia.
-- NO agregues CTA después de confirmar.
-- Termina el mensaje justo después de confirmar día, hora y proyecto.
-- Si el cliente luego hace una pregunta concreta, responde únicamente esa pregunta y NO cierres con otra pregunta.
+- Si la confirmación de cita la maneja el flujo automático, ese mensaje puede terminar sin CTA.
+- Si el cliente luego hace una pregunta concreta y la respuesta la genera la IA, responde únicamente esa duda y termina con UNA pregunta breve de servicio relacionada con el tema, sin volver a ofrecer la visita.
 - Si el cliente solo dice "gracias", responde breve, por ejemplo: "¡Con gusto! 🙌 Nos vemos el jueves."
 
 REGLA DE PROCESO DE COMPRA Y SEGUIMIENTOS:
@@ -6370,7 +6520,7 @@ REGLA DE RESPUESTAS CORTAS Y NO REDUNDANTES:
   entiende que está respondiendo a tu pregunta y envía el material; no preguntes qué quiere saber.
 - Si la conversación está cerca de cerrar una visita, deja de vender y coordina únicamente día y hora.
 - Si pregunta cuándo puedes atenderlo, responde que a la hora que él disponga.
-- Cuando ya haya día y hora, confirma brevemente y termina.
+- Cuando ya haya día y hora, no vuelvas a pedirlos. Si la respuesta la genera la IA, termina con una sola pregunta breve de servicio y no reabras la cita.
 
 REGLA DE PLAZOS:
 Si el cliente menciona directamente un plazo de 1 a 8 años o su equivalente
@@ -7210,6 +7360,23 @@ Debes:
 - detectar intención de compra
 - llevar al cliente progresivamente hacia una visita,
   reserva o siguiente paso cuando corresponda
+
+REGLA ABSOLUTA DE CONTINUIDAD:
+- TODA respuesta que generes para el cliente debe terminar con EXACTAMENTE UNA pregunta breve y natural.
+- La pregunta debe nacer de lo que el cliente acaba de decir y ayudar a avanzar la conversación.
+- NO uses preguntas tipo menú si no hacen falta.
+- NO repitas una pregunta que el cliente ya respondió.
+- Primero resuelve completamente la duda actual y DESPUÉS haz la pregunta.
+- Si el cliente cambió de decisión, adapta la pregunta a su nueva decisión.
+- Si ya existe visita coordinada, no vuelvas a preguntar día u hora; haz una pregunta breve de servicio relacionada con su duda actual.
+
+REGLA DE INTERVENCIÓN HUMANA AUTOMÁTICA:
+- Si el cliente hace una pregunta INMOBILIARIA o comercial que no puedes responder con seguridad usando la información oficial y el historial, NO inventes ni adivines.
+- Si la consulta es inusual y necesita criterio/confirmación humana (por ejemplo disponibilidad exacta no confirmada, excepción comercial, trámite no documentado, condición especial o dato que no aparece), coloca EXACTAMENTE esta marca en la primera línea:
+[[REQUIERE_INTERVENCION]]
+- Después de la marca escribe una respuesta breve y natural en primera persona, por ejemplo: "Permítame confirmarle ese detalle para darle la información correcta 😊. ¿Me permite revisarlo y le respondo enseguida?"
+- La marca es interna y será eliminada antes de enviar el mensaje al cliente.
+- NO uses la marca simplemente porque el cliente haga una pregunta ajena al negocio; en temas ajenos al negocio solo redirige brevemente al tema inmobiliario.
 """
 
 
@@ -7245,7 +7412,37 @@ Debes:
         )
 
 
-        texto_respuesta = respuesta.output_text
+        raw_respuesta = str(respuesta.output_text or "").strip()
+        marca_intervencion = "[[REQUIERE_INTERVENCION]]"
+        requiere_intervencion = marca_intervencion in raw_respuesta
+
+        # Red de seguridad: si la IA expresa explícitamente que debe confirmar un dato,
+        # tratamos la conversación como intervención aunque haya olvidado la marca.
+        raw_lower = normalizar_ventas(raw_respuesta)
+        frases_incertidumbre = [
+            "prefiero confirmar", "permitame confirmar", "permítame confirmar",
+            "necesito confirmar", "voy a confirmar", "debo confirmar",
+            "no tengo confirmado", "para darle la informacion correcta",
+            "para darle la información correcta"
+        ]
+        if any(frase in raw_lower for frase in frases_incertidumbre):
+            requiere_intervencion = True
+
+        texto_limpio = raw_respuesta.replace(marca_intervencion, "").strip()
+        if requiere_intervencion and not texto_limpio:
+            texto_limpio = (
+                "Permítame confirmarle ese detalle para darle la información correcta 😊. "
+                "¿Me permite revisarlo y le respondo enseguida?"
+            )
+
+        texto_respuesta = asegurar_pregunta_final_ia(texto_limpio)
+
+        if requiere_intervencion:
+            marcar_intervencion_automatica(
+                numero_cliente,
+                mensaje_cliente,
+                motivo="la IA indicó que requiere confirmación humana"
+            )
 
 
         # ====================================================
@@ -7272,10 +7469,18 @@ Debes:
 
         print("\nERROR OPENAI:")
         print(error)
+        try:
+            marcar_intervencion_automatica(
+                numero_cliente,
+                mensaje_cliente,
+                motivo=f"error al generar respuesta: {type(error).__name__}"
+            )
+        except Exception as exc_intervencion:
+            print("ERROR MARCANDO INTERVENCION TRAS OPENAI:", exc_intervencion)
 
         return (
-            "Claro 😊 Déjame revisar exactamente lo que me solicitas "
-            "y te lo envío en un momento."
+            "Permítame confirmarle ese detalle para darle la información correcta 😊. "
+            "¿Me permite revisarlo y le respondo enseguida?"
         )
 
 
@@ -7406,20 +7611,24 @@ REGLA PRINCIPAL:
 - No digas frases técnicas como "en la imagen se observa una cotización..." salvo que sea necesario.
 - No agregues advertencias legales innecesarias. Solo aclara límites si el cliente pregunta por autenticidad o validez legal.
 - No inventes cifras que no sean visibles.
+- Si el cliente pide un dato inmobiliario que NO se ve con claridad y no puedes confirmarlo con seguridad, escribe [[REQUIERE_INTERVENCION]] en la primera línea y luego responde: "Permítame confirmarle ese detalle para darle la información correcta 😊. ¿Me permite revisarlo?"
+- Trate SIEMPRE al cliente de USTED.
+- Termine SIEMPRE con EXACTAMENTE UNA pregunta breve relacionada con lo que el cliente envió.
+- Primero responda la duda de la imagen y después haga la pregunta.
 
 Ejemplo:
 Pregunta: "¿La cuota a 8 años es de Q1,000?"
 Si en la imagen dice Q1,476:
-Respuesta adecuada: "No 😊 La cuota a 8 años que aparece es de Q1,476 al mes."
+Respuesta adecuada: "No 😊 La cuota a 8 años que aparece es de Q1,476 al mes. ¿Desea que revisemos otro plazo?"
 
 SI NO HAY PREGUNTA/CAPTION:
 - No hagas un resumen completo.
 - Responde únicamente:
-  "¡Recibí la imagen! 📷😊 ¿Qué deseas que revise?"
+  "¡Recibí la imagen! 📷😊 ¿Qué desea que revise?"
 
 SI LA IMAGEN ES CLARAMENTE AJENA A TERRENOS:
 - Responde breve:
-  "😄 Recibí la imagen. Este WhatsApp está enfocado en terrenos 🏡. ¿En qué puedo ayudarte sobre nuestros proyectos?"
+  "😄 Recibí la imagen. Este WhatsApp está enfocado en terrenos 🏡. ¿En qué puedo ayudarle sobre nuestros proyectos?"
 
 Devuelve SOLO el texto final que debe recibir el cliente.
 """
@@ -7441,17 +7650,27 @@ Devuelve SOLO el texto final que debe recibir el cliente.
             ]
         )
 
-        texto = (respuesta.output_text or "").strip()
+        raw = str(respuesta.output_text or "").strip()
+        marca = "[[REQUIERE_INTERVENCION]]"
+        requiere = marca in raw
+        texto = asegurar_pregunta_final_ia(raw.replace(marca, "").strip())
+
+        if requiere:
+            marcar_intervencion_automatica(
+                numero,
+                pregunta or "Consulta relacionada con una imagen recibida",
+                motivo="la imagen no permite confirmar el dato con seguridad"
+            )
 
         if not texto:
-            return "¡Recibí la imagen! 📷😊 ¿Qué deseas que revise?"
+            return "¡Recibí la imagen! 📷😊 ¿Qué desea que revise?"
 
         return texto
 
     except Exception as error:
         print("ERROR ANALIZANDO IMAGEN:")
         print(error)
-        return "¡Recibí la imagen! 📷😊 ¿Qué deseas que revise?"
+        return "¡Recibí la imagen! 📷😊 ¿Qué desea que revise?"
 
 
 
@@ -7527,7 +7746,7 @@ def analizar_video_cliente(numero, video_bytes, caption=""):
     frames = extraer_frames_video(video_bytes, cantidad=3)
 
     if not frames:
-        return "¡Recibí el video! 🎥😊 ¿Qué deseas que revise?"
+        return "¡Recibí el video! 🎥😊 ¿Qué desea que revise?"
 
     try:
         proyecto = nombre_proyecto_contexto(numero)
@@ -7547,9 +7766,13 @@ REGLAS:
 - Usa 1 o 2 emojis naturales.
 - No describas todo el video ni enumeres detalles que no pidió.
 - No inventes datos.
+- Si el cliente pide un dato inmobiliario que NO puede confirmarse con seguridad usando los fotogramas, escribe [[REQUIERE_INTERVENCION]] en la primera línea y luego una respuesta breve pidiendo tiempo para confirmarlo.
+- Trate SIEMPRE al cliente de USTED.
+- Termine SIEMPRE con EXACTAMENTE UNA pregunta breve relacionada con el video o con el siguiente paso comercial.
+- Primero responda la duda y después haga la pregunta.
 - Si no hizo ninguna pregunta, responde:
-  "¡Recibí el video! 🎥😊 ¿Qué deseas que revise?"
-- Si el video es claramente ajeno a terrenos, redirige brevemente al tema inmobiliario.
+  "¡Recibí el video! 🎥😊 ¿Qué desea que revise?"
+- Si el video es claramente ajeno a terrenos, redirige brevemente al tema inmobiliario y termina con una pregunta.
 
 Devuelve SOLO el mensaje final para WhatsApp.
 """
@@ -7569,13 +7792,22 @@ Devuelve SOLO el mensaje final para WhatsApp.
             input=[{"role": "user", "content": contenido}]
         )
 
-        texto = (respuesta.output_text or "").strip()
-        return texto or "¡Recibí el video! 🎥😊 ¿Qué deseas que revise?"
+        raw = str(respuesta.output_text or "").strip()
+        marca = "[[REQUIERE_INTERVENCION]]"
+        requiere = marca in raw
+        texto = asegurar_pregunta_final_ia(raw.replace(marca, "").strip())
+        if requiere:
+            marcar_intervencion_automatica(
+                numero,
+                pregunta or "Consulta relacionada con un video recibido",
+                motivo="el video no permite confirmar el dato con seguridad"
+            )
+        return texto or "¡Recibí el video! 🎥😊 ¿Qué desea que revise?"
 
     except Exception as error:
         print("ERROR ANALIZANDO VIDEO:")
         print(error)
-        return "¡Recibí el video! 🎥😊 ¿Qué deseas que revise?"
+        return "¡Recibí el video! 🎥😊 ¿Qué desea que revise?"
 
 
 
@@ -7671,11 +7903,15 @@ def procesar_imagen_o_video_cliente(numero, mensaje, tipo_mensaje):
                 )
 
             if proyecto_topografia == "vista_hermosa" and not caption:
+                marcar_intervencion_automatica(
+                    numero,
+                    "Confirmar la topografía exacta del lote mostrado en la captura de Vista Hermosa",
+                    motivo="topografía exacta no confirmada"
+                )
                 return (
                     "Perfecto 😊 Recibí la captura. En Vista Hermosa hay lotes planos "
-                    "y quebrados, así que para darte seguridad prefiero confirmar la "
-                    "topografía exacta de esa opción. Déjame revisarlo y te lo envío "
-                    "en un momento."
+                    "y quebrados, así que para darle seguridad prefiero confirmar la "
+                    "topografía exacta de esa opción. ¿Me permite revisarlo y le respondo enseguida?"
                 )
 
         archivo, mime = obtener_media_whatsapp(
@@ -8403,20 +8639,23 @@ def enviar_cotizacion_del_proyecto(numero, proyecto, medida=None):
     )
 
 # ============================================================
-# SEGUIMIENTO AUTOMATICO POR INACTIVIDAD - PRUEBA
+# SEGUIMIENTO AUTOMATICO CONTEXTUAL - 10 MIN + 1 / 3 / 5 / 7
 # ============================================================
+# 10 minutos y Día 1 se envían dentro de la ventana normal de WhatsApp.
+# Para Día 3 / 5 / 7, WhatsApp exige plantillas aprobadas por Meta.
+# Si las variables de entorno no están configuradas, esos envíos se omiten
+# de forma segura y quedan registrados en los logs de Render.
 
-# PRODUCCION: seguimiento después de 8 horas sin respuesta.
-SEGUIMIENTO_SEGUNDOS = 8 * 60 * 60
+SEGUIMIENTO_10_MIN = 10 * 60
+SEGUIMIENTO_DIA1 = 23 * 60 * 60  # 23h para permanecer dentro de la ventana de 24h.
+SEGUIMIENTO_DIA3_ESPERA = 2 * 24 * 60 * 60
+SEGUIMIENTO_DIA5_ESPERA = 2 * 24 * 60 * 60
+SEGUIMIENTO_DIA7_ESPERA = 2 * 24 * 60 * 60
 
-SEGUIMIENTO_TEXTO = (
-    "Hola 👋😊 Solo paso por aquí.\n\n"
-    "Quizá no ha tenido tiempo de revisar con calma la información de los terrenos "
-    "que le envié 🏡. No hay problema.\n\n"
-    "Cuando pueda verla, escríbame. Si alguna opción le interesa, con gusto le ayudo "
-    "a hacer números para buscar una cuota cómoda para usted ✅\n\n"
-    "👉 ¿Qué cuota mensual le quedaría cómoda?"
-)
+WA_TEMPLATE_LANGUAGE = os.getenv("WA_TEMPLATE_LANGUAGE", "es").strip() or "es"
+WA_TEMPLATE_SEGUIMIENTO_DIA3 = os.getenv("WA_TEMPLATE_SEGUIMIENTO_DIA3", "").strip()
+WA_TEMPLATE_SEGUIMIENTO_DIA5 = os.getenv("WA_TEMPLATE_SEGUIMIENTO_DIA5", "").strip()
+WA_TEMPLATE_SEGUIMIENTO_DIA7 = os.getenv("WA_TEMPLATE_SEGUIMIENTO_DIA7", "").strip()
 
 seguimiento_version = {}
 lock_seguimiento = Lock()
@@ -8426,45 +8665,196 @@ def cancelar_seguimiento(numero):
     """Invalida cualquier seguimiento pendiente de ese cliente."""
     if not numero:
         return
-
     with lock_seguimiento:
         seguimiento_version[numero] = seguimiento_version.get(numero, 0) + 1
 
 
+def _seguimiento_debe_detenerse(numero, version):
+    with lock_seguimiento:
+        if seguimiento_version.get(numero) != version:
+            return True
+
+    if crm_esta_manual(numero):
+        return True
+    if cita_ya_cerrada(numero):
+        return True
+
+    meta = crm_obtener_meta(numero)
+    if meta.get("etapa") in {"Venta", "Reserva", "Perdido"}:
+        return True
+
+    estado = obtener_estado_conversacion(numero)
+    if estado.get("requiere_intervencion_ia") or estado.get("esperando_respuesta_gabriel"):
+        return True
+    if estado.get("palmeras_esperando_gabriel") or estado.get("palmeras_requiere_intervencion"):
+        return True
+    return False
+
+
+def _seguimiento_contexto(numero):
+    estado = obtener_estado_conversacion(numero)
+    proyecto = estado.get("proyecto_actual") or proyecto_activo.get(numero)
+    nombres = {
+        "palmeras": "Palmeras San Miguel",
+        "buenaventura": "Buenaventura Cuyotenango",
+        "vista_hermosa": "Vista Hermosa",
+    }
+    return proyecto, nombres.get(proyecto, "el proyecto"), estado
+
+
+def _mensaje_seguimiento_contextual(numero, momento="10m"):
+    proyecto, nombre, estado = _seguimiento_contexto(numero)
+    pendiente = str(estado.get("psm_pregunta_pendiente") or "").lower() if proyecto == "palmeras" else ""
+
+    if momento == "10m":
+        if proyecto == "palmeras":
+            if "fase" in pendiente:
+                return (
+                    "Quedó pendiente saber cuál de las dos fases le parece más atractiva 😊. "
+                    "¿Le interesa más *Fase 1* o *Fase 2*?"
+                )
+            if "plan" in pendiente or "modalidad" in pendiente or "forma de pago" in pendiente:
+                return (
+                    "Quedó pendiente la forma de pago 😊. "
+                    "¿Le gustaría revisar *financiamiento*, *1 año sin intereses* o *contado*?"
+                )
+            if "visita" in pendiente or "dia" in pendiente or "día" in pendiente or "hora" in pendiente:
+                return (
+                    "Quedó pendiente coordinar su visita a *Palmeras San Miguel* 😊. "
+                    "¿Qué día le quedaría bien?"
+                )
+            if "reaccion" in pendiente or "propuesta" in pendiente:
+                return "¿Qué le pareció la propuesta que le compartí? 😊"
+        return (
+            f"Quedó pendiente nuestra conversación sobre *{nombre}* 😊. "
+            "¿Desea que continuemos desde donde quedamos?"
+        )
+
+    # Día 1: retoma la conversación sin repetir todo el catálogo.
+    if proyecto == "palmeras":
+        if "fase" in pendiente:
+            return (
+                "¡Hola! 👋 Ayer dejamos pendiente cuál fase de *Palmeras San Miguel* le interesaba más. "
+                "¿Desea que continuemos con Fase 1 o Fase 2? 😊"
+            )
+        if "plan" in pendiente or "modalidad" in pendiente or "forma de pago" in pendiente:
+            return (
+                "¡Hola! 👋 Ayer dejamos pendiente revisar la forma de pago que mejor se adapte a usted en *Palmeras San Miguel*. "
+                "¿Desea que retomemos las opciones? 😊"
+            )
+        if "visita" in pendiente or "dia" in pendiente or "día" in pendiente or "hora" in pendiente:
+            return (
+                "¡Hola! 👋 Ayer quedó pendiente coordinar su visita a *Palmeras San Miguel*. "
+                "¿Qué día le quedaría cómodo para conocerlo? 😊"
+            )
+    return (
+        f"¡Hola! 👋 Ayer dejamos pendiente la información de *{nombre}*. "
+        "¿Desea que retomemos la conversación desde donde quedamos? 😊"
+    )
+
+
+def enviar_template_whatsapp(numero, template_name):
+    """Envía una plantilla aprobada por Meta para seguimientos fuera de 24 horas."""
+    if not template_name or crm_es_facebook(numero):
+        return False
+
+    url = f"https://graph.facebook.com/v26.0/{PHONE_NUMBER_ID}/messages"
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": numero,
+        "type": "template",
+        "template": {
+            "name": template_name,
+            "language": {"code": WA_TEMPLATE_LANGUAGE},
+        },
+    }
+
+    try:
+        r = requests.post(url, headers=headers, json=payload, timeout=20)
+        print("SEGUIMIENTO TEMPLATE", template_name, "STATUS:", r.status_code, r.text)
+        if 200 <= r.status_code < 300:
+            crm_registrar_mensaje(numero, "out", f"📨 Seguimiento automático: {template_name}")
+            return True
+    except Exception as exc:
+        print("SEGUIMIENTO TEMPLATE ERROR:", exc)
+    return False
+
+
+def _enviar_seguimiento_libre(numero, texto):
+    if not texto:
+        return False
+    ok = enviar_whatsapp(numero, texto)
+    if ok:
+        guardar_mensaje(numero, "assistant", texto)
+    return ok
+
 
 def programar_seguimiento_inactividad(numero):
     """
-    Programa dos seguimientos automáticos: a las 8 y 16 horas de inactividad.
-    Si el cliente escribe de nuevo antes de cualquiera de los dos envíos,
-    la versión anterior queda cancelada automáticamente.
+    Cadencia global tras quedar el CLIENTE pendiente de responder:
+    - 10 minutos: recordatorio contextual.
+    - Día 1: seguimiento contextual dentro de 24h.
+    - Día 3 / 5 / 7: plantilla aprobada por Meta, si está configurada.
+
+    Cualquier mensaje nuevo del cliente cancela la secuencia anterior.
+    También se detiene si Gabriel toma control manual, hay visita cerrada,
+    reserva/venta/perdido o el bot está esperando intervención humana.
     """
+    if not numero:
+        return
+
+    # No iniciar seguimientos si ya estamos esperando a Gabriel.
+    estado = obtener_estado_conversacion(numero)
+    if estado.get("requiere_intervencion_ia") or estado.get("esperando_respuesta_gabriel"):
+        return
+
     with lock_seguimiento:
         version = seguimiento_version.get(numero, 0) + 1
         seguimiento_version[numero] = version
 
     def esperar_y_enviar():
-        # Primer recordatorio: 8 horas después del último mensaje del cliente.
-        time.sleep(SEGUIMIENTO_SEGUNDOS)
+        time.sleep(SEGUIMIENTO_10_MIN)
+        if _seguimiento_debe_detenerse(numero, version):
+            return
+        _enviar_seguimiento_libre(numero, _mensaje_seguimiento_contextual(numero, "10m"))
 
-        with lock_seguimiento:
-            if seguimiento_version.get(numero) != version:
-                return
+        # Total aproximado: 23h desde que se programó.
+        time.sleep(max(0, SEGUIMIENTO_DIA1 - SEGUIMIENTO_10_MIN))
+        if _seguimiento_debe_detenerse(numero, version):
+            return
+        _enviar_seguimiento_libre(numero, _mensaje_seguimiento_contextual(numero, "dia1"))
 
-        enviar_whatsapp(numero, SEGUIMIENTO_TEXTO)
-        guardar_mensaje(numero, "assistant", SEGUIMIENTO_TEXTO)
+        # Día 3: requiere plantilla aprobada.
+        time.sleep(SEGUIMIENTO_DIA3_ESPERA)
+        if _seguimiento_debe_detenerse(numero, version):
+            return
+        if WA_TEMPLATE_SEGUIMIENTO_DIA3:
+            enviar_template_whatsapp(numero, WA_TEMPLATE_SEGUIMIENTO_DIA3)
+        else:
+            print("SEGUIMIENTO DIA 3 OMITIDO: falta WA_TEMPLATE_SEGUIMIENTO_DIA3")
 
-        # Segundo recordatorio: otras 8 horas después (16 horas en total).
-        time.sleep(SEGUIMIENTO_SEGUNDOS)
+        # Día 5.
+        time.sleep(SEGUIMIENTO_DIA5_ESPERA)
+        if _seguimiento_debe_detenerse(numero, version):
+            return
+        if WA_TEMPLATE_SEGUIMIENTO_DIA5:
+            enviar_template_whatsapp(numero, WA_TEMPLATE_SEGUIMIENTO_DIA5)
+        else:
+            print("SEGUIMIENTO DIA 5 OMITIDO: falta WA_TEMPLATE_SEGUIMIENTO_DIA5")
 
-        with lock_seguimiento:
-            if seguimiento_version.get(numero) != version:
-                return
+        # Día 7.
+        time.sleep(SEGUIMIENTO_DIA7_ESPERA)
+        if _seguimiento_debe_detenerse(numero, version):
+            return
+        if WA_TEMPLATE_SEGUIMIENTO_DIA7:
+            enviar_template_whatsapp(numero, WA_TEMPLATE_SEGUIMIENTO_DIA7)
+        else:
+            print("SEGUIMIENTO DIA 7 OMITIDO: falta WA_TEMPLATE_SEGUIMIENTO_DIA7")
 
-        enviar_whatsapp(numero, SEGUIMIENTO_TEXTO)
-        guardar_mensaje(numero, "assistant", SEGUIMIENTO_TEXTO)
-
-        # Después del segundo recordatorio damos esta secuencia por terminada.
-        # Si el cliente vuelve a escribir, el flujo normal creará una nueva secuencia.
         with lock_seguimiento:
             if seguimiento_version.get(numero) == version:
                 seguimiento_version[numero] = version + 1
@@ -8745,35 +9135,14 @@ def invalidar_recordatorio_psm(numero):
 
 
 def programar_recordatorio_plan_psm(numero):
+    """
+    Compatibilidad con el flujo PSM. El recordatorio de 10 minutos ahora lo
+    gestiona la cadencia global 10m + 1/3/5/7 para evitar mensajes duplicados.
+    """
     estado = estado_psm(numero)
-    token = uuid.uuid4().hex
-    estado["psm_recordatorio_token"] = token
+    estado["psm_recordatorio_token"] = None
     persistir_cliente(numero)
-
-    def _recordar():
-        time.sleep(PSM_RECORDATORIO_PLAN_SEGUNDOS)
-        try:
-            actual = estado_psm(numero)
-            if actual.get("psm_recordatorio_token") != token:
-                return
-            if actual.get("psm_etapa") != "esperando_plan":
-                return
-            if obtener_proyecto_actual(numero) != "palmeras":
-                return
-            if crm_esta_manual(numero):
-                return
-
-            actual["psm_recordatorio_token"] = None
-            persistir_cliente(numero)
-            enviar_whatsapp(
-                numero,
-                "¿Qué le parecieron las opciones de pago? 😊 Si desea, puedo ayudarle a comparar "
-                "financiamiento, 1 año sin intereses o contado para ver cuál se ajusta mejor a usted."
-            )
-        except Exception as exc:
-            print("ERROR RECORDATORIO PSM 10 MIN:", exc)
-
-    Thread(target=_recordar, daemon=True).start()
+    return True
 
 
 def detectar_fase_psm(texto):
@@ -12045,7 +12414,7 @@ CRM_HTML = r"""
                 <a class="chat-link {% if seleccionado == c.numero %}active{% endif %}"
                    data-number="{{ c.numero }}"
                    data-channel="{{ c.canal }}"
-                   data-label="{{ c.identificador }}"
+                   data-label="{{ (c.nombre_manual ~ ' ' ~ c.identificador) if c.nombre_manual else c.identificador }}"
                    data-stage="{{ c.etapa }}"
                    href="{{ url_for('crm', numero=c.numero) }}">
                     <div>
@@ -12054,13 +12423,14 @@ CRM_HTML = r"""
                         {% else %}
                             <span class="channel-badge whatsapp">🟢 WhatsApp</span>
                         {% endif %}
-                        <span class="phone">{{ c.identificador }}</span>
+                        <span class="phone">{{ c.nombre_manual if c.nombre_manual else c.identificador }}</span>
                         {% if c.manual %}
                             <span class="status manual">MANUAL</span>
                         {% else %}
                             <span class="status ai">IA</span>
                         {% endif %}
                     </div>
+                    {% if c.nombre_manual %}<div class="small">{{ c.identificador }}</div>{% endif %}
                     <div class="preview">{{ c.preview }}</div>
                     <div class="small">{{ c.proyecto }}</div>
                     <span class="stage-badge">{{ c.etapa }}</span>
@@ -12081,9 +12451,9 @@ CRM_HTML = r"""
                         {% else %}
                             <span class="channel-badge whatsapp">🟢 WhatsApp</span>
                         {% endif %}
-                        {{ identificador_seleccionado }}
+                        {{ nombre_manual_seleccionado if nombre_manual_seleccionado else identificador_seleccionado }}
                     </h2>
-                    <p>{{ proyecto_seleccionado }}</p>
+                    <p>{% if nombre_manual_seleccionado %}{{ identificador_seleccionado }} · {% endif %}{{ proyecto_seleccionado }}</p>
                 </div>
 
                 <div class="head-actions">
@@ -12104,6 +12474,10 @@ CRM_HTML = r"""
             <div class="lead-management">
                 <div class="lead-management-title">📌 Gestión del lead</div>
                 <form class="lead-form" method="post" action="{{ url_for('crm_guardar_gestion', numero=seleccionado) }}">
+                    <div class="lead-field">
+                        <label>Nombre / etiqueta del contacto</label>
+                        <input type="text" name="nombre_contacto" maxlength="100" value="{{ nombre_manual_seleccionado }}" placeholder="Ej. Juan Pérez | Palmeras San Miguel">
+                    </div>
                     <div class="lead-field">
                         <label>Etapa del embudo</label>
                         <select name="etapa">
@@ -12140,6 +12514,14 @@ CRM_HTML = r"""
                     <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='seguimiento') }}"><button class="quick-chip secondary" type="submit">☎️ Seguimiento</button></form>
                 </div>
             </div>
+
+            {% if requiere_intervencion_seleccionado %}
+            <div style="margin:12px 0;padding:14px 16px;border-radius:12px;background:#fff7ed;border:1px solid #fb923c;color:#9a3412;font-weight:700;">
+                ⚠️ La IA se pausó automáticamente porque necesita una respuesta suya.
+                {% if intervencion_pregunta_seleccionado %}<div style="font-weight:500;margin-top:6px;">{{ intervencion_pregunta_seleccionado }}</div>{% endif %}
+                <div style="font-weight:500;margin-top:6px;">Responda desde este CRM. Al enviarlo, la IA se reanudará automáticamente.</div>
+            </div>
+            {% endif %}
 
             {% if canal_seleccionado == 'facebook' %}
             <div class="notice" style="background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8;">
@@ -12486,7 +12868,7 @@ CRM_HTML = r"""
                         ? ` · ${e.proyecto}`
                         : "";
 
-                    const ident = e.identificador || (e.canal === "facebook" ? "Facebook" : `+${e.numero}`);
+                    const ident = e.nombre_manual || e.identificador || (e.canal === "facebook" ? "Facebook" : `+${e.numero}`);
                     const n = new Notification("🏡 Nuevo mensaje de cliente", {
                         body: `${ident}${proyecto}\n${e.contenido}`,
                         tag: `crm-${e.id}`
@@ -12584,7 +12966,7 @@ CRM_HTML = r"""
                 a.className = "chat-link" + (seleccionado === c.numero ? " active" : "");
                 a.dataset.number = c.numero || "";
                 a.dataset.channel = c.canal || "";
-                a.dataset.label = c.identificador || "";
+                a.dataset.label = ((c.nombre_manual || "") + " " + (c.identificador || "")).trim();
                 a.dataset.stage = c.etapa || "Nuevo lead";
                 a.href = "/crm?numero=" + encodeURIComponent(c.numero);
                 const prox = c.proxima_accion
@@ -12596,11 +12978,12 @@ CRM_HTML = r"""
                 a.innerHTML = `
                     <div>
                         ${canalBadge}
-                        <span class="phone">${escapeHtml(c.identificador || c.numero)}</span>
+                        <span class="phone">${escapeHtml(c.nombre_manual || c.identificador || c.numero)}</span>
                         <span class="status ${c.manual ? "manual" : "ai"}">
                             ${c.manual ? "MANUAL" : "IA"}
                         </span>
                     </div>
+                    ${c.nombre_manual ? `<div class="small">${escapeHtml(c.identificador || c.numero)}</div>` : ""}
                     <div class="preview">${escapeHtml(c.preview)}</div>
                     <div class="small">${escapeHtml(c.proyecto)}</div>
                     <span class="stage-badge">${escapeHtml(c.etapa || "Nuevo lead")}</span>
@@ -12906,6 +13289,7 @@ def crm():
             clientes.append({
                 "numero": numero,
                 "identificador": crm_identificador_visible(numero),
+                "nombre_manual": crm_nombre_manual(numero),
                 "canal": crm_canal_contacto(numero),
                 "preview": ultimo[:70],
                 "manual": numero in crm_modo_manual,
@@ -12934,6 +13318,9 @@ def crm():
         proyecto_clave_seleccionado=proyecto_clave_seleccionado,
         canal_seleccionado=crm_canal_contacto(seleccionado) if seleccionado else "",
         identificador_seleccionado=crm_identificador_visible(seleccionado) if seleccionado else "",
+        nombre_manual_seleccionado=crm_nombre_manual(seleccionado) if seleccionado else "",
+        requiere_intervencion_seleccionado=es_intervencion_activa(seleccionado) if seleccionado else False,
+        intervencion_pregunta_seleccionado=(obtener_estado_conversacion(seleccionado).get("intervencion_pregunta") if seleccionado else ""),
         etapas=CRM_ETAPAS,
         meta_seleccionada=meta_seleccionada,
     )
@@ -12962,6 +13349,7 @@ def crm_data():
             clientes.append({
                 "numero": numero,
                 "identificador": crm_identificador_visible(numero),
+                "nombre_manual": crm_nombre_manual(numero),
                 "canal": crm_canal_contacto(numero),
                 "preview": ultimo[:70],
                 "manual": numero in crm_modo_manual,
@@ -12987,6 +13375,7 @@ def crm_data():
                         "id": m.get("id", 0),
                         "numero": numero,
                         "identificador": crm_identificador_visible(numero),
+                        "nombre_manual": crm_nombre_manual(numero),
                         "canal": crm_canal_contacto(numero),
                         "contenido": m.get("contenido", ""),
                         "hora": m.get("hora", ""),
@@ -13010,9 +13399,16 @@ def crm_guardar_gestion(numero):
     if not crm_autorizado():
         return crm_pedir_login()
 
+    nombre_contacto = request.form.get("nombre_contacto", "").strip()[:100]
     etapa = request.form.get("etapa", "Nuevo lead").strip()
     proxima_accion = request.form.get("proxima_accion", "").strip()
     proxima_accion_fecha = request.form.get("proxima_accion_fecha", "").strip()
+
+    # Se guarda dentro del snapshot JSON existente: NO cambia la estructura de PostgreSQL.
+    estado = obtener_estado_conversacion(numero)
+    estado["crm_nombre_manual"] = nombre_contacto
+    persistir_cliente(numero)
+
     crm_guardar_meta(numero, etapa, proxima_accion, proxima_accion_fecha)
     return redirect(url_for("crm", numero=numero))
 
@@ -13109,7 +13505,9 @@ def crm_toggle(numero):
         return crm_pedir_login()
 
     if crm_esta_manual(numero):
-        crm_poner_ia(numero)
+        # Si Gabriel decide reactivar la IA manualmente, también limpiamos
+        # cualquier bandera de intervención pendiente.
+        limpiar_intervencion_automatica(numero, reanudar_ia=True)
     else:
         # Pausar inmediatamente cualquier respuesta IA que esté en proceso.
         crm_poner_manual(numero)
@@ -13173,8 +13571,11 @@ def crm_enviar(numero):
     if not mensaje:
         return redirect(url_for("crm", numero=numero))
 
-    # Si Gabriel responde manualmente, la conversación queda en manual
-    # hasta que él pulse "Activar IA".
+    # Si la IA se pausó sola por una duda, esta respuesta de Gabriel resuelve
+    # la intervención y la IA debe reanudarse automáticamente. En una respuesta
+    # manual normal, conservamos el comportamiento anterior: queda en MANUAL.
+    era_intervencion = es_intervencion_activa(numero)
+
     crm_poner_manual(numero)
     cancelar_seguimiento(numero)
 
@@ -13184,6 +13585,7 @@ def crm_enviar(numero):
         f"crm-manual-{time.time()}"
     )
 
+    ok = False
     if crm_es_facebook(numero):
         ok = enviar_messenger_texto(numero, mensaje, formalizar=False)
         if ok:
@@ -13195,8 +13597,21 @@ def crm_enviar(numero):
                 "⚠️ Messenger no pudo enviar este mensaje. Revise el token de la Página en Render."
             )
     else:
-        enviar_whatsapp(numero, mensaje, formalizar=False)
-        guardar_mensaje(numero, "assistant", mensaje, formalizar=False)
+        ok = enviar_whatsapp(numero, mensaje, formalizar=False)
+        if ok:
+            guardar_mensaje(numero, "assistant", mensaje, formalizar=False)
+
+    if ok and era_intervencion:
+        limpiar_intervencion_automatica(numero, reanudar_ia=True)
+        meta_actual = crm_obtener_meta(numero)
+        crm_guardar_meta(
+            numero,
+            meta_actual.get("etapa") or "Interesado",
+            "Respuesta de Gabriel enviada; IA reanudada",
+            meta_actual.get("proxima_accion_fecha") or ""
+        )
+        # La respuesta manual también puede quedar pendiente de contestación.
+        programar_seguimiento_inactividad(numero)
 
     return redirect(url_for("crm", numero=numero))
 
@@ -13237,6 +13652,8 @@ def crm_enviar_archivo(numero):
         return redirect(url_for("crm", numero=numero))
 
     # Al enviar manualmente cualquier archivo, Gabriel toma control de la conversación.
+    # Si venía de una intervención automática, al enviarse correctamente se reanuda la IA.
+    era_intervencion = es_intervencion_activa(numero)
     crm_poner_manual(numero)
     cancelar_seguimiento(numero)
     iniciar_procesamiento(numero, f"crm-manual-media-{time.time()}")
@@ -13253,6 +13670,9 @@ def crm_enviar_archivo(numero):
         texto_crm = f"{etiqueta}: {nombre}" + (f"\n{caption}" if caption else "")
         crm_registrar_mensaje(numero, "out", texto_crm, media_url=media_url, media_tipo=tipo)
         guardar_mensaje(numero, "assistant", texto_crm, formalizar=False)
+        if era_intervencion:
+            limpiar_intervencion_automatica(numero, reanudar_ia=True)
+            programar_seguimiento_inactividad(numero)
     else:
         crm_registrar_mensaje(numero, "out", f"⚠️ WhatsApp rechazó el envío de {nombre}.")
 
