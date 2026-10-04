@@ -1,4 +1,4 @@
-# VERSION_PALMERAS_BIENVENIDA_ORDENADA_20261004 - bienvenida visual + planos ordenados
+# VERSION_PALMERAS_SIN_ALGORITMO_VIEJO_20261004 - flujo PSM nuevo exclusivo, sin paquete completo antiguo
 # VERSION_MULTIINTENCION_MENSAJES_8S_20260924 - agrupa 8s y atiende varias solicitudes del mismo bloque
 # VERSION_NUEVOS_ANUNCIOS_20260921
 # VERSION_BUENAVENTURA_2_NUEVOS_IDS_20260908
@@ -8688,6 +8688,59 @@ def es_inicio_general_psm(texto):
     return any(x in t for x in frases)
 
 
+def es_solicitud_info_general_psm(texto):
+    """
+    Detecta entradas explícitas de anuncio / consulta general de Palmeras.
+    Estas frases REINICIAN el flujo comercial nuevo de PSM aunque el número
+    ya tenga estado previo en PostgreSQL. Así nunca caen al paquete antiguo.
+    """
+    t = normalizar_texto_topografia(texto)
+
+    # Si además viene una intención específica, respetamos esa intención.
+    if es_intencion_reserva_psm(texto) or detectar_intencion_visita(texto):
+        return False
+    if pide_enlace_maps_psm(texto):
+        return False
+    if any(x in t for x in [
+        "precio", "precios", "cuanto cuesta", "cuanto vale", "cuota",
+        "financiamiento", "enganche", "requisitos", "documentos",
+        "escritur", "mantenimiento", "gastos", "plano", "disponibilidad",
+        "foto", "video", "donde queda", "ubicacion", "agua", "construir",
+        "abono", "capital"
+    ]):
+        return False
+
+    frases = [
+        "deseo informacion de palmeras",
+        "quiero informacion de palmeras",
+        "quisiera informacion de palmeras",
+        "informacion de palmeras",
+        "info de palmeras",
+        "deseo informacion sobre palmeras",
+        "quiero informacion sobre palmeras",
+        "mas informacion de palmeras",
+        "me interesa palmeras",
+        "estoy interesado en palmeras",
+    ]
+    return any(x in t for x in frases)
+
+
+def reiniciar_flujo_psm_para_presentacion(numero):
+    """Limpia solo el estado comercial de PSM; no toca CRM ni historial."""
+    estado = estado_psm(numero)
+    estado["psm_etapa"] = None
+    estado["psm_fase"] = None
+    estado["psm_plan"] = None
+    estado["psm_plazo"] = None
+    estado["psm_cotizacion_enviada"] = False
+    estado["psm_video_amenidades_enviado"] = False
+    estado["psm_pregunta_pendiente"] = None
+    estado["psm_visita_ofrecida"] = False
+    estado["psm_recordatorio_token"] = None
+    persistir_cliente(numero)
+    return estado
+
+
 def saludo_actual_guatemala():
     try:
         hora = datetime.now(ZoneInfo("America/Guatemala")).hour
@@ -9015,7 +9068,14 @@ def manejar_flujo_palmeras_humano(numero, texto, proyecto, message_id):
         return True
 
     # Inicio genérico de la conversación.
-    if not estado.get("psm_etapa") and es_inicio_general_psm(texto):
+    # Si llega desde la FAQ del anuncio (p. ej. "Deseo información de Palmeras"),
+    # reiniciamos SOLO el flujo comercial PSM aunque este número tenga estado viejo.
+    # Esto impide que caiga al algoritmo antiguo de "información completa".
+    inicio_nuevo = es_inicio_general_psm(texto)
+    reinicio_explicito = es_solicitud_info_general_psm(texto)
+    if (not estado.get("psm_etapa") and inicio_nuevo) or reinicio_explicito:
+        if reinicio_explicito:
+            estado = reiniciar_flujo_psm_para_presentacion(numero)
         bienvenida = generar_bienvenida_psm(numero, texto)
         estado["psm_etapa"] = "esperando_fase"
         estado["psm_pregunta_pendiente"] = "fase"
@@ -9338,7 +9398,12 @@ def manejar_intenciones_multiples(numero, texto, proyecto, message_id):
     # completo existente. Ese paquete YA contiene ubicación, cotizaciones y
     # material visual, así que no los repetimos después.
     paquete_completo_enviado = False
-    if quiere_precio and es_consulta_general_de_precio(texto) and primera_consulta_comercial:
+    if (
+        proyecto != "palmeras"
+        and quiere_precio
+        and es_consulta_general_de_precio(texto)
+        and primera_consulta_comercial
+    ):
         if procesamiento_sigue_vigente(numero, message_id):
             if proyecto:
                 enviar_info_completa_proyecto(numero, proyecto, cierre=True)
@@ -9657,7 +9722,16 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
                 )
 
                 if procesamiento_sigue_vigente(numero_cliente, message_id):
-                    enviar_info_completa_proyecto(numero_cliente, elegido, cierre=True)
+                    if elegido == "palmeras":
+                        estado_psm_actual = reiniciar_flujo_psm_para_presentacion(numero_cliente)
+                        bienvenida = generar_bienvenida_psm(numero_cliente, texto_cliente)
+                        estado_psm_actual["psm_etapa"] = "esperando_fase"
+                        estado_psm_actual["psm_pregunta_pendiente"] = "fase"
+                        persistir_cliente(numero_cliente)
+                        enviar_whatsapp(numero_cliente, bienvenida)
+                        enviar_planos_psm_sin_topografia(numero_cliente)
+                    else:
+                        enviar_info_completa_proyecto(numero_cliente, elegido, cierre=True)
                 return
 
             # No reutilizar un proyecto viejo si el cliente todavía no eligió cuál de los 3.
@@ -10200,7 +10274,7 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
         # Si "¿cuánto valen los terrenos?" es la primera consulta comercial,
         # mantenemos el comportamiento completo. Si la conversación ya venía
         # avanzando, respondemos solo precios + una pregunta de calificación.
-        if es_consulta_general_de_precio(texto_cliente):
+        if proyecto != "palmeras" and es_consulta_general_de_precio(texto_cliente):
             if es_primera_consulta_comercial(numero_cliente):
                 guardar_mensaje(numero_cliente, "user", texto_cliente)
                 guardar_mensaje(
@@ -10229,7 +10303,7 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
         # PRECIOS / CUOTAS / COTIZACIONES
         # Cotización explícita, cuotas, plazos o confirmaciones conservan el flujo
         # de imágenes y planes de pago existente.
-        if debe_enviar_cotizacion_directa(
+        if proyecto != "palmeras" and debe_enviar_cotizacion_directa(
             numero_cliente,
             texto_cliente
         ):
@@ -10262,7 +10336,7 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
         # en este app.py: resumen, ubicación, cotizaciones, fotos/videos y amenidades.
         # Este bloque está justo antes de la IA para NO alterar ningún flujo específico
         # que ya se trabajó anteriormente.
-        if proyecto and es_seleccion_simple_de_proyecto(texto_cliente):
+        if proyecto and proyecto != "palmeras" and es_seleccion_simple_de_proyecto(texto_cliente):
             guardar_mensaje(numero_cliente, "user", texto_cliente)
             guardar_mensaje(
                 numero_cliente,
