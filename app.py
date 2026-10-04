@@ -1,21 +1,4 @@
-# VERSION_ALTAMIRA_AD_IDS_20260927
-# VERSION_ALTAMIRA_PALESTINA_PREAPERTURA_20260927 - proyecto nuevo, clasificacion apertura/posterior, sin inventar precios
-# VERSION_SEGUIMIENTO_CONTROL_1_3_5_7_20260925 - seguimiento contextual + alertas Gabriel por inactividad
-# VERSION_VISITA_COMPLETA_PUNTO_ABIERTA_PALMERAS_20260925 - visita día+hora+punto, conversación siempre abierta
-# VERSION_ALERTAS_CRM_RESERVA_VISITA_PALMERAS_20260925 - alertas comerciales + entrada de reserva progresiva
-# VERSION_RELEVANCIA_RESPUESTA_PALMERAS_20260925 - responde solo lo pedido y evita informacion correcta pero innecesaria
-# VERSION_ESTADO_COMERCIAL_PERSISTENTE_PALMERAS_20260925 - visita/reserva no cierran la conversación; dudas conocidas siguen y desconocidas escalan
-# VERSION_FORMATO_VISUAL_GLOBAL_PALMERAS_20260925 - respuestas mas faciles de leer con saltos, negritas y emojis
-# VERSION_AJUSTES_CONVERSACION_PALMERAS_20260925 - cierres lógicos, cambios de fase naturales, sin firma y gestor USA
-# VERSION_PALMERAS_VISITAS_NATURALES_20260925 - reconoce dia+hora natural y evita preguntas redundantes
-# VERSION_PRIORIDADES_INTENCION_Y_SIN_ECO_20260925 - giros libres + no repetir pregunta del cliente
-# VERSION_PALMERAS_CAMBIO_MODALIDAD_PRIORITARIO_20260925
-# VERSION_VIDEO_PALMERAS_SIN_DUPLICADO_Y_CAPTION_CONTEXTUAL_20260925
-# VERSION_VIDEO_PALMERAS_LOGICA_Y_COMPRESION_20260925
-# VERSION_BIENVENIDA_PALMERAS_GUIADA_20260925 - bienvenida IA guiada, no fija
-# VERSION_BIENVENIDA_PALMERAS_DIRECTA_20260925
-# VERSION_BIENVENIDA_PALMERAS_CONVERSACIONAL_20260925
-# VERSION_NUEVO_CEREBRO_PALMERAS_20260925 - conversación progresiva, memoria comercial e intervención Gabriel
+# VERSION_PALMERAS_FLUJO_HUMANO_20261004 - conversación progresiva PSM + fase + plan + visita
 # VERSION_MULTIINTENCION_MENSAJES_8S_20260924 - agrupa 8s y atiende varias solicitudes del mismo bloque
 # VERSION_NUEVOS_ANUNCIOS_20260921
 # VERSION_BUENAVENTURA_2_NUEVOS_IDS_20260908
@@ -26,9 +9,6 @@
 # VERSION_ANUNCIOS_PALMERAS_7_IDS_20260831 - 7 anuncios Palmeras identificados
 # VERSION_ANUNCIOS_PALMERAS_FIX_PROYECTO_20260831
 # VERSION_TRATO_USTED_GENERAL_20260831
-# VERSION_PREGUNTA_CALIDA_ABONOS_PALMERAS_20260925
-# VERSION_ESTILO_DINAMICO_PALMERAS_20260925
-# VERSION_ENTRADA_PRECIOS_PALMERAS_20260925 - entrada de precios/pagos reconoce la intención antes de presentar fases
 from flask import Flask, request, Response, redirect, url_for, render_template_string, jsonify, send_from_directory
 from openai import OpenAI
 from dotenv import load_dotenv
@@ -241,57 +221,6 @@ def formalizar_trato_usted(texto):
         )
     return texto
 
-
-def eliminar_eco_pregunta_cliente(respuesta, mensaje_cliente):
-    """
-    Evita que una respuesta de IA empiece repitiendo literalmente la pregunta
-    del cliente. Solo elimina el eco cuando aparece al INICIO; no toca citas o
-    referencias posteriores que sí sean útiles para la conversación.
-    """
-    respuesta = str(respuesta or "").strip()
-    mensaje_cliente = str(mensaje_cliente or "").strip()
-    if not respuesta or not mensaje_cliente:
-        return respuesta
-
-    def _norm(s):
-        s = normalizar_ventas(str(s or "")) if 'normalizar_ventas' in globals() else str(s or "").lower()
-        s = re.sub(r"[^a-z0-9áéíóúüñ\s]", " ", s, flags=re.IGNORECASE)
-        return " ".join(s.split())
-
-    objetivo = _norm(mensaje_cliente)
-    if not objetivo:
-        return respuesta
-
-    lineas = respuesta.splitlines()
-    # Quita líneas vacías iniciales sin alterar el resto del formato.
-    while lineas and not lineas[0].strip():
-        lineas.pop(0)
-    if not lineas:
-        return respuesta
-
-    primera = lineas[0].strip().strip('\"“”')
-    primera_norm = _norm(primera)
-
-    # Caso típico: el modelo imprime exactamente la pregunta como primera línea.
-    if primera_norm == objetivo:
-        lineas.pop(0)
-        while lineas and not lineas[0].strip():
-            lineas.pop(0)
-        return "\n".join(lineas).strip()
-
-    # Variante: "Pregunta del cliente: ..." / "Cliente: ...".
-    prefijos = ["pregunta del cliente", "cliente", "pregunta"]
-    for prefijo in prefijos:
-        if primera_norm.startswith(prefijo + " "):
-            resto = primera_norm[len(prefijo):].strip()
-            if resto == objetivo:
-                lineas.pop(0)
-                while lineas and not lineas[0].strip():
-                    lineas.pop(0)
-                return "\n".join(lineas).strip()
-
-    return respuesta
-
 # ============================================================
 # NTFY - NOTIFICACIONES NATIVAS EN ANDROID
 # ============================================================
@@ -391,10 +320,6 @@ COTIZACIONES_IMAGEN = {
             "media/cotizaciones/palmeras/8x16_no_esquina.jpeg",
             "media/cotizaciones/palmeras/8x16_segunda_fase.jpeg",
         ],
-        "8x18": [
-            "media/cotizaciones/palmeras/8x18_primera_fase.jpeg",
-            "media/cotizaciones/palmeras/8x18_segunda_fase.jpeg",
-        ],
     },
     "vista_hermosa": {
         "8x16": [
@@ -422,10 +347,6 @@ ETIQUETAS_COTIZACIONES = {
             "Palmeras San Miguel - 8x16 - Fase 1 / no esquina",
         "media/cotizaciones/palmeras/8x16_segunda_fase.jpeg":
             "Palmeras San Miguel - 8x16 - Fase 2",
-        "media/cotizaciones/palmeras/8x18_primera_fase.jpeg":
-            "Palmeras San Miguel - 8x18 - Fase 1",
-        "media/cotizaciones/palmeras/8x18_segunda_fase.jpeg":
-            "Palmeras San Miguel - 8x18 - Fase 2",
     },
     "vista_hermosa": {
         "media/cotizaciones/vista_hermosa/8x16_fase_f.jpeg":
@@ -452,15 +373,14 @@ RESUMENES_COTIZACION = {
             "camino a La Verde / carretera hacia Las Pilas 📍🏡"
         ),
         "amenidades": (
-            "Casa club, piscinas, áreas verdes y caminamientos 🏊🌳"
+            "Fase 1 con piscina y área verde; Fase 2 con área verde 🏊🌳"
         ),
         "servicios": (
             "Calles pavimentadas, agua potable, energía eléctrica y "
             "drenajes con planta de tratamiento ✅"
         ),
         "cierre": (
-            "Te comparto abajo las cotizaciones disponibles con medidas, "
-            "fases, enganches y cuotas 👇💰"
+            "Podemos revisar la modalidad de pago que más le interese 👇💰"
         )
     },
 
@@ -592,20 +512,12 @@ CUOTAS_POR_PROYECTO = {
     },
     "palmeras": {
         "8x16 Fase 1": {
-            1: 5581.61, 2: 3026.26, 3: 2181.31, 4: 1766.17,
+            1: 5563.64, 2: 3026.26, 3: 2181.31, 4: 1766.17,
             5: 1521.20, 6: 1361.30, 7: 1251.28, 8: 1170.60
         },
         "8x16 Fase 2": {
-            1: 5873.45, 2: 3184.50, 3: 2295.37, 4: 1858.52,
+            1: 5854.55, 2: 3184.50, 3: 2295.37, 4: 1858.52,
             5: 1600.74, 6: 1432.48, 7: 1316.71, 8: 1231.81
-        },
-        "8x18 Fase 1": {
-            1: 6165.30, 2: 3342.73, 3: 2409.42, 4: 1950.87,
-            5: 1680.28, 6: 1503.66, 7: 1382.14, 8: 1293.02
-        },
-        "8x18 Fase 2": {
-            1: 6493.63, 2: 3520.75, 3: 2537.74, 4: 2054.77,
-            5: 1769.76, 6: 1583.74, 7: 1455.74, 8: 1361.88
         },
     },
 }
@@ -670,8 +582,7 @@ def respuesta_cuota_especifica(proyecto, texto):
     nombres = {
         "palmeras": "Palmeras San Miguel",
         "vista_hermosa": "Vista Hermosa",
-        "buenaventura": "Buenaventura Cuyotenango",
-        "altamira": "Altamira · Palestina de los Altos"
+        "buenaventura": "Buenaventura Cuyotenango"
     }
 
     nombre = nombres.get(proyecto, "el proyecto")
@@ -842,8 +753,12 @@ DATOS_MEDIDAS = {
     "palmeras": {
         "nombre": "Palmeras San Miguel",
         "medidas": {
-            "8x16": {"precio": "Q67,200", "enganche": "Q6,000"},
-            "8x18": {"precio": "Q79,200", "enganche": "Q8,000"},
+            "8x16": {
+                "fases": {
+                    "1": {"precio": "Q67,200", "enganche": "Q6,000"},
+                    "2": {"precio": "Q70,400", "enganche": "Q6,000"},
+                }
+            },
         },
     },
     "buenaventura": {
@@ -887,7 +802,7 @@ def pregunta_medidas_disponibles(texto):
 
 def respuesta_medidas_disponibles(proyecto):
     if proyecto == "palmeras":
-        return "En Palmeras San Miguel tenemos lotes de 8x16 y 8x18 😊🏡"
+        return "En Palmeras San Miguel actualmente tenemos lotes de 8x16 (128 m²) en Fase 1 y Fase 2 😊🏡. Todos los lotes tienen calle al frente."
     if proyecto == "buenaventura":
         return "En Buenaventura Cuyotenango tenemos lotes de 8x16, 8x18 y 9x20 😊🏡"
     if proyecto == "vista_hermosa":
@@ -962,10 +877,10 @@ def respuesta_precio_breve_con_intencion(proyecto):
 
     if proyecto == "palmeras":
         return (
-            "Claro 😊 En Palmeras San Miguel tenemos:\n\n"
-            "• 8x16 Q67,200\n"
-            "• 8x18 Q79,200\n\n"
-            "¿Qué medida le interesa y la busca para construir su casa, hacer locales o como inversión?"
+            "Claro 😊 En Palmeras San Miguel actualmente tenemos lotes de 8x16 en dos fases:\n\n"
+            "• Fase 1: Q67,200 — piscina y área verde 🏊🌳\n"
+            "• Fase 2: Q70,400 — área verde 🌳\n\n"
+            "¿Cuál de las dos fases le parece más atractiva?"
         )
 
     if proyecto == "vista_hermosa":
@@ -986,29 +901,35 @@ def respuesta_medida_especifica(proyecto, medida, texto=""):
     nombre = datos_proyecto["nombre"]
     datos = datos_proyecto["medidas"][medida]
 
+    if proyecto == "palmeras" and medida == "8x16":
+        return (
+            "Sí 😊 En Palmeras San Miguel actualmente los lotes son de 8x16 (128 m²) en dos fases:\n\n"
+            "• Fase 1: Q67,200 — enganche Q6,000 — piscina y área verde.\n"
+            "• Fase 2: Q70,400 — enganche Q6,000 — área verde.\n\n"
+            "¿Cuál fase le interesa más?"
+        )
+
     if "fases" in datos:
         fase = detectar_fase_en_texto(texto)
         if fase and fase in datos["fases"]:
             d = datos["fases"][fase]
             return (
                 f"Sí 😊 En {nombre}, el lote de {medida} en Fase {fase} tiene un precio de "
-                f"{d['precio']} y un enganche de {d['enganche']} 💰🏡. "
-                "El enganche también se puede fraccionar en 2 pagos mensuales."
+                f"{d['precio']} y un enganche de {d['enganche']} 💰🏡."
             )
         f = datos["fases"]["F"]
         g = datos["fases"]["G"]
         return (
             f"Sí 😊 En {nombre} tenemos lotes de {medida} en dos fases:\n\n"
             f"• Fase F: {f['precio']} — enganche {f['enganche']}\n"
-            f"• Fase G: {g['precio']} — enganche {g['enganche']}\n\n"
-            "El enganche se puede fraccionar en 2 pagos mensuales. 💰🏡"
+            f"• Fase G: {g['precio']} — enganche {g['enganche']} 💰🏡"
         )
 
     return (
         f"Sí 😊 En {nombre}, el lote de {medida} tiene un precio de {datos['precio']} "
-        f"y un enganche de {datos['enganche']} 💰🏡. "
-        "El enganche se puede fraccionar en 2 pagos mensuales."
+        f"y un enganche de {datos['enganche']} 💰🏡."
     )
+
 
 def obtener_enganche_exacto(proyecto, texto):
     medida = detectar_medida_en_texto(texto)
@@ -1491,14 +1412,9 @@ ANUNCIOS_META_PROYECTO = {
     "120248129777940634": "vista_hermosa",  # AD VID - 01 - VTH
     "120248129694970634": "vista_hermosa",  # AD IMG - 01 - VTH
     "120248129773580634": "vista_hermosa",  # AD IMG - 02 - VTH
-
-    # Altamira · Palestina de los Altos - apertura septiembre 2026
-    "120248779000070634": "altamira",
-    "120248778866970634": "altamira",
-    "120248778728750634": "altamira",
 }
 
-PROYECTO_CAMPANA_ACTIVA = "altamira"
+PROYECTO_CAMPANA_ACTIVA = "buenaventura"
 
 
 def _mensaje_generico_de_anuncio(texto):
@@ -1516,14 +1432,7 @@ def _mensaje_generico_de_anuncio(texto):
         "quiero conocer precios y cuotas",
         "quiero ver la ubicacion del proyecto",
         "quiero conocer lotes disponibles",
-        "quiero agendar una visita",
-        # Campaña de apertura Altamira / Palestina de los Altos.
-        "quiero recibir info de la apertura",
-        "quiero recibir informacion de la apertura",
-        "quiero informacion de la apertura",
-        "quiero info de la apertura",
-        "quiero conocer altamira",
-        "quiero informacion de altamira"
+        "quiero agendar una visita"
     }
     return t in exactos
 
@@ -1532,9 +1441,9 @@ def proyecto_desde_referencia_anuncio(mensaje):
     """
     Detecta el proyecto desde anuncios de Meta.
 
-    Para la campaña de apertura actual, los anuncios no mapeados se consideran Altamira
-    Palestina de los Altos. Los IDs ya conocidos de Palmeras, Buenaventura y Vista Hermosa
-    siguen respetando su mapeo explícito.
+    Para la campaña actual, todos los anuncios activos corresponden a Buenaventura Cuyotenango.
+    Si Meta entrega un referral de anuncio pero cambia/omite el ID esperado, usamos Buenaventura
+    como respaldo para no perder el contexto comercial.
     """
     mensaje = mensaje or {}
     referral = mensaje.get("referral") or {}
@@ -1559,15 +1468,16 @@ def proyecto_desde_referencia_anuncio(mensaje):
         if proyecto:
             print(f"ANUNCIO META DETECTADO: {anuncio_id} -> {proyecto}")
             return proyecto
-        # Seguridad: si el ID no está mapeado NO lo asignamos automáticamente
-        # a Altamira. Así evitamos mover por error prospectos de campañas antiguas.
-        print(f"ANUNCIO META ID NO MAPEADO ({anuncio_id}); se conserva contexto existente")
-        return None
+        # Todos los anuncios de la campaña activa actual corresponden a Buenaventura.
+        if referral:
+            print(f"ANUNCIO META ID NO MAPEADO ({anuncio_id}); FALLBACK ACTUAL -> buenaventura")
+            return PROYECTO_CAMPANA_ACTIVA
 
-    # Si Meta envía referral sin ID, no adivinamos el proyecto.
-    # El texto específico de apertura/Altamira se detecta después como respaldo.
+    # Si existe referral pero Meta no incluyó source_id/ad_id, igualmente sabemos
+    # que la campaña activa actual es Buenaventura Cuyotenango.
     if referral:
-        print("ANUNCIO META CON REFERRAL SIN ID; no se fuerza proyecto")
+        print("ANUNCIO META CON REFERRAL SIN ID; FALLBACK ACTUAL -> buenaventura")
+        return PROYECTO_CAMPANA_ACTIVA
 
     return None
 
@@ -1576,33 +1486,18 @@ def fijar_proyecto_desde_anuncio(numero, mensaje):
     proyecto = proyecto_desde_referencia_anuncio(mensaje)
 
     # Respaldo adicional: Meta permite que el usuario quite los datos de referencia.
-    # Como EN ESTE MOMENTO la campaña activa es Altamira, si llega
+    # Como EN ESTE MOMENTO la campaña activa es Buenaventura, si llega
     # una conversación todavía sin proyecto y el texto es el típico CTA corto del anuncio
-    # (por ejemplo "Ubicación" o "Información"), la fijamos como Altamira.
+    # (por ejemplo "Ubicación" o "Información"), la fijamos como Buenaventura.
     if not proyecto:
-        # Los CTA de APERTURA de Altamira son suficientemente específicos para
-        # cambiar el proyecto incluso si este número había consultado antes otro
-        # residencial. Esto evita que un prospecto antiguo de Palmeras/Buenaventura
-        # quede pegado al proyecto anterior al responder el anuncio nuevo.
-        texto = ""
+        existente = obtener_proyecto_actual(numero)
+        if existente:
+            return existente
         if (mensaje or {}).get("type") == "text":
             texto = ((mensaje or {}).get("text") or {}).get("body", "")
-            t_altamira = normalizar_ventas(texto)
-            if any(frase in t_altamira for frase in [
-                "info de la apertura", "informacion de la apertura",
-                "quiero recibir info de la apertura", "quiero recibir informacion de la apertura",
-                "altamira", "palestina de los altos"
-            ]):
-                proyecto = "altamira"
-                print(f"CTA ALTAMIRA DETECTADO: {numero} -> altamira | texto={texto!r}")
-
-        if not proyecto:
-            existente = obtener_proyecto_actual(numero)
-            if existente:
-                return existente
-            # Un CTA genérico como "información" o "precio" ya no fuerza Altamira.
-            # Altamira solo se fija por sus IDs explícitos o por texto inequívoco
-            # ("apertura", "Altamira", "Palestina de los Altos").
+            if _mensaje_generico_de_anuncio(texto):
+                proyecto = PROYECTO_CAMPANA_ACTIVA
+                print(f"FALLBACK MENSAJE DE CAMPANA: {numero} -> buenaventura | texto={texto!r}")
 
     if not proyecto:
         return None
@@ -1775,41 +1670,16 @@ def obtener_estado_conversacion(numero):
             "esperando_hora_visita_cta": False,
             "tipo_dia_visita_cta": None,
             "jornada_visita_cta": None,
-
-            # Nuevo cerebro comercial de Palmeras San Miguel.
-            "palmeras_etapa": None,
-            "palmeras_fase": None,
-            "palmeras_forma_pago": None,
-            "palmeras_plazo": None,
-            "palmeras_cotizacion_enviada": False,
-            "palmeras_video_enviado": False,
-            "palmeras_pregunta_pendiente": None,
-            "palmeras_esperando_cliente": False,
-            "palmeras_esperando_gabriel": False,
-            "palmeras_requiere_intervencion": False,
-            "palmeras_ultima_propuesta": None,
-            "palmeras_visita_agendada": False,
-            "palmeras_visita_dia": None,
-            "palmeras_visita_hora": None,
-            "palmeras_visita_punto": None,
-            "palmeras_reserva_en_curso": False,
-            "palmeras_reserva_fase": None,
-            "palmeras_alerta_visita_enviada": False,
-            "palmeras_alerta_visita_agendada_enviada": False,
-            "palmeras_alerta_reserva_enviada": False,
-            "palmeras_reserva_presentacion_ofrecida": False,
-
-            # Altamira - Palestina de los Altos (apertura 28/09/2026).
-            "altamira_etapa": None,
-            "altamira_pregunta_pendiente": None,
-            "altamira_esperando_cliente": False,
-            "altamira_esperando_gabriel": False,
-            "altamira_requiere_intervencion": False,
-            "altamira_intencion_compra": "explorando",
-            "altamira_preferencia_ubicacion": None,
-            "altamira_alerta_alta_enviada": False,
-            "altamira_alerta_posterior_enviada": False,
-            "altamira_reserva_interes": False
+            # Flujo humano de Palmeras San Miguel.
+            "psm_etapa": None,
+            "psm_fase": None,
+            "psm_plan": None,
+            "psm_plazo": None,
+            "psm_cotizacion_enviada": False,
+            "psm_video_amenidades_enviado": False,
+            "psm_pregunta_pendiente": None,
+            "psm_visita_ofrecida": False,
+            "psm_recordatorio_token": None
         }
 
     return estado_conversacion[numero]
@@ -1821,15 +1691,6 @@ def detectar_proyecto_en_texto(texto):
     No usamos palabras genéricas como "zona", "carretera", "ubicación", etc.
     """
     t = texto.lower()
-
-    if any(x in t for x in [
-        "altamira palestina",
-        "altamira",
-        "alta mira",
-        "palestina de los altos",
-        "palestina altos"
-    ]):
-        return "altamira"
 
     if any(x in t for x in [
         "palmeras san miguel",
@@ -1889,12 +1750,6 @@ def es_seleccion_simple_de_proyecto(texto):
         },
         "vista_hermosa": {
             "vista hermosa",
-        },
-        "altamira": {
-            "altamira",
-            "altamira palestina",
-            "alta mira",
-            "palestina de los altos",
         },
     }
 
@@ -2642,8 +2497,7 @@ def nombre_proyecto_plano(proyecto):
     return {
         "palmeras": "Palmeras San Miguel",
         "vista_hermosa": "Vista Hermosa",
-        "buenaventura": "Buenaventura Cuyotenango",
-        "altamira": "Altamira · Palestina de los Altos"
+        "buenaventura": "Buenaventura Cuyotenango"
     }.get(proyecto, "el proyecto")
 
 
@@ -2696,6 +2550,13 @@ def pregunta_por_diferencia_de_fases(texto, proyecto=None):
 def respuesta_diferencia_fases(numero):
     proyecto = obtener_proyecto_actual(numero)
 
+    if proyecto == "palmeras":
+        return (
+            "En Palmeras San Miguel ambas fases tienen lotes de 8x16 y están en proceso de urbanización 😊. "
+            "La diferencia comercial actual es que la Fase 1 cuesta Q67,200 y contará con piscina y área verde; "
+            "la Fase 2 cuesta Q70,400 y contará con área verde. 🏡🌳"
+        )
+
     if proyecto == "vista_hermosa":
         return (
             "Sí 😊 En Vista Hermosa ambos lotes son de 8x16, pero pertenecen a fases diferentes. "
@@ -2704,18 +2565,12 @@ def respuesta_diferencia_fases(numero):
             "y al avance de urbanización conforme se desarrollan calles, servicios, amenidades e infraestructura 🏡📈."
         )
 
-    nombres = {
-        "palmeras": "Palmeras San Miguel",
-        "buenaventura": "Buenaventura Cuyotenango",
-        "altamira": "Altamira · Palestina de los Altos"
-    }
+    nombres = {"buenaventura": "Buenaventura Cuyotenango"}
     nombre = nombres.get(proyecto, "el proyecto")
     return (
         f"Sí 😊 En {nombre}, la diferencia de precio entre una fase y otra "
         "se debe principalmente a la plusvalía que ha ido ganando el proyecto "
-        "y al mayor avance de urbanización en las fases más recientes 🏡📈. "
-        "Conforme avanzan calles, servicios, amenidades e infraestructura, "
-        "el valor de los lotes también se actualiza."
+        "y al mayor avance de urbanización en las fases más recientes 🏡📈."
     )
 
 
@@ -2810,27 +2665,26 @@ def pide_requisitos_compra(texto):
 
 def respuesta_compra_extranjero():
     return (
-        "Sí 😊 Puedes comprar aunque estés en Estados Unidos o en otro país 🇺🇸🌎.\n\n"
-        "Los requisitos son:\n"
-        "• DPI o pasaporte de la persona que realizará la compra.\n"
-        "• Un gestor de negocios en Guatemala; puede ser un familiar o conocido.\n"
-        "• Copia de la remesa o de la forma de pago con la que se realizará el pago.\n\n"
-        "Además, también puedes optar por financiamiento propio 💳🏡, así que no necesitas "
-        "estar en Guatemala para iniciar el proceso.\n\n"
-        "La ventaja es que puedes avanzar desde el extranjero, asegurar tu terreno y "
-        "coordinar el proceso con apoyo de una persona de confianza en Guatemala 🙌.\n\n"
-        "Si ya estás interesado, dime en qué proyecto quieres comprar y te ayudo a revisar "
-        "la opción que mejor se adapte a ti para avanzar con el proceso."
+        "Sí 😊 puede comprar aunque se encuentre en Estados Unidos o en otro país 🇺🇸🌎.\n\n"
+        "Los requisitos principales son:\n"
+        "• Datos generales del comprador y del gestor en Guatemala.\n"
+        "• DPI o pasaporte del comprador.\n"
+        "• DPI o documento del gestor.\n"
+        "• Constancia de que el comprador envía el dinero por remesa: captura, comprobante o voucher de retiro.\n\n"
+        "El financiamiento es propio y directo con la empresa. Con los documentos completos, el gestor o comprador "
+        "coordina con el asesor la firma correspondiente."
     )
 
 
 def respuesta_compra_guatemala():
     return (
-        "Claro 😊 Para solicitar el financiamiento propio necesitas:\n\n"
+        "Claro 😊 Para realizar la compra necesita:\n\n"
         "• DPI.\n"
-        "• Recibo de luz o de agua.\n"
-        "• Constancia de ingresos de tu contador o estados de cuenta.\n\n"
-        "El financiamiento es directo con la empresa, sin banco 🏡💳."
+        "• Completar el enganche correspondiente.\n"
+        "• Recibo de luz.\n"
+        "• Carta de ingresos o estados de cuenta.\n"
+        "• Datos generales del comprador.\n\n"
+        "El financiamiento es propio y directo con la empresa, sin banco 🏡💳."
     )
 
 
@@ -2904,7 +2758,13 @@ def pregunta_plazo_escritura(texto):
 
 
 
-def respuesta_plazo_escritura():
+def respuesta_plazo_escritura(proyecto=None):
+    if proyecto == "palmeras":
+        return (
+            "Sí 😊 La escritura es registrada. Después de cancelar el terreno, el trámite "
+            "de escrituración y registro tarda aproximadamente entre 3 y 6 meses 📄✅. "
+            "Mientras se completa el proceso, se entrega documentación legal que respalda la compra."
+        )
     return (
         "Las escrituras son registradas 📄✅ y se entregan aproximadamente "
         "en un plazo de 3 meses."
@@ -2936,8 +2796,7 @@ def respuesta_plazo_entrega_urbanizacion(proyecto):
     nombres = {
         "palmeras": "Palmeras San Miguel",
         "vista_hermosa": "Vista Hermosa",
-        "buenaventura": "Buenaventura Cuyotenango",
-        "altamira": "Altamira · Palestina de los Altos"
+        "buenaventura": "Buenaventura Cuyotenango"
     }
 
     nombre = nombres.get(proyecto, "el proyecto")
@@ -3008,20 +2867,31 @@ def respuesta_amenidad(proyecto, amenidad, texto_cliente=""):
     nombres = {
         "palmeras": "Palmeras San Miguel",
         "vista_hermosa": "Vista Hermosa",
-        "buenaventura": "Buenaventura Cuyotenango",
-        "altamira": "Altamira · Palestina de los Altos"
+        "buenaventura": "Buenaventura Cuyotenango"
     }
 
     nombre = nombres.get(proyecto, "el proyecto")
 
+    if proyecto == "palmeras":
+        if amenidad == "piscina":
+            return (
+                "Sí 😊 La piscina corresponde a la Fase 1 de Palmeras San Miguel, junto con su área verde. "
+                "La Fase 2 contará con área verde, pero no con piscina."
+            )
+        if amenidad == "areas_verdes":
+            return "Sí 😊 Tanto la Fase 1 como la Fase 2 de Palmeras San Miguel contarán con área verde 🌳."
+        return (
+            "Esa amenidad no la tengo confirmada como parte de Palmeras San Miguel. "
+            "Prefiero no indicarle algo que no esté contemplado oficialmente 😊."
+        )
+
     if amenidad == "piscina" and pregunta_cantidad_piscinas(texto_cliente):
         cantidad = cantidad_piscinas_proyecto(proyecto)
-
         if cantidad is not None:
             palabra = "piscina" if cantidad == 1 else "piscinas"
             return (
                 f"{nombre} cuenta con {cantidad} {palabra} 🏊😊. "
-                "Te comparto material para que puedas conocerlas mejor 👇📸🎥"
+                "Le comparto material para que pueda conocerlas mejor 👇📸🎥"
             )
 
     etiquetas = {
@@ -3033,10 +2903,9 @@ def respuesta_amenidad(proyecto, amenidad, texto_cliente=""):
     }
 
     etiqueta = etiquetas.get(amenidad, "esa amenidad")
-
     return (
         f"Sí 😊 En {nombre} contamos con {etiqueta}. "
-        "Te comparto material para que puedas verla mejor 👇📸🎥"
+        "Le comparto material para que pueda verla mejor 👇📸🎥"
     )
 
 
@@ -3134,6 +3003,19 @@ def enviar_paquete_amenidades(numero, proyecto):
     No genera ni envía imágenes congeladas de los videos y no reutiliza
     fotos generales de los proyectos.
     """
+    if proyecto == "palmeras":
+        enviar_whatsapp(
+            numero,
+            "Le comparto un video de amenidades realizadas en otros proyectos de la empresa 🏡✨. "
+            "Sirve como referencia del tipo de espacios que desarrollamos; en Palmeras San Miguel "
+            "la Fase 1 contará con piscina y área verde, y la Fase 2 con área verde."
+        )
+        for ruta in VIDEOS_GENERALES:
+            if os.path.exists(ruta):
+                enviar_video_whatsapp(numero, ruta, caption="Video de referencia de amenidades 🎥✨")
+                return
+        return
+
     if not proyecto:
         return
 
@@ -3237,15 +3119,20 @@ def respuesta_punto_encuentro(numero, proyecto):
     nombres = {
         "palmeras": "Palmeras San Miguel",
         "vista_hermosa": "Vista Hermosa",
-        "buenaventura": "Buenaventura Cuyotenango",
-        "altamira": "Altamira · Palestina de los Altos"
+        "buenaventura": "Buenaventura Cuyotenango"
     }
 
     nombre = nombres.get(proyecto, "el proyecto")
 
+    if proyecto == "palmeras":
+        return (
+            "Normalmente nos reunimos en Centro Comercial La Trinidad 😊📍 y desde allí le acompaño a Palmeras San Miguel. "
+            "Es importante coordinar antes de llegar para asegurarme de poder atenderle personalmente."
+        )
+
     return (
         f"Podemos encontrarnos directamente en {nombre} 😊📍. "
-        "Si necesitas otro punto, me lo indicas."
+        "Si necesita otro punto, me lo indica."
     )
 
 
@@ -3264,6 +3151,16 @@ def pregunta_proceso_compra(texto):
 
 
 def respuesta_proceso_compra(proyecto):
+    if proyecto == "palmeras":
+        return (
+            "En Palmeras San Miguel el proceso empieza escogiendo el lote disponible que más le interese 🏡. "
+            "Para reservarlo se depositan Q3,000 a la cuenta de la empresa; ese monto forma parte del enganche de Q6,000, "
+            "se emite factura y la ubicación queda apartada exclusivamente para usted por un máximo de 15 días.\n\n"
+            "Dentro de ese plazo se completan el enganche, los requisitos y la modalidad de pago. "
+            "Si compra financiado se firma contrato de compraventa; si compra al contado se firma el protocolo de escrituración. "
+            "¿Desea que le comparta los planos para revisar ubicaciones disponibles?"
+        )
+
     datos = {
         "buenaventura": {
             "nombre": "Buenaventura Cuyotenango",
@@ -3274,8 +3171,8 @@ def respuesta_proceso_compra(proyecto):
         "palmeras": {
             "nombre": "Palmeras San Miguel",
             "enganche": "Q6,000",
-            "financiamiento": "de 1 a 8 años",
-            "extra": "",
+            "financiamiento": "de 2 a 8 años",
+            "extra": "También existe plan de 1 año sin intereses y pago al contado.",
         },
         "vista_hermosa": {
             "nombre": "Vista Hermosa",
@@ -3705,26 +3602,41 @@ def respuesta_visita(numero, texto, proyecto):
     if hora:
         estado["hora"] = hora
 
-    # Si pregunta cuándo/a qué hora podemos atenderlo, no ofrecemos otros puntos.
-    # Dejamos que el cliente elija el horario.
+    # Palmeras: visitas coordinadas, normalmente desde La Trinidad.
+    if proyecto == "palmeras" and not estado.get("dia") and not estado.get("hora"):
+        return (
+            "Con gusto podemos coordinar una visita a Palmeras San Miguel 😊🏡. "
+            "Podemos atenderle cualquier día entre 6:00 a. m. y 6:00 p. m.; normalmente "
+            "nos reunimos en Centro Comercial La Trinidad para acompañarle al proyecto. "
+            "Es importante avisarme antes de llegar, ya que no permanece personal esperando visitas. "
+            "¿Qué día le quedaría bien? 📆"
+        )
+
     if pregunta_horario_para_visita(texto) and not hora:
         if estado.get("dia"):
-            return "A la hora que tú dispongas 😊 ¿A qué hora te queda bien?"
-        return "A la hora que tú dispongas 😊 ¿Qué día te gustaría visitar?"
+            return "Podemos atenderle entre 6:00 a. m. y 6:00 p. m. 😊 ¿A qué hora le quedaría bien?"
+        return "Podemos atenderle cualquier día entre 6:00 a. m. y 6:00 p. m. 😊 ¿Qué día le gustaría visitar?"
 
-    # Día + hora = cita cerrada.
-    # El usuario pidió una confirmación mínima, sin volver a vender ni preguntar.
     if estado["dia"] and estado["hora"]:
         estado["cerrada"] = True
+        persistir_cliente(numero)
+        if proyecto == "palmeras":
+            return (
+                "Sí, perfecto 😊 Queda coordinada su visita a Palmeras San Miguel. "
+                "Nos ponemos de acuerdo para encontrarnos en Centro Comercial La Trinidad y acompañarle al proyecto."
+            )
         return "Sí, perfecto 😊 Queda coordinado."
 
     if estado["dia"]:
-        return "Perfecto 😊 ¿A qué hora te queda bien?"
+        persistir_cliente(numero)
+        return "Perfecto 😊 ¿A qué hora le quedaría bien?"
 
     if estado["hora"]:
-        return "Perfecto 😊 ¿Qué día te queda bien?"
+        persistir_cliente(numero)
+        return "Perfecto 😊 ¿Qué día le quedaría bien?"
 
-    return "Claro 😊 ¿Qué día te gustaría visitar?"
+    persistir_cliente(numero)
+    return "Claro 😊 ¿Qué día le gustaría visitar?"
 
 
 
@@ -3742,8 +3654,7 @@ def resumen_cita_cerrada(numero):
     nombres = {
         "palmeras": "Palmeras San Miguel",
         "vista_hermosa": "Vista Hermosa",
-        "buenaventura": "Buenaventura Cuyotenango",
-        "altamira": "Altamira · Palestina de los Altos"
+        "buenaventura": "Buenaventura Cuyotenango"
     }
 
     nombre = nombres.get(
@@ -3813,17 +3724,26 @@ def pregunta_enganche(texto):
 
 
 def respuesta_enganche(proyecto=None, texto=""):
-    """
-    Responde el enganche exacto cuando el cliente menciona una medida.
-    Si no menciona medida, indica que los enganches son desde Q6,000.
-    El fraccionamiento se calcula en dos pagos iguales cuando el monto es exacto.
-    """
+    """Responde enganche; en Palmeras el fraccionamiento es únicamente reactivo."""
     nombres = {
         "palmeras": "Palmeras San Miguel",
         "vista_hermosa": "Vista Hermosa",
-        "buenaventura": "Buenaventura Cuyotenango",
-        "altamira": "Altamira · Palestina de los Altos"
+        "buenaventura": "Buenaventura Cuyotenango"
     }
+
+    if proyecto == "palmeras":
+        t = normalizar_texto_topografia(texto)
+        pregunta_fraccionar = any(x in t for x in [
+            "dividir", "fraccionar", "dos pagos", "2 pagos", "no tengo completo",
+            "medio enganche", "pagar por partes", "puedo dar 3000", "puedo dar q3000"
+        ])
+        if pregunta_fraccionar:
+            return (
+                "Sí 😊 si lo necesita podemos facilitar el enganche de Q6,000 en dos pagos de Q3,000. "
+                "Puede realizar Q3,000 el primer mes, completar los otros Q3,000 el segundo mes y "
+                "comenzar su primera cuota en el tercer mes. Esta facilidad aplica en ambas fases."
+            )
+        return "En Palmeras San Miguel el enganche es de Q6,000 💰🏡."
 
     try:
         ahora = datetime.now(ZoneInfo("America/Guatemala"))
@@ -3850,14 +3770,14 @@ def respuesta_enganche(proyecto=None, texto=""):
             "de fraccionarlo en 2 pagos mensuales. 💰\n\n"
             f"• Q{pago:,} en este mes de {mes_1}\n"
             f"• Q{pago:,} a finales de {mes_2}\n"
-            f"• Tu primera cuota sería hasta finales de {mes_3} ✅"
+            f"• Su primera cuota sería hasta finales de {mes_3} ✅"
         )
 
     return (
         f"{inicio} tenemos enganches desde Q6,000 y la opción de fraccionarlos "
-        "en 2 pagos mensuales. 💰\n\n"
-        "El monto exacto depende de la medida del lote."
+        "en 2 pagos mensuales. 💰"
     )
+
 
 
 def pregunta_cantidad_lotes(texto):
@@ -4477,6 +4397,15 @@ def _aplicar_snapshot(numero, snap):
     estado.setdefault("esperando_hora_visita_cta", False)
     estado.setdefault("tipo_dia_visita_cta", None)
     estado.setdefault("jornada_visita_cta", None)
+    estado.setdefault("psm_etapa", None)
+    estado.setdefault("psm_fase", None)
+    estado.setdefault("psm_plan", None)
+    estado.setdefault("psm_plazo", None)
+    estado.setdefault("psm_cotizacion_enviada", False)
+    estado.setdefault("psm_video_amenidades_enviado", False)
+    estado.setdefault("psm_pregunta_pendiente", None)
+    estado.setdefault("psm_visita_ofrecida", False)
+    estado.setdefault("psm_recordatorio_token", None)
     estado_conversacion[numero] = estado
 
     if snap.get("ultima_intencion") is not None:
@@ -4551,9 +4480,6 @@ def importar_respaldo_clientes(data):
         "Palmeras San Miguel": "palmeras",
         "Buenaventura Cuyotenango": "buenaventura",
         "Buenaventura": "buenaventura",
-        "Altamira": "altamira",
-        "Altamira Palestina": "altamira",
-        "Altamira · Palestina de los Altos": "altamira",
     }
     importados = 0
     mensajes_total = 0
@@ -4565,7 +4491,7 @@ def importar_respaldo_clientes(data):
         if not numero:
             continue
         proyecto_txt = info.get("proyecto")
-        proyecto = mapa_proyectos.get(proyecto_txt, proyecto_txt if proyecto_txt in {"vista_hermosa", "palmeras", "buenaventura", "altamira"} else None)
+        proyecto = mapa_proyectos.get(proyecto_txt, proyecto_txt if proyecto_txt in {"vista_hermosa", "palmeras", "buenaventura"} else None)
         mensajes = info.get("mensajes") or []
         if not isinstance(mensajes, list):
             mensajes = []
@@ -5566,8 +5492,7 @@ def crm_nombre_proyecto(numero):
     nombres = {
         "palmeras": "Palmeras San Miguel",
         "vista_hermosa": "Vista Hermosa",
-        "buenaventura": "Buenaventura Cuyotenango",
-        "altamira": "Altamira · Palestina de los Altos"
+        "buenaventura": "Buenaventura Cuyotenango"
     }
     return nombres.get(
         proyecto_activo.get(numero),
@@ -5824,8 +5749,7 @@ def generar_respuesta(numero_cliente, mensaje_cliente):
         nombres_proyecto = {
             "palmeras": "Palmeras San Miguel",
             "vista_hermosa": "Vista Hermosa",
-            "buenaventura": "Buenaventura Cuyotenango",
-            "altamira": "Altamira · Palestina de los Altos"
+            "buenaventura": "Buenaventura Cuyotenango"
         }
 
         proyecto_actual_texto = nombres_proyecto.get(
@@ -5835,6 +5759,63 @@ def generar_respuesta(numero_cliente, mensaje_cliente):
 
         cita_cerrada_actual = cita_ya_cerrada(numero_cliente)
 
+        estado_actual_ia = obtener_estado_conversacion(numero_cliente)
+        _inicializar_estado_psm(estado_actual_ia)
+        contexto_psm_ia = ""
+        if proyecto_memoria == "palmeras":
+            fase_ia = estado_actual_ia.get("psm_fase") or "NO DEFINIDA"
+            plan_ia = estado_actual_ia.get("psm_plan") or "NO DEFINIDO"
+            plazo_ia = estado_actual_ia.get("psm_plazo") or "NO DEFINIDO"
+            etapa_ia = estado_actual_ia.get("psm_etapa") or "CONVERSACION ABIERTA"
+            pendiente_ia = estado_actual_ia.get("psm_pregunta_pendiente") or "NINGUNA"
+            contexto_psm_ia = f"""
+============================================================
+FICHA MAESTRA Y ESTADO COMERCIAL - PALMERAS SAN MIGUEL
+============================================================
+ESTE BLOQUE TIENE PRIORIDAD sobre cualquier dato antiguo de Palmeras que aparezca en contexto.txt.
+
+Estado de esta conversación:
+- Etapa comercial: {etapa_ia}
+- Fase elegida: {fase_ia}
+- Plan elegido: {plan_ia}
+- Plazo elegido: {plazo_ia}
+- Pregunta pendiente: {pendiente_ia}
+
+Datos oficiales actuales:
+- Ubicación: Zona 5 de Retalhuleu, camino a La Verde / carretera hacia Las Pilas.
+- ÚNICA medida disponible: 8x16 (128 m²). Ya NO hay 8x18 disponibles.
+- Ya NO hay categorías disponibles de esquina ni bulevar principal.
+- Todos los lotes tienen calle al frente. Nunca sugiera que los lotes fuera del bulevar quedan sin calle.
+- Fase 1: Q67,200; piscina y área verde.
+- Fase 2: Q70,400; área verde.
+- Ambas fases están en proceso de urbanización.
+- Servicios: agua potable, energía eléctrica, calles pavimentadas y drenajes con planta de tratamiento.
+- Todavía NO se puede construir. Se podrá construir cuando finalice la urbanización y estén habilitados los servicios.
+- Palmeras NO tiene ni tendrá garita ni muro perimetral.
+- Enganche: Q6,000. Reserva: Q3,000 y forma parte del enganche/precio.
+- La reserva aparta exclusivamente la ubicación elegida y da hasta 15 días para completar requisitos, enganche y modalidad. Se emite factura.
+- NO ofrezca espontáneamente fraccionar el enganche. Solo si el cliente pregunta si puede dividirlo: Q3,000 primer mes, completar Q3,000 segundo mes y primera cuota en el tercer mes. Aplica en ambas fases.
+- Financiamiento propio, sin banco, de 2 a 8 años.
+- Plan 1 año sin intereses: precio menos Q6,000 de enganche, dividido en 11 mensualidades. Fase 1 = Q5,563.64; Fase 2 = Q5,854.55.
+- Abonos extraordinarios a capital: desde Q2,000, siempre que el cliente esté solvente en la cuota del mes. Van directo al capital y pueden reducir plazo/intereses.
+- Pago al contado: un solo pago. Ofrezca primero 3% de descuento. Si el cliente está muy interesado o negocia, puede decir que revisará si es posible mejorar la condición hasta un máximo de 5%. Nunca afirme falsamente que el 5% exige comprar varios lotes.
+- Gastos: escrituración Q3,500; título de agua Q3,500; mantenimiento Q50/mes; agua Q50 por 30,000 litros. Mantenimiento y agua empiezan cuando esté urbanizado.
+- Escritura: desmembración de finca 6598, folio 98, libro 34E de Retalhuleu. Escritura registrada a nombre del comprador. Tras cancelar, el trámite tarda aprox. 3 a 6 meses por abogados/Registro; mientras tanto hay documentación legal de respaldo.
+- Guatemala: DPI, completar enganche, recibo de luz, carta de ingresos o estados de cuenta y datos generales del comprador.
+- USA/extranjero: datos generales del comprador y gestor, DPI o pasaporte del comprador, DPI/documento del gestor y constancia de remesa/comprobante del envío o retiro.
+- Financiado: después de requisitos se firma contrato de compraventa. Contado: se firma protocolo de escrituración.
+- Visitas: cualquier día de 6:00 a. m. a 6:00 p. m., con coordinación previa. Normalmente punto de encuentro Centro Comercial La Trinidad. No anime a llegar sin avisar porque puede no haber personal para atenderle.
+- Google Maps: NO envíe el enlace por iniciativa propia. Solo si el cliente pide explícitamente el link/enlace/Google Maps.
+- Disponibilidad: use el plano cargado. Verde = disponible; rojo = vendido. No invente disponibilidad fuera del plano.
+
+Comportamiento en conversación abierta:
+- Responda primero exactamente lo que el cliente pregunta.
+- No obligue a seguir un guion si el cliente cambia de tema.
+- Mantenga presente la pregunta pendiente, pero retómela solo cuando sea natural.
+- No vuelva a soltar toda la información de Palmeras.
+- Si la intención es alta (visita, reserva, compra), priorice esa acción y deje el protocolo anterior.
+- Después de una propuesta económica concreta puede orientar suavemente a una visita, pero no repita la invitación en cada respuesta.
+"""
 
         # ====================================================
         # PERSONALIDAD Y REGLAS DEL BOT
@@ -5874,6 +5855,8 @@ INFORMACION OFICIAL DE LOS PROYECTOS
 
 {contexto}
 
+{contexto_psm_ia}
+
 ============================================================
 PROYECTO ACTIVO DE ESTA CONVERSACION
 ============================================================
@@ -5910,10 +5893,6 @@ REGLA CRITICA: NUNCA MEZCLAR PROYECTOS
 REGLA CRITICA: RESPONDER COMO VENDEDOR, NO COMO MENU
 ============================================================
 
-NUNCA repita, copie ni cite la pregunta del cliente como encabezado o primera línea.
-Responda directamente. Si el cliente pregunta "¿Puedo abonar más dinero?", empiece con
-"Sí, puede..." y NO vuelva a escribir la pregunta.
-
 Interpreta la intención REAL del cliente usando el mensaje actual, el historial,
 el proyecto activo y lo que ya se le respondió o envió.
 
@@ -5947,7 +5926,7 @@ Cuando la información disponible NO alcance para responder con certeza:
 REGLAS COMERCIALES: CONTADO, CONSTRUCCION Y AMENIDADES
 ============================================================
 
-- Pago de contado: 1 lote = 3% de descuento; 2 lotes o más = 5% de descuento.
+- Pago de contado: ofrezca primero 3% de descuento. Si existe negociación real, puede revisar una mejora hasta un máximo de 5%; no condicione falsamente el 5% a comprar varios lotes.
 - El diseño de construcción es libre: se permiten vivienda, apartamentos o locales,
   siempre que sea una construcción formal con block.
 - Palmeras San Miguel NO tiene ni tendrá garita ni muro perimetral. Nunca los menciones
@@ -6068,23 +6047,19 @@ REGLA CRITICA DE INFORMACION GENERAL Y ENGANCHE:
   en una respuesta general. Esa información SOLO se da cuando el cliente
   pregunta explícitamente cuántos lotes hay o cuántos lotes tiene una fase.
 - No uses la expresión "medida de referencia".
-- Para Palmeras San Miguel las únicas medidas cargadas son 8x16 y 8x18.
+- Para Palmeras San Miguel la única medida disponible actualmente es 8x16 (128 m²).
 - Para Buenaventura Cuyotenango las únicas medidas cargadas son 8x16, 8x18 y 9x20.
 - Para Vista Hermosa la medida cargada es 8x16 en Fase F y Fase G.
 - NUNCA respondas con el precio más bajo del proyecto cuando el cliente menciona una medida concreta.
   Usa SIEMPRE el precio y enganche exactos de esa medida/fase:
-  Palmeras: 8x16 = Q67,200 / enganche Q6,000; 8x18 = Q79,200 / enganche Q8,000.
+  Palmeras: 8x16 Fase 1 = Q67,200 / enganche Q6,000; 8x16 Fase 2 = Q70,400 / enganche Q6,000.
   Buenaventura: 8x16 = desde Q83,200 / enganche Q6,000; 8x18 = Q93,600 / enganche Q8,000; 9x20 = Q117,000 / enganche Q10,000.
   Vista Hermosa: 8x16 Fase F = Q83,200 / enganche Q6,000; 8x16 Fase G = Q89,600 / enganche Q6,000.
-- En una respuesta general puedes decir que los enganches son DESDE Q6,000.
-- El enganche se puede fraccionar en 2 pagos mensuales.
-- En una respuesta general basta con decir:
-  "Enganche desde Q6,000 y opción de fraccionarlo en 2 pagos mensuales."
-- Si el cliente pregunta específicamente por el enganche, el sistema tiene una
-  respuesta especial con Q3,000 + Q3,000 y la fecha de la primera cuota.
-- NO digas "confirmar condiciones actuales" respecto al enganche.
-- NO digas que debes confirmar el monto del enganche.
-- NO inventes otra cantidad de enganche.
+- En Palmeras San Miguel el enganche es Q6,000. NO ofrezca por iniciativa propia dividirlo o iniciar cuota en el tercer mes.
+- Solo si el cliente pregunta explícitamente si puede fraccionar/dividir el enganche, explique Q3,000 + Q3,000 y que la primera cuota puede iniciar en el tercer mes.
+- Para otros proyectos conserve sus reglas de enganche cargadas.
+- NO diga "confirmar condiciones actuales" respecto al enganche cuando el monto ya esté cargado.
+- NO invente otra cantidad de enganche.
 
 REGLA DE CANTIDAD DE LOTES:
 Si preguntan cuántos lotes tiene el proyecto, responde con estos datos:
@@ -6094,15 +6069,15 @@ Si preguntan cuántos lotes tiene el proyecto, responde con estos datos:
 No digas que debes confirmar y no inventes otras cantidades.
 
 REGLA ESPECIFICA DE PALMERAS SAN MIGUEL - INFORMACION GENERAL:
-Si el cliente simplemente pide información de Palmeras San Miguel, puedes incluir de forma breve:
-- Ubicación: Zona 5 de Retalhuleu, camino a La Verde / carretera hacia Las Pilas.
-- Medidas disponibles: 8x16 y 8x18.
-- Precio general: desde Q67,200. Si el cliente menciona 8x18, NO uses ese precio general: 8x18 cuesta Q79,200.
-- Enganche: desde Q6,000, con opción de fraccionarlo en 2 pagos mensuales.
-- Financiamiento propio hasta 8 años y posibilidad de abonos a capital.
-- Amenidades y servicios disponibles.
-NO incluyas cantidad de lotes por fase, salvo que el cliente lo pregunte explícitamente.
-NO digas "medida de referencia".
+Si el cliente pide información general de Palmeras, NO descargue todo el catálogo.
+Presente de forma progresiva las dos fases usando la FICHA MAESTRA anterior y deje que el cliente participe.
+Actualmente la única medida disponible es 8x16 (128 m²).
+Fase 1: Q67,200, piscina y área verde.
+Fase 2: Q70,400, área verde.
+NO mencione 8x18, esquinas ni lotes sobre bulevar como disponibles.
+Todos los lotes tienen calle al frente.
+El flujo especializado del sistema controla la bienvenida, elección de fase, formas de pago, video y propuesta.
+Cuando el cliente se salga de ese flujo, responda con libertad usando los datos oficiales y después continúe naturalmente, sin forzar el protocolo.
 
 REGLA DE CLIMA:
 Si preguntan por el clima del lugar, responde:
@@ -6124,8 +6099,7 @@ financiamiento, responde los requisitos cargados. NO envíes cotización solo
 porque el mensaje mencione "8 años", "6 años" u otro plazo.
 
 REGLA DE ESCRITURA:
-Si preguntan cuánto tarda en entregarse la escritura, responde con seguridad:
-"aproximadamente 3 meses". No digas que debes confirmarlo.
+Si Palmeras está activo y preguntan cuánto tarda la escritura después de cancelar, responde entre 3 y 6 meses por trámites con abogados y Registro de la Propiedad. Para otros proyectos conserva su dato oficial cargado.
 
 REGLA DE CANTIDAD DE PISCINAS:
 - Buenaventura Cuyotenango: 2 piscinas.
@@ -6481,8 +6455,7 @@ Si el cliente ya está hablando de un proyecto y escribe:
 "plan de pagos" o "financiamiento",
 NO vuelvas a preguntar qué proyecto ni qué medida quiere.
 
-El sistema enviará automáticamente TODAS las cotizaciones disponibles
-de ese proyecto, incluyendo todas las medidas y fases registradas.
+Para Palmeras San Miguel NO envíe todas las cotizaciones: siga su flujo progresivo por fase y modalidad. Para los demás proyectos conserve el comportamiento cargado.
 
 Cuando el sistema ya envíe el resumen de precios y las imágenes:
 - NO preguntes "¿quieres que te prepare una cotización?"
@@ -7104,8 +7077,7 @@ Debes:
         )
 
 
-        texto_respuesta = eliminar_eco_pregunta_cliente(respuesta.output_text, mensaje_cliente)
-        texto_respuesta = formalizar_trato_usted(texto_respuesta)
+        texto_respuesta = respuesta.output_text
 
 
         # ====================================================
@@ -7198,8 +7170,7 @@ def nombre_proyecto_contexto(numero):
     nombres = {
         "palmeras": "Palmeras San Miguel",
         "vista_hermosa": "Vista Hermosa",
-        "buenaventura": "Buenaventura Cuyotenango",
-        "altamira": "Altamira · Palestina de los Altos"
+        "buenaventura": "Buenaventura Cuyotenango"
     }
 
     return nombres.get(proyecto, "ningún proyecto definido todavía")
@@ -7800,13 +7771,9 @@ def subir_imagen_a_meta(ruta_imagen):
         "Authorization": f"Bearer {WHATSAPP_TOKEN}"
     }
 
-    mime_imagen = mimetypes.guess_type(ruta_imagen)[0] or "image/jpeg"
-    if not mime_imagen.startswith("image/"):
-        mime_imagen = "image/jpeg"
-
     data = {
         "messaging_product": "whatsapp",
-        "type": mime_imagen
+        "type": "image/jpeg"
     }
 
     try:
@@ -7815,7 +7782,7 @@ def subir_imagen_a_meta(ruta_imagen):
                 "file": (
                     os.path.basename(ruta_imagen),
                     archivo,
-                    mime_imagen
+                    "image/jpeg"
                 )
             }
 
@@ -8029,8 +7996,7 @@ def enviar_multimedia_del_proyecto(
     nombres = {
         "palmeras": "Palmeras San Miguel",
         "vista_hermosa": "Vista Hermosa",
-        "buenaventura": "Buenaventura Cuyotenango",
-        "altamira": "Altamira · Palestina de los Altos"
+        "buenaventura": "Buenaventura Cuyotenango"
     }
 
     nombre = nombres.get(proyecto, "el proyecto")
@@ -8124,8 +8090,7 @@ def enviar_solo_fotos_del_proyecto(numero, proyecto):
     nombres = {
         "palmeras": "Palmeras San Miguel",
         "vista_hermosa": "Vista Hermosa",
-        "buenaventura": "Buenaventura Cuyotenango",
-        "altamira": "Altamira · Palestina de los Altos"
+        "buenaventura": "Buenaventura Cuyotenango"
     }
 
     nombre = nombres.get(proyecto, "el proyecto")
@@ -8170,8 +8135,7 @@ def enviar_solo_videos_del_proyecto(numero, proyecto):
     nombres = {
         "palmeras": "Palmeras San Miguel",
         "vista_hermosa": "Vista Hermosa",
-        "buenaventura": "Buenaventura Cuyotenango",
-        "altamira": "Altamira · Palestina de los Altos"
+        "buenaventura": "Buenaventura Cuyotenango"
     }
 
     nombre = nombres.get(proyecto, "el proyecto")
@@ -8270,2014 +8234,21 @@ def enviar_cotizacion_del_proyecto(numero, proyecto, medida=None):
         "más información o resolvemos cualquier duda que tengas 🏡"
     )
 
-
 # ============================================================
-# NUEVO CEREBRO COMERCIAL - PALMERAS SAN MIGUEL
+# SEGUIMIENTO AUTOMATICO POR INACTIVIDAD - PRUEBA
 # ============================================================
-# Este módulo reemplaza SOLO la estrategia comercial automática de Palmeras.
-# WhatsApp, Messenger, CRM, PostgreSQL, anuncios, agrupación de 8 segundos,
-# multimedia y demás infraestructura permanecen intactos.
 
-PALMERAS_VIDEO_PROTOCOLO = "media/videos/palmeras/palmeras_video_protocolo.mp4"
-PALMERAS_VIDEO_FALLBACK = "media/videos/palmeras/palmeras_video_1.mp4"
-
-PALMERAS_FOTOS_PROTOCOLO = [
-    "media/palmeras/palmeras_1.jpeg",
-    "media/palmeras/palmeras_2.jpeg",
-    "media/palmeras/palmeras_3.jpeg",
-]
-
-PALMERAS_PLANES_IMAGEN = {
-    "fase_1": {
-        "financiamiento": "media/cotizaciones/palmeras_nuevo/fase1_financiamiento.png",
-        "semicontado": "media/cotizaciones/palmeras_nuevo/fase1_semicontado.png",
-        "contado": "media/cotizaciones/palmeras_nuevo/fase1_contado.png",
-    },
-    "fase_2": {
-        "financiamiento": "media/cotizaciones/palmeras_nuevo/fase2_financiamiento.png",
-        "semicontado": "media/cotizaciones/palmeras_nuevo/fase2_semicontado.png",
-        "contado": "media/cotizaciones/palmeras_nuevo/fase2_contado.png",
-    },
-}
-
-PALMERAS_CUOTAS_FINANCIAMIENTO = {
-    "fase_1": {2: "Q3,026", 3: "Q2,182", 4: "Q1,766", 5: "Q1,521", 6: "Q1,361", 7: "Q1,251", 8: "Q1,170"},
-    "fase_2": {2: "Q3,184", 3: "Q2,296", 4: "Q1,858", 5: "Q1,601", 6: "Q1,433", 7: "Q1,316", 8: "Q1,231"},
-}
-
-PALMERAS_FICHA_OFICIAL = """
-PROYECTO: Palmeras San Miguel.
-UBICACIÓN: Zona 5 de Retalhuleu, camino a La Verde. No enviar enlaces de Google Maps.
-TOPOGRAFÍA: plana en Fase 1 y Fase 2.
-MEDIDA DISPONIBLE ACTUAL: únicamente 8x16 m en ambas fases.
-
-FASE 1:
-- Precio Q67,200.
-- Piscina y área verde.
-
-FASE 2:
-- Precio Q70,400.
-- Área verde.
-- No tiene piscina propia.
-- Todas las fases estarán conectadas internamente; el propietario de Fase 2 podrá acceder a la piscina ubicada en Fase 1 sin salir de la lotificación.
-
-SERVICIOS Y CARACTERÍSTICAS:
-- Calles pavimentadas.
-- Agua propia mediante pozo mecánico.
-- Energía eléctrica municipal.
-- Drenajes con planta de tratamiento propia.
-- Áreas verdes.
-- Canchas.
-- NO tiene garita.
-- NO tiene muro perimetral.
-- Las amenidades todavía no están construidas; el proyecto está en urbanización.
-- Los renders son referencias visuales de cómo quedarán las amenidades, no fotografías de obra terminada.
-
-CONSTRUCCIÓN:
-- Todavía no se puede construir en ninguna fase porque el proyecto está en urbanización.
-- Estimado actual de urbanización: entre 1.5 y 2 años; no prometer una fecha exacta.
-- Diseño de construcción libre.
-- El proyecto no establece un límite interno de niveles.
-- Si un desarrollo consume más de 30,000 litros mensuales, se instala contador y se acuerda el cobro del excedente. No inventar una tarifa para el excedente.
-
-FINANCIAMIENTO:
-- Financiamiento propio de la empresa; no interviene ningún banco.
-- De 2 a 8 años.
-- Interés de 17% anual sobre saldos.
-- Enganche Q6,000.
-- Puede hacer abonos directos a capital desde Q2,000 a partir del primer mes.
-- No hay penalización por abonar o cancelar anticipadamente.
-- Si paga todo el saldo pendiente, termina la deuda y no paga intereses futuros.
-
-SEMICONTADO:
-- Enganche Q6,000 completo.
-- El saldo restante se divide entre 11 cuotas mensuales sin intereses.
-- Fase 1: 11 cuotas de Q5,563.64 después del enganche.
-- Fase 2: 11 cuotas de Q5,854.55 después del enganche.
-- NO usar como semicontado el valor de 1 año que aparezca en cotizaciones antiguas.
-
-CONTADO:
-- Ofrecer inicialmente 3% de descuento.
-- Fase 1 con 3%: Q65,184.
-- Fase 2 con 3%: Q68,288.
-- Dependiendo de la cantidad de lotes, el descuento puede llegar hasta 5%, pero un porcentaje mayor al 3% debe confirmarse según la operación. No prometer 5% automáticamente.
-- Al cancelar el 100% se inicia el proceso de escrituración.
-
-RESERVA:
-- Q3,000 con DPI o pasaporte.
-- La reserva forma parte del enganche.
-- Aparta el terreno durante 15 días para que el cliente defina modalidad de pago y complete requisitos.
-- Si no completa la operación dentro del plazo, el terreno se libera y la reserva no es reembolsable.
-- En financiamiento puede completar/fraccionar el enganche según el proceso comercial.
-- En semicontado debe completar el enganche para aplicar al plan.
-- En contado puede reservar con Q3,000, pero el saldo del contado debe completarse para aplicar el descuento correspondiente.
-
-REQUISITOS GUATEMALA:
-- DPI.
-- Enganche.
-- Estados de cuenta o carta/constancia de ingresos.
-- Recibo de luz o agua.
-- Datos generales del comprador.
-
-REQUISITOS ESTADOS UNIDOS / EXTRANJERO:
-- DPI o pasaporte.
-- Enganche.
-- Constancia/comprobantes de remesas.
-- Datos generales del comprador.
-- Se necesita un gestor de confianza en Guatemala que firme en representación del comprador; puede ser un familiar o amigo de confianza.
-- El gestor únicamente firma en representación del comprador dentro del proceso. No se convierte en dueño, no adquiere derechos sobre el terreno y no tiene potestad para disponer de él. El propietario es únicamente el comprador que figura como titular.
-
-ESCRITURACIÓN:
-- Se firma contrato de compraventa.
-- El cliente recibe copia de la compraventa.
-- Al cancelar el 100% del saldo se inicia el proceso de escrituración.
-- Si preguntan un plazo exacto de entrega de escritura que no esté confirmado aquí, se debe pedir confirmación a Gabriel.
-
-GASTOS ADICIONALES (solo si el cliente pregunta):
-- Escrituración Q3,500.
-- Título de agua Q3,500.
-- Mantenimiento Q50 al mes.
-- Agua Q50 por 30,000 litros.
-- Mantenimiento y agua empiezan cuando el proyecto ya está urbanizado.
-
-VISITAS:
-- Se puede visitar cualquier día, incluidos días festivos.
-- Horario permitido: 6:00 AM a 5:00 PM.
-- Puntos de encuentro permitidos: directamente en Palmeras San Miguel o Centro Comercial La Trinidad.
-- Una visita queda completamente coordinada cuando ya existen día/fecha, hora y punto de encuentro.
-- Después de coordinar la visita, la conversación sigue totalmente abierta: el cliente puede preguntar precios, pagos, servicios, fases, construcción, requisitos, reserva o cualquier otra duda. Responder cada duda normalmente sin volver a ofrecer otra visita.
-- Nunca confirmar disponibilidad de un lote específico sin consultarla.
-""".strip()
-
-
-def _estado_palmeras(numero):
-    estado = obtener_estado_conversacion(numero)
-    defaults = {
-        "palmeras_etapa": None,
-        "palmeras_fase": None,
-        "palmeras_forma_pago": None,
-        "palmeras_plazo": None,
-        "palmeras_cotizacion_enviada": False,
-        "palmeras_video_enviado": False,
-        "palmeras_pregunta_pendiente": None,
-        "palmeras_esperando_cliente": False,
-        "palmeras_esperando_gabriel": False,
-        "palmeras_requiere_intervencion": False,
-        "palmeras_ultima_propuesta": None,
-        "palmeras_visita_agendada": False,
-        "palmeras_visita_dia": None,
-        "palmeras_visita_hora": None,
-        "palmeras_visita_punto": None,
-        "palmeras_reserva_en_curso": False,
-        "palmeras_reserva_fase": None,
-        "palmeras_alerta_visita_enviada": False,
-        "palmeras_alerta_visita_agendada_enviada": False,
-        "palmeras_alerta_reserva_enviada": False,
-        "palmeras_reserva_presentacion_ofrecida": False,
-    }
-    for clave, valor in defaults.items():
-        estado.setdefault(clave, valor)
-    return estado
-
-
-def _actualizar_estado_palmeras(numero, **cambios):
-    estado = _estado_palmeras(numero)
-    estado.update(cambios)
-    persistir_cliente(numero)
-    return estado
-
-
-def _palmeras_saludo_actual():
-    hora = datetime.now(ZoneInfo("America/Guatemala")).hour
-    if 5 <= hora < 12:
-        return "Buenos días"
-    if 12 <= hora < 19:
-        return "Buenas tardes"
-    return "Buenas noches"
-
-
-def _palmeras_menciona_varios_proyectos(texto):
-    t = normalizar_ventas(texto)
-    encontrados = 0
-    if "palmeras" in t or "san miguel" in t:
-        encontrados += 1
-    if "buenaventura" in t or "cuyotenango" in t:
-        encontrados += 1
-    if "vista hermosa" in t:
-        encontrados += 1
-    return encontrados >= 2
-
-
-def _palmeras_detectar_entrada(texto):
-    t = normalizar_ventas(texto)
-    if detectar_intencion_visita(texto):
-        return "visita"
-    if any(x in t for x in [
-        "reservar", "reserva", "apartar", "apartarlo", "separar un terreno",
-        "como reservar", "como apartar", "quiero reservar", "quiero apartar"
-    ]):
-        return "reserva"
-    if any(x in t for x in [
-        "precios y formas de pago", "precio y formas de pago", "precios y pagos",
-        "formas de pago", "planes de pago", "precio", "precios", "cuanto cuesta",
-        "cuanto vale", "financiamiento", "cuotas"
-    ]):
-        return "precios_pagos"
-    if t in {"palmeras", "palmeras san miguel", "san miguel"}:
-        return "informacion"
-    if es_solo_saludo(texto) or any(x in t for x in [
-        "mas informacion", "informacion", "quiero conocer palmeras",
-        "quiero conocer el proyecto", "me interesa palmeras", "me interesa san miguel",
-        "vi el anuncio", "quiero saber mas"
-    ]):
-        return "informacion"
-    return None
-
-
-def _palmeras_detectar_fase(texto):
-    t = normalizar_ventas(texto)
-    fase1 = any(x in t for x in ["fase 1", "fase1", "primera fase", "la primera", "primera"])
-    fase2 = any(x in t for x in ["fase 2", "fase2", "segunda fase", "la segunda", "segunda"])
-    if fase1 and fase2:
-        return "ambas"
-    if fase1:
-        return "fase_1"
-    if fase2:
-        return "fase_2"
-    if any(x in t for x in ["las dos", "ambas", "cualquiera", "las 2"]):
-        return "ambas"
-    return None
-
-
-def _palmeras_detectar_modalidad(texto):
-    t = normalizar_ventas(texto)
-    if any(x in t for x in ["las tres", "los tres", "todas", "todas las opciones", "3 opciones"]):
-        return "todas"
-    if any(x in t for x in ["semicontado", "semi contado", "1 ano sin intereses", "un ano sin intereses", "11 cuotas", "sin intereses"]):
-        return "semicontado"
-    if any(x in t for x in ["contado", "de una vez", "pago completo", "pagar todo"]):
-        return "contado"
-    if any(x in t for x in ["financiamiento", "financiado", "a cuotas", "mensual", "2 anos", "3 anos", "4 anos", "5 anos", "6 anos", "7 anos", "8 anos"]):
-        return "financiamiento"
-    return None
-
-
-def _palmeras_modalidades_mencionadas(texto):
-    """Devuelve las modalidades realmente mencionadas, sin escoger una por error."""
-    t = normalizar_ventas(texto)
-    mods = []
-    if any(x in t for x in ["semicontado", "semi contado", "1 ano sin intereses", "un ano sin intereses", "11 cuotas", "sin intereses"]):
-        mods.append("semicontado")
-    if any(x in t for x in ["contado", "de una vez", "pago completo", "pagar todo"]):
-        mods.append("contado")
-    if any(x in t for x in ["financiamiento", "financiado", "a cuotas", "mensual", "2 anos", "3 anos", "4 anos", "5 anos", "6 anos", "7 anos", "8 anos"]):
-        mods.append("financiamiento")
-    return list(dict.fromkeys(mods))
-
-
-def _palmeras_modalidad_unica(texto):
-    t = normalizar_ventas(texto)
-    if any(x in t for x in ["las tres", "los tres", "todas las opciones", "las 3", "3 opciones"]):
-        return "todas"
-    mods = _palmeras_modalidades_mencionadas(texto)
-    return mods[0] if len(mods) == 1 else None
-
-
-def _palmeras_es_eleccion_modalidad(texto):
-    """
-    Distingue escoger/cambiar de plan de simplemente hacer una pregunta sobre él.
-    "financiamiento" o "mejor quiero contado" sí;
-    "¿el financiamiento tiene intereses?" no.
-    """
-    modalidad = _palmeras_modalidad_unica(texto)
-    if modalidad not in {"financiamiento", "semicontado", "contado", "todas"}:
-        return None
-    t = normalizar_ventas(texto).strip()
-    simples = {
-        "financiamiento", "financiado", "a cuotas",
-        "semicontado", "semi contado", "sin intereses", "plan sin intereses",
-        "contado", "de contado", "las tres", "todas", "todas las opciones"
-    }
-    if t in simples:
-        return modalidad
-    indicadores = [
-        "me interesa", "prefiero", "quiero", "mejor", "escojo", "elijo",
-        "me quedo con", "muestreme", "muestreme", "quiero ver", "revisemos",
-        "quiero revisar", "veamos"
-    ]
-    if any(x in t for x in indicadores):
-        return modalidad
-    return None
-
-
-def _palmeras_consulta_monto_modalidad(texto):
-    """Detecta cuando pide el monto concreto de una sola modalidad."""
-    modalidad = _palmeras_modalidad_unica(texto)
-    if modalidad not in {"financiamiento", "semicontado", "contado"}:
-        return None
-    t = normalizar_ventas(texto)
-    claves = [
-        "cuanto", "precio", "cuota", "mensualidad", "cuanto queda",
-        "cuanto seria", "cuanto pago", "en cuanto queda", "valor"
-    ]
-    return modalidad if any(x in t for x in claves) else None
-
-
-def _palmeras_es_eleccion_fase(texto):
-    """
-    Distingue elegir/cambiar de fase de simplemente preguntar por una fase.
-    Ej.: "mejor quiero Fase 2" sí cambia; "¿Fase 2 tiene piscina?" no.
-    """
-    fase = _palmeras_detectar_fase(texto)
-    if fase not in {"fase_1", "fase_2"}:
-        return None
-    t = normalizar_ventas(texto).strip()
-    simples_f1 = {"fase 1", "fase1", "primera fase", "la primera", "primera"}
-    simples_f2 = {"fase 2", "fase2", "segunda fase", "la segunda", "segunda"}
-    if t in simples_f1 | simples_f2:
-        return fase
-    indicadores = [
-        "me interesa", "me gusta mas", "prefiero", "quiero la fase",
-        "quiero fase", "mejor fase", "mejor la fase", "mejor quiero",
-        "elijo", "escojo", "me quedo con", "tomemos", "revisemos"
-    ]
-    if any(x in t for x in indicadores):
-        return fase
-    return None
-
-
-def _palmeras_tiene_pregunta_real(texto):
-    t = str(texto or "").strip()
-    tn = normalizar_ventas(t)
-    return ("?" in t or "¿" in t or any(tn.startswith(x) for x in [
-        "cuanto", "como", "donde", "cuando", "que", "cual", "puedo",
-        "tiene", "hay", "se puede", "y si", "por que", "porque"
-    ]))
-
-
-def _palmeras_intencion_actual(texto):
-    """Capa general de prioridades para permitir giros naturales de conversación."""
-    especiales = _palmeras_es_pregunta_conocida_especial(texto) if '_palmeras_es_pregunta_conocida_especial' in globals() else {}
-    fase_elegida = _palmeras_es_eleccion_fase(texto)
-    modalidades = _palmeras_modalidades_mencionadas(texto)
-    modalidad = _palmeras_modalidad_unica(texto)
-    modalidad_elegida = _palmeras_es_eleccion_modalidad(texto)
-    consulta_monto_modalidad = _palmeras_consulta_monto_modalidad(texto)
-    return {
-        "visita": bool(especiales.get("visita")),
-        "reserva": bool(especiales.get("reserva")),
-        "fase_elegida": fase_elegida,
-        "fase_mencionada": _palmeras_detectar_fase(texto),
-        "modalidades": modalidades,
-        "modalidad": modalidad,
-        "modalidad_elegida": modalidad_elegida,
-        "consulta_monto_modalidad": consulta_monto_modalidad,
-        "compara_modalidades": len(modalidades) > 1,
-        "plazo": _palmeras_detectar_plazo(texto),
-        "pregunta": _palmeras_tiene_pregunta_real(texto),
-    }
-
-
-def _palmeras_detectar_plazo(texto):
-    t = normalizar_ventas(texto)
-    m = re.search(r"\b([2-8])\s*(?:anos|ano)\b", t)
-    if m:
-        return int(m.group(1))
-    equivalencias = {24: 2, 36: 3, 48: 4, 60: 5, 72: 6, 84: 7, 96: 8}
-    m = re.search(r"\b(24|36|48|60|72|84|96)\s*meses\b", t)
-    if m:
-        return equivalencias[int(m.group(1))]
-    return None
-
-
-def _palmeras_texto_tiene_intencion_alta(texto):
-    t = normalizar_ventas(texto)
-    return any(x in t for x in [
-        "quiero comprar", "quiero uno", "quiero reservar", "quiero apartar",
-        "quiero ir", "quiero visitar", "puedo ir", "cuando puedo ir",
-        "quiero conocerlo", "me interesa bastante", "como hacemos para comprar"
-    ])
-
-
-def _palmeras_reaccion_positiva(texto):
-    t = normalizar_ventas(texto)
-    # Una frase como "me interesa el plan sin intereses" NO es solo una reacción:
-    # contiene una decisión comercial y debe procesarse primero como cambio de modalidad.
-    if _palmeras_detectar_modalidad(texto):
-        return False
-    return any(x in t for x in [
-        "que bonito", "que bonita", "muy bonito", "muy bonita", "me gusta",
-        "esta bonito", "esta bonita", "se ve bien", "me parece bien",
-        "perfecto", "excelente", "gracias por el video", "gracias"
-    ])
-
-
-def _palmeras_pregunta_disponibilidad(texto):
-    t = normalizar_ventas(texto)
-    return any(x in t for x in [
-        "disponibilidad", "disponible", "disponibles", "que lote queda", "que lotes quedan",
-        "cuales quedan", "cual queda", "hay esquina", "lote especifico", "numero de lote"
-    ])
-
-
-def _palmeras_formatear_visual(texto):
-    """Da formato de WhatsApp sin cambiar el contenido comercial de la respuesta."""
-    texto = str(texto or "").strip()
-    if not texto:
-        return texto
-
-    # Corrige dobles asteriscos accidentales: WhatsApp usa un solo asterisco.
-    texto = texto.replace("**", "*")
-
-    # Resalta cifras/datos muy frecuentes cuando la IA los dejó en texto plano.
-    patrones_negrita = [
-        r"(?<!\*)Q\s?\d[\d,]*(?:\.\d{1,2})?(?!\*)",
-        r"(?<![\d*])\d{1,3}%(?!\*)",
-        r"(?<!\*)\b2\s+a\s+8\s+años\b(?!\*)",
-        r"(?<!\*)\b1\s+a\s+8\s+años\b(?!\*)",
-        r"(?<!\*)\b11\s+cuotas\b(?!\*)",
-        r"(?<!\*)\b15\s+días\b(?!\*)",
-        r"(?<!\*)\bFase\s+[12]\b(?!\*)",
-    ]
-    for patron in patrones_negrita:
-        texto = re.sub(patron, lambda m: f"*{m.group(0)}*", texto, flags=re.IGNORECASE)
-
-    # Separa bloques muy largos. No reescribe ni agrega hechos; solo hace respirar el texto.
-    parrafos_originales = [p.strip() for p in re.split(r"\n\s*\n", texto) if p.strip()]
-    parrafos = []
-    for p in parrafos_originales:
-        # Conserva listas ya bien formateadas y preguntas finales.
-        lineas = [ln.strip() for ln in p.splitlines() if ln.strip()]
-        if len(lineas) > 1 or (p.startswith(("✅", "💳", "💰", "🔑", "📍", "🏡", "💧", "⚡", "🌳", "🏊", "📄", "•", "-"))):
-            parrafos.append("\n".join(lineas))
-            continue
-        if len(p) <= 235 or p.endswith("?"):
-            parrafos.append(p)
-            continue
-        oraciones = [x.strip() for x in re.split(r"(?<=[.!?])\s+", p) if x.strip()]
-        bloque = []
-        largo = 0
-        for oracion in oraciones:
-            if bloque and (len(bloque) >= 2 or largo + len(oracion) > 220):
-                parrafos.append(" ".join(bloque))
-                bloque = []
-                largo = 0
-            bloque.append(oracion)
-            largo += len(oracion) + 1
-        if bloque:
-            parrafos.append(" ".join(bloque))
-
-    # Añade un emoji visual SOLO a párrafos informativos sin emoji previo.
-    def emoji_para(p):
-        if re.search(r"[😀-🙏🌀-🫿]", p):
-            return ""
-        n = normalizar_ventas(p)
-        if "reserva" in n or "apartar" in n:
-            return "🔑 "
-        if "ubicacion" in n or "zona 5" in n or "camino a la verde" in n:
-            return "📍 "
-        if "agua" in n or "pozo" in n:
-            return "💧 "
-        if "energia" in n or "electric" in n:
-            return "⚡ "
-        if "constru" in n or "urbanizacion" in n:
-            return "🏗️ "
-        if "piscina" in n or "amenidad" in n or "area verde" in n:
-            return "🏡 "
-        if any(k in n for k in ["financiamiento", "interes", "cuota", "enganche", "abono", "saldo", "contado", "pago"]):
-            return "💰 "
-        if "escrit" in n or "document" in n or "dpi" in n or "pasaporte" in n:
-            return "📄 "
-        return ""
-
-    resultado = []
-    for p in parrafos:
-        # No anteponer emoji a una pregunta final; mantenerla limpia y cálida.
-        if p.rstrip().endswith("?") or p.lstrip().startswith("*") and p.rstrip().endswith("?*"):
-            resultado.append(p)
-            continue
-        prefijo = emoji_para(p)
-        resultado.append(prefijo + p if prefijo else p)
-
-    return "\n\n".join(resultado).strip()
-
-
-def _palmeras_extraer_ultima_pregunta_respuesta(texto):
-    """Extrae la última pregunta real de una respuesta para seguimientos coherentes."""
-    contenido = str(texto or "").strip()
-    if "?" not in contenido:
-        return None
-
-    # Trabajamos por bloques/líneas para evitar guardar todo el mensaje como pendiente.
-    candidatos = []
-    for bloque in re.split(r"[\n]+", contenido):
-        bloque = bloque.strip().strip("* ")
-        if "?" in bloque:
-            candidatos.append(bloque)
-
-    if not candidatos:
-        return None
-
-    pregunta = candidatos[-1].strip()
-    # Si la línea trae texto antes de la apertura de pregunta, nos quedamos con la pregunta.
-    pos = pregunta.rfind("¿")
-    if pos >= 0:
-        pregunta = pregunta[pos:]
-    pregunta = pregunta.strip().strip("* ")
-    return pregunta[:220] if pregunta else None
-
-
-def _palmeras_enviar_y_recordar(numero, texto):
-    texto = formalizar_trato_usted(texto)
-    texto = _palmeras_formatear_visual(texto)
-
-    # La última pregunta del bot define qué quedó pendiente. Así el seguimiento
-    # de 10 minutos / día 1 puede ser coherente incluso en conversación libre.
-    try:
-        estado = _estado_palmeras(numero)
-        if not estado.get("palmeras_esperando_gabriel") and not estado.get("palmeras_requiere_intervencion"):
-            pregunta = _palmeras_extraer_ultima_pregunta_respuesta(texto)
-            if pregunta:
-                _actualizar_estado_palmeras(
-                    numero,
-                    palmeras_esperando_cliente=True,
-                    palmeras_pregunta_pendiente=pregunta,
-                )
-            else:
-                # Si la respuesta no dejó ninguna pregunta, no perseguimos al cliente
-                # por inactividad solamente porque el bot terminó de responder.
-                _actualizar_estado_palmeras(
-                    numero,
-                    palmeras_esperando_cliente=False,
-                    palmeras_pregunta_pendiente=None,
-                )
-    except Exception as exc:
-        print("PALMERAS PENDIENTE SEGUIMIENTO ERROR:", exc)
-
-    enviar_whatsapp(numero, texto)
-    guardar_mensaje(numero, "assistant", texto)
-    return texto
-
-
-def _palmeras_marcar_crm(numero, etapa=None, accion=""):
-    meta = crm_obtener_meta(numero)
-    crm_guardar_meta(
-        numero,
-        etapa or meta.get("etapa") or "Nuevo lead",
-        accion,
-        meta.get("proxima_accion_fecha") or ""
-    )
-
-
-def _palmeras_alertar_interes_comercial(numero, tipo, detalle=""):
-    """
-    Marca en el CRM y envía una alerta especial cuando el cliente expresa
-    intención de visitar o reservar. No interrumpe la conversación del bot.
-    Las alertas se envían una sola vez por intención para evitar spam.
-    """
-    estado = _estado_palmeras(numero)
-    tipo = str(tipo or "").strip().lower()
-
-    if tipo == "visita":
-        clave = "palmeras_alerta_visita_enviada"
-        if estado.get(clave):
-            return False
-        estado[clave] = True
-        accion = "📅 Cliente quiere visitar Palmeras San Miguel"
-        etapa = "Visita pendiente"
-        aviso = "📅 Cliente quiere coordinar una visita a Palmeras San Miguel"
-    elif tipo == "visita_agendada":
-        clave = "palmeras_alerta_visita_agendada_enviada"
-        if estado.get(clave):
-            return False
-        estado[clave] = True
-        detalle_txt = str(detalle or "").strip()
-        accion = f"✅ Visita agendada Palmeras{': ' + detalle_txt if detalle_txt else ''}"
-        etapa = "Visita pendiente"
-        aviso = f"✅ Visita agendada en Palmeras{': ' + detalle_txt if detalle_txt else ''}"
-    elif tipo == "reserva":
-        clave = "palmeras_alerta_reserva_enviada"
-        if estado.get(clave):
-            return False
-        estado[clave] = True
-        detalle_txt = str(detalle or "").strip()
-        accion = f"🔑 Cliente quiere reservar en Palmeras{': ' + detalle_txt if detalle_txt else ''}"
-        etapa = "Interesado"
-        aviso = f"🔑 Cliente quiere reservar un terreno en Palmeras San Miguel{': ' + detalle_txt if detalle_txt else ''}"
-    else:
-        return False
-
-    persistir_cliente(numero)
-    _palmeras_marcar_crm(numero, etapa, accion)
-    try:
-        Thread(
-            target=enviar_ntfy_crm,
-            args=(numero, aviso, f"palmeras-{tipo}-{time.time_ns()}"),
-            daemon=True,
-        ).start()
-    except Exception as exc:
-        print("PALMERAS ALERTA COMERCIAL ERROR:", exc)
-    return True
-
-
-def _palmeras_respuesta_presentacion_reserva():
-    """Presenta las fases solo después de que el interesado en reservar acepta conocerlas."""
-    return (
-        "Claro 😊 En *Palmeras San Miguel* contamos con *2 fases disponibles* 🏡\n\n"
-        "Ambas fases tienen terrenos de *8x16 m* y topografía plana.\n\n"
-        "🏊 *Fase 1:* desde *Q67,200*, con piscina y área verde.\n"
-        "🌳 *Fase 2:* desde *Q70,400*, con área verde y acceso interno a la piscina de Fase 1.\n\n"
-        "📍 Estamos ubicados en *Zona 5 de Retalhuleu, camino a La Verde*.\n\n"
-        "Le comparto los planos para que pueda comparar ambas opciones 📄😊"
-    )
-
-
-def _palmeras_respuesta_afirmativa(texto):
-    t = normalizar_ventas(texto).strip()
-    afirmaciones = {
-        "si", "sí", "claro", "por favor", "si por favor", "sí por favor",
-        "dale", "de acuerdo", "esta bien", "está bien", "ok", "okay",
-        "mandelos", "mándelos", "mandemelos", "mándemelos", "compartalos",
-        "compártalos", "quiero verlos", "quiero ver las fases", "muestremelos",
-        "muéstremelos", "envielos", "envíelos"
-    }
-    return t in {normalizar_ventas(x) for x in afirmaciones} or any(
-        frase in t for frase in [
-            "si quiero ver", "si compartame", "sí compártame", "si mandeme",
-            "sí mándeme", "quiero conocer las fases", "quiero ver los planos"
-        ]
-    )
-
-
-def _palmeras_generar_bienvenida(numero, texto_cliente, modo="informacion"):
-    saludo = _palmeras_saludo_actual()
-    if modo == "precios_pagos":
-        objetivo = (
-            "El cliente entró específicamente preguntando por PRECIOS Y FORMAS DE PAGO. "
-            "NO responda como si hubiera pedido información general sin reconocer su intención. "
-            "Después del saludo y la presentación, incluya una frase cálida y natural equivalente a: "
-            "'Con gusto le comparto los precios y opciones de pago 😊. Primero, permítame comentarle brevemente las opciones que tenemos en Palmeras San Miguel.' "
-            "Luego siga esta secuencia: 1) decir que hay 2 fases disponibles; 2) ambas son 8x16 m y topografía plana; "
-            "3) Fase 1 Q67,200 con piscina y área verde; 4) Fase 2 Q70,400 con área verde y acceso interno a la piscina de Fase 1; "
-            "5) ubicación Zona 5 de Retalhuleu, camino a La Verde; 6) decir que compartirá los planos; "
-            "7) terminar preguntando cuál fase le parece más atractiva para mostrarle las opciones de pago correspondientes. "
-            "NO mande todavía cuotas, cálculos ni detalles extensos de financiamiento. NO repita dos veces que compartirá precios. "
-            "La respuesta debe sentirse distinta de la entrada de información general porque reconoce desde el inicio que el cliente pidió precios/pagos."
-        )
-    else:
-        objetivo = (
-            "Este es un cliente que pidió información general. NO convierta la respuesta en una ficha técnica ni en un catálogo. "
-            "Preséntese como Gabriel Polero, asesor de ventas de Multiproyectos DIVE y converse de forma natural. "
-            "La respuesta debe seguir ESTA SECUENCIA COMERCIAL, aunque puede variar ligeramente las palabras: "
-            "1) saludo + presentación; 2) decir que en Palmeras San Miguel hay 2 fases disponibles; "
-            "3) indicar que en ambas fases hay terrenos 8x16 y topografía plana; "
-            "4) presentar Fase 1 Q67,200 con piscina y área verde; "
-            "5) presentar Fase 2 Q70,400 con área verde y acceso interno a la piscina de Fase 1; "
-            "6) ubicación Zona 5 de Retalhuleu, camino a La Verde; "
-            "7) decir que compartirá los planos; 8) cerrar preguntando cuál fase le parece más atractiva. "
-            "NO cambie el orden general. NO agregue otros temas. NO use expresiones como 'Fíjese', 'Mire' o 'Le cuento'. "
-            "NO use palabras innecesariamente técnicas como 'parcelas'. NO explique todavía formas de pago, reserva, requisitos, construcción, "
-            "tiempo de urbanización, escrituración, gastos, consumo de agua, garita, muro, renders, ni ningún otro detalle que el cliente no pidió."
-        )
-
-    instrucciones = f"""
-Usted ES Gabriel Polero, asesor de ventas de Multiproyectos DIVE, escribiendo personalmente por WhatsApp.
-En el primer mensaje debe quedar claro una sola vez: 'Le saluda Gabriel Polero, asesor de ventas de Multiproyectos DIVE' o una variante equivalente.
-TRATO OBLIGATORIO: use SIEMPRE usted, le, su, puede, desea. NUNCA tú, vos, te, ti, contigo.
-No diga que es IA, bot, asistente ni que consultará con Gabriel.
-Saludo adecuado en Guatemala: {saludo}.
-
-ESTILO OBLIGATORIO DEL PRIMER MENSAJE:
-- Debe sonar como una conversación real de WhatsApp, NO como ficha técnica, brochure, listado de especificaciones ni contrato.
-- Empiece de forma profesional y directa. No use 'Fíjese', 'Mire', 'Le cuento' ni expresiones de demasiada confianza en el primer contacto.
-- Si el modo es información general, después de presentarse puede empezar directamente con 'En Palmeras San Miguel...' o una variante profesional similar.
-- Si el modo es precios/pagos, después de presentarse RECONOZCA primero la solicitud con una frase cálida tipo 'Con gusto le comparto los precios y opciones de pago 😊' y luego introduzca las fases.
-- Muy fácil de leer: párrafos cortos y saltos de línea.
-- Use *negritas de WhatsApp* con un solo asterisco para destacar fase/precio/dato clave.
-- Use entre 4 y 7 emojis naturales, bien repartidos y sin saturar.
-- Mantenga una estructura visual parecida al EJEMPLO GUÍA de abajo: presentación, introducción, fases, ubicación, planos y pregunta final.
-- Puede variar palabras y pequeñas frases para sonar humano, pero NO debe alterar el orden, inventar apartados ni convertirlo en ficha técnica.
-- No haga un bloque enorme.
-- Haga solamente UNA pregunta al final.
-- No envíe links.
-- NO entregue información que corresponde a pasos posteriores del protocolo.
-
-REGLA ESPECIAL SI modo = precios_pagos:
-- El cliente ya dijo qué busca. Reconózcalo explícitamente antes de presentar las fases.
-- Puede usar una transición natural como: 'Con gusto le comparto los precios y opciones de pago 😊. Primero, permítame comentarle brevemente las opciones disponibles.'
-- NO convierta esa frase en una promesa de cotización exacta si todavía no ha elegido fase/plazo.
-- Después presente fases, ubicación y planos, y pregunte cuál fase quiere revisar para continuar con el pago.
-
-EJEMPLO GUÍA DE TONO Y ESTRUCTURA (NO COPIAR LITERALMENTE; USARLO COMO MODELO):
-¡{saludo}! 👋 Le saluda *Gabriel Polero, asesor de ventas de Multiproyectos DIVE* 😊
-
-En *Palmeras San Miguel* actualmente contamos con *2 fases disponibles* 🏡✨
-En ambas fases tenemos terrenos de *8x16 m* y topografía plana.
-
-🏊 *Fase 1:* desde *Q67,200*, con piscina y área verde.
-🌳 *Fase 2:* desde *Q70,400*, con área verde y acceso interno a la piscina de Fase 1.
-
-El proyecto está ubicado en *Zona 5 de Retalhuleu, camino a La Verde* 📍
-
-Le comparto los planos para que pueda comparar ambas opciones 📄😊
-
-*¿Cuál de las dos fases le parece más atractiva?*
-
-DATOS OFICIALES:
-{PALMERAS_FICHA_OFICIAL}
-
-OBJETIVO DE ESTA RESPUESTA:
-{objetivo}
-
-IMPORTANTE: Tener todos los datos oficiales disponibles NO significa que deba mencionarlos todos. Use solamente los datos necesarios para el paso actual.
-No invente nada. Redacte con sus propias palabras, como Gabriel Polero atendiendo a un cliente real. Devuelva únicamente el mensaje final.
-"""
-    try:
-        r = client.responses.create(
-            model="gpt-5-mini",
-            instructions=instrucciones,
-            input=[{"role": "user", "content": texto_cliente}]
-        )
-        salida = eliminar_eco_pregunta_cliente((r.output_text or "").strip(), texto_cliente)
-        salida = formalizar_trato_usted(salida)
-        salida_norm = normalizar_ventas(salida)
-        requeridos = [
-            "gabriel polero", "multiproyectos dive", "palmeras san miguel",
-            "fase 1", "67200", "fase 2", "70400", "8x16",
-            "zona 5", "la verde", "plano"
-        ]
-        prohibidos = ["fijese", "mire", "le cuento", "parcelas disponibles", "ficha tecnica"]
-        es_valida = bool(salida) and all(x in salida_norm.replace(",", "") for x in requeridos) and not any(x in salida_norm for x in prohibidos)
-        if es_valida:
-            return salida
-
-        # Si la primera redacción se aleja del protocolo, pedimos una segunda versión
-        # manteniendo libertad de palabras pero siguiendo mucho más de cerca la estructura guía.
-        correccion = f"""
-Reescriba su respuesta anterior. Mantenga un tono humano, pero siga muy de cerca esta secuencia:
-1. {saludo} + presentación como Gabriel Polero, asesor de ventas de Multiproyectos DIVE.
-2. Palmeras San Miguel: 2 fases disponibles.
-3. Ambas fases: terrenos 8x16 y topografía plana.
-4. Fase 1: Q67,200, piscina y área verde.
-5. Fase 2: Q70,400, área verde y acceso interno a piscina de Fase 1.
-6. Ubicación: Zona 5 de Retalhuleu, camino a La Verde.
-7. Indicar que compartirá los planos.
-8. Una sola pregunta final: cuál fase le parece más atractiva.
-Use párrafos cortos, negritas de WhatsApp y emojis naturales. No use 'Fíjese', 'Mire', 'Le cuento' ni 'parcelas'. No agregue pagos, requisitos ni otros temas. No copie mecánicamente; redacte con sus palabras.
-"""
-        r2 = client.responses.create(
-            model="gpt-5-mini",
-            instructions=instrucciones + "\n" + correccion,
-            input=[{"role": "user", "content": texto_cliente}]
-        )
-        salida2 = eliminar_eco_pregunta_cliente((r2.output_text or "").strip(), texto_cliente)
-        salida2 = formalizar_trato_usted(salida2)
-        if salida2:
-            return salida2
-    except Exception as exc:
-        print("PALMERAS BIENVENIDA IA ERROR:", exc)
-
-    if modo == "precios_pagos":
-        return formalizar_trato_usted(
-            f"¡{saludo}! 👋 Le saluda *Gabriel Polero, asesor de ventas* de *Multiproyectos DIVE* 😊\n\n"
-            "En *Palmeras San Miguel* actualmente contamos con *2 fases disponibles* 🏡✨\n\n"
-            "En ambas fases tenemos terrenos de *8x16 m* y topografía plana.\n\n"
-            "🏊 *Fase 1:* *Q67,200*, con piscina y área verde.\n"
-            "🌳 *Fase 2:* *Q70,400*, con área verde y acceso interno a la piscina de Fase 1.\n\n"
-            "También manejamos financiamiento propio de *2 a 8 años*, plan de *1 año sin intereses* y pago de contado 💳👍\n\n"
-            "Le comparto los planos para que pueda comparar ambas opciones 📄😊\n\n"
-            "*¿Cuál de las dos fases le interesa más?*"
-        )
-    return formalizar_trato_usted(
-        f"¡{saludo}! 👋 Le saluda *Gabriel Polero, asesor de ventas de Multiproyectos DIVE* 😊\n\n"
-        "En *Palmeras San Miguel* actualmente contamos con *2 fases disponibles* 🏡✨\n\n"
-        "En ambas fases tenemos terrenos de *8x16 m* y topografía plana.\n\n"
-        "🏊 *Fase 1:* desde *Q67,200*, con piscina y área verde.\n"
-        "🌳 *Fase 2:* desde *Q70,400*, con área verde. Aunque no tiene piscina propia, ambas fases estarán conectadas internamente, por lo que tendrá acceso a la piscina de Fase 1 🔄🏊\n\n"
-        "Además, el proyecto está ubicado en *Zona 5 de Retalhuleu, camino a La Verde* 📍👍\n\n"
-        "Le comparto los planos para que pueda comparar ambas opciones 📄😊\n\n"
-        "*¿Cuál de las dos fases le parece más atractiva?*"
-    )
-
-
-def _palmeras_enviar_planos_protocolo(numero, fase=None):
-    planos = PLANOS_PROYECTOS.get("palmeras", {})
-    claves = [fase] if fase in {"fase_1", "fase_2"} else ["fase_1", "fase_2"]
-    enviados = 0
-    for clave in claves:
-        plano = planos.get(clave)
-        if not plano:
-            continue
-        if enviar_documento_url_whatsapp(numero, plano["url"], plano["archivo"], caption=plano["nombre"]):
-            enviados += 1
-
-    if enviados > 0:
-        enviar_whatsapp(
-            numero,
-            "Para que pueda identificarlo mejor en el plano 😊\n\n"
-            "🟢 *Disponible*\n"
-            "🔴 *Vendido*"
-        )
-    return enviados > 0
-
-
-def _palmeras_enviar_video_protocolo(numero, contexto="general"):
-    """
-    Envía el video de referencia con un caption coherente con el momento de la conversación.
-    No envía un texto previo separado, para evitar mensajes duplicados.
-    """
-    ruta = PALMERAS_VIDEO_PROTOCOLO if os.path.exists(PALMERAS_VIDEO_PROTOCOLO) else PALMERAS_VIDEO_FALLBACK
-    if not os.path.exists(ruta):
-        print("PALMERAS VIDEO PROTOCOLO NO ENCONTRADO:", ruta)
-        return False
-
-    if contexto == "pagos":
-        caption = (
-            "Mientras revisa las opciones de pago, le comparto este pequeño video de referencia "
-            "para que pueda darse una idea del tipo de espacios y amenidades que desarrollamos 🏡✨"
-        )
-    else:
-        caption = (
-            "Le comparto este pequeño video de referencia para que pueda darse una idea del tipo "
-            "de espacios y amenidades que desarrollamos 🏡✨"
-        )
-
-    return enviar_video_whatsapp(numero, ruta, caption=caption)
-
-
-def _palmeras_enviar_fotos_protocolo(numero):
-    disponibles = [r for r in PALMERAS_FOTOS_PROTOCOLO if os.path.exists(r)]
-    if not disponibles:
-        return False
-    for i, ruta in enumerate(disponibles):
-        enviar_imagen_whatsapp(
-            numero,
-            ruta,
-            caption="Renders de referencia de Palmeras San Miguel 🏡✨" if i == 0 else ""
-        )
-    return True
-
-
-def _palmeras_explicar_modalidades():
-    return (
-        "Perfecto 😊 Para esa fase contamos con *tres formas de pago*:\n\n"
-        "💳 *Financiamiento propio:* de 2 a 8 años, sin banco de por medio.\n"
-        "💰 *Plan semicontado:* enganche + 11 cuotas mensuales sin intereses.\n"
-        "✅ *Contado:* inicialmente 3% de descuento; dependiendo de la cantidad de lotes puede llegar hasta 5%.\n\n"
-        "*¿Cuál de estas modalidades le gustaría revisar, o prefiere que le muestre las tres?*"
-    )
-
-
-def _palmeras_enviar_plan_pago(numero, fase, modalidad):
-    if fase not in {"fase_1", "fase_2"}:
-        return False
-    rutas = PALMERAS_PLANES_IMAGEN.get(fase, {})
-    modalidades = ["financiamiento", "semicontado", "contado"] if modalidad == "todas" else [modalidad]
-    enviados = 0
-    nombres = {
-        "financiamiento": "Financiamiento propio de 2 a 8 años",
-        "semicontado": "Plan de 1 año sin intereses",
-        "contado": "Pago de contado",
-    }
-    for mod in modalidades:
-        ruta = rutas.get(mod)
-        if ruta and os.path.exists(ruta):
-            if enviar_imagen_whatsapp(numero, ruta, caption=f"Palmeras San Miguel · {nombres.get(mod, mod)}"):
-                enviados += 1
-    return enviados > 0
-
-
-def _palmeras_respuesta_modalidad(numero, fase, modalidad):
-    nombre_fase = "Fase 1" if fase == "fase_1" else "Fase 2"
-    if modalidad == "financiamiento":
-        return (
-            f"Claro 😊 Le comparto el plan de *{nombre_fase}* con financiamiento propio de *2 a 8 años*. "
-            "El interés es del 17% anual sobre saldos y puede hacer abonos directos a capital desde Q2,000, sin penalización.\n\n"
-            "*¿Qué plazo entre 2 y 8 años le parece más cómodo?*"
-        )
-    if modalidad == "semicontado":
-        cuota = "Q5,563.64" if fase == "fase_1" else "Q5,854.55"
-        return (
-            f"Esta sería la opción de *{nombre_fase}* a 1 año sin intereses 😊. "
-            f"Después del enganche de Q6,000, el saldo se divide en *11 cuotas de {cuota}*.\n\n"
-            "*¿Qué le parece esta modalidad?*"
-        )
-    if modalidad == "contado":
-        total = "Q65,184" if fase == "fase_1" else "Q68,288"
-        return (
-            f"En *{nombre_fase}*, pagando de contado podemos iniciar con un *3% de descuento*, quedando en *{total}* 😊. "
-            "Dependiendo de la cantidad de lotes el descuento puede llegar hasta 5%, sujeto a confirmación de la operación.\n\n"
-            "*¿Qué le parece esta opción?*"
-        )
-    return (
-        "Le comparto las tres alternativas para que pueda compararlas con calma 😊.\n\n"
-        "*¿Cuál siente que se adapta mejor a lo que usted busca?*"
-    )
-
-
-
-def _palmeras_aplicar_propuesta(numero, fase, modalidad, plazo=None):
-    """Guarda y envía una propuesta concreta sin obligar a repetir pasos ya dados."""
-    if fase not in {"fase_1", "fase_2"}:
-        return False
-    if modalidad not in {"financiamiento", "semicontado", "contado", "todas"}:
-        return False
-
-    pendiente = "qué le parece la propuesta"
-    if modalidad == "financiamiento" and not plazo:
-        pendiente = "qué plazo le parece más cómodo"
-
-    _actualizar_estado_palmeras(
-        numero,
-        palmeras_fase=fase,
-        palmeras_forma_pago=modalidad,
-        palmeras_plazo=plazo,
-        palmeras_etapa="propuesta_enviada",
-        palmeras_cotizacion_enviada=True,
-        palmeras_esperando_cliente=True,
-        palmeras_pregunta_pendiente=pendiente,
-        palmeras_ultima_propuesta=modalidad,
-        palmeras_esperando_gabriel=False,
-        palmeras_requiere_intervencion=False
-    )
-    _palmeras_marcar_crm(
-        numero,
-        "Cotización enviada",
-        f"Propuesta {modalidad} enviada para {'Fase 1' if fase == 'fase_1' else 'Fase 2'}"
-    )
-
-    respuesta = _palmeras_respuesta_modalidad(numero, fase, modalidad)
-    if modalidad == "financiamiento" and plazo:
-        cuota = PALMERAS_CUOTAS_FINANCIAMIENTO.get(fase, {}).get(plazo)
-        if cuota:
-            respuesta = (
-                f"Claro 😊 En *{'Fase 1' if fase == 'fase_1' else 'Fase 2'}*, a *{plazo} años* "
-                f"la cuota es de aproximadamente *{cuota} mensuales*, con enganche de Q6,000.\n\n"
-                "Le comparto también el cuadro del financiamiento para que pueda comparar los demás plazos."
-            )
-            _actualizar_estado_palmeras(
-                numero,
-                palmeras_etapa="conversacion_abierta",
-                palmeras_pregunta_pendiente="si desea conocer el proyecto"
-            )
-
-    _palmeras_enviar_y_recordar(numero, respuesta)
-    _palmeras_enviar_plan_pago(numero, fase, modalidad)
-
-    if modalidad == "financiamiento" and plazo:
-        _palmeras_enviar_y_recordar(
-            numero,
-            "Si ese rango de cuota le parece cómodo, lo ideal sería que conozca el proyecto personalmente 😊. *¿Qué día tendría disponibilidad para visitarlo?*"
-        )
-    return True
-
-
-def _palmeras_extraer_dia_fecha_visita(texto):
-    """Reconoce días/fechas escritos de forma natural sin exigir un formato rígido."""
-    dia = extraer_dia_visita(texto)
-    if dia:
-        return dia
-
-    t = normalizar_ventas(texto)
-    if re.search(r"\bpasado\s+manana\b", t):
-        return "Pasado mañana"
-    if re.search(r"\bmanana\b", t):
-        return "Mañana"
-    if re.search(r"\bhoy\b", t):
-        return "Hoy"
-
-    meses = (
-        "enero|febrero|marzo|abril|mayo|junio|julio|agosto|"
-        "septiembre|setiembre|octubre|noviembre|diciembre"
-    )
-    m = re.search(rf"\b(?:el\s+)?(\d{{1,2}})\s+de\s+({meses})\b", t)
-    if m:
-        return f"{m.group(1)} de {m.group(2)}"
-
-    return None
-
-
-def _palmeras_extraer_hora_natural(texto):
-    """Reconoce '10 AM', '10:30', '10 de la mañana', '4 de la tarde', etc."""
-    hora = extraer_hora_visita(texto)
-    if hora:
-        # Normalizamos AM/PM para que la confirmación sea más legible.
-        t = normalizar_ventas(hora)
-        m = re.search(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b", t)
-        if m:
-            hh = int(m.group(1))
-            mm = int(m.group(2) or 0)
-            return f"{hh}:{mm:02d} {m.group(3).upper()}"
-        return hora
-
-    t = normalizar_ventas(texto)
-
-    # Ej.: "a las 10 de la mañana", "8 de la noche", "4 de la tarde".
-    m = re.search(
-        r"\b(?:a\s+las?\s+)?(\d{1,2})(?::(\d{2}))?\s*(?:de\s+la\s+|por\s+la\s+)?"
-        r"(manana|tarde|noche|mediodia)\b",
-        t,
-    )
-    if m:
-        hh = int(m.group(1))
-        mm = int(m.group(2) or 0)
-        periodo = m.group(3)
-        if not (1 <= hh <= 12 and 0 <= mm <= 59):
-            return None
-        if periodo == "manana":
-            ampm = "AM"
-        elif periodo == "mediodia":
-            hh = 12
-            ampm = "PM"
-        else:
-            ampm = "PM"
-        return f"{hh}:{mm:02d} {ampm}"
-
-    # Formato de 24 horas sin AM/PM (ej. 16:30).
-    m = re.search(r"\b([01]?\d|2[0-3]):([0-5]\d)\b", t)
-    if m:
-        hh24 = int(m.group(1))
-        mm = int(m.group(2))
-        ampm = "AM" if hh24 < 12 else "PM"
-        hh12 = hh24 % 12 or 12
-        return f"{hh12}:{mm:02d} {ampm}"
-
-    return None
-
-
-def _palmeras_hora_a_24(hora):
-    if not hora:
-        return None
-    t = normalizar_ventas(hora)
-    m = re.search(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b", t)
-    if not m:
-        return None
-    hh = int(m.group(1))
-    mm = int(m.group(2) or 0)
-    ampm = m.group(3)
-    if not (1 <= hh <= 12 and 0 <= mm <= 59):
-        return None
-    if ampm == "pm" and hh != 12:
-        hh += 12
-    if ampm == "am" and hh == 12:
-        hh = 0
-    return hh, mm
-
-
-def _palmeras_hora_valida(texto_o_hora):
-    hora = _palmeras_extraer_hora_natural(texto_o_hora)
-    valor = _palmeras_hora_a_24(hora)
-    if valor is None:
-        return None
-    hh, mm = valor
-    # Desde 06:00 hasta 17:00 inclusive.
-    return (hh, mm) >= (6, 0) and (hh, mm) <= (17, 0)
-
-
-def _palmeras_detectar_punto_visita(texto):
-    """Detecta una elección explícita de uno de los dos puntos autorizados."""
-    original = str(texto or "").strip()
-    t = normalizar_ventas(original).strip()
-    if not t:
-        return None
-
-    # Evitamos tomar una pregunta lateral sobre un lugar como si fuera una elección.
-    # Ej.: "¿qué tan lejos está La Trinidad?" debe responderse, no cerrar la cita.
-    es_pregunta = "?" in original or "¿" in original
-
-    opciones_trinidad = {
-        "la trinidad", "centro comercial la trinidad", "cc la trinidad",
-        "en la trinidad", "en centro comercial la trinidad",
-    }
-    opciones_proyecto = {
-        "en el proyecto", "directo al proyecto", "directamente en el proyecto",
-        "directo en el proyecto", "en palmeras", "directo en palmeras",
-        "en palmeras san miguel", "directamente en palmeras san miguel",
-    }
-
-    if not es_pregunta and t in opciones_trinidad:
-        return "Centro Comercial La Trinidad"
-    if not es_pregunta and t in opciones_proyecto:
-        return "Palmeras San Miguel"
-
-    if not es_pregunta and any(x in t for x in [
-        "prefiero la trinidad", "me queda mejor la trinidad", "nos vemos en la trinidad",
-        "quedemos en la trinidad", "nos juntamos en la trinidad",
-    ]):
-        return "Centro Comercial La Trinidad"
-
-    if not es_pregunta and any(x in t for x in [
-        "prefiero el proyecto", "me queda mejor el proyecto", "nos vemos en el proyecto",
-        "quedemos en el proyecto", "nos juntamos en el proyecto",
-        "prefiero palmeras", "nos vemos en palmeras",
-    ]):
-        return "Palmeras San Miguel"
-
-    return None
-
-
-def _palmeras_mensaje_aporta_dato_visita(texto):
-    """Sirve para continuar una cita sin exigir que repita 'quiero visitar'."""
-    return bool(
-        _palmeras_extraer_dia_fecha_visita(texto)
-        or _palmeras_extraer_hora_natural(texto)
-        or _palmeras_detectar_punto_visita(texto)
-    )
-
-
-def _palmeras_manejar_visita(numero, texto):
-    # Gabriel recibe una alerta especial apenas el cliente muestra intención de visitar.
-    _palmeras_alertar_interes_comercial(numero, "visita")
-
-    estado = estado_visitas.setdefault(
-        numero,
-        {"dia": None, "hora": None, "punto": None, "proyecto": "palmeras", "cerrada": False},
-    )
-    estado.setdefault("punto", None)
-    estado["proyecto"] = "palmeras"
-
-    dia = _palmeras_extraer_dia_fecha_visita(texto)
-    hora = _palmeras_extraer_hora_natural(texto)
-    punto = _palmeras_detectar_punto_visita(texto)
-
-    # Cada dato nuevo sustituye el anterior; esto permite cambiar día, hora o punto naturalmente.
-    if dia:
-        estado["dia"] = dia
-        estado["cerrada"] = False
-
-    if hora:
-        valido = _palmeras_hora_valida(hora)
-        if valido is False:
-            hora_anterior = estado.get("hora")
-            if hora_anterior:
-                return (
-                    f"Claro 😊 A las *{hora}* ya no tenemos horario de atención para visitas. "
-                    "Podemos coordinar entre *6:00 AM y 5:00 PM*.\n\n"
-                    f"Si desea, mantenemos la hora que ya teníamos, *{hora_anterior}*, o puede indicarme otra dentro de ese horario."
-                ), False
-            return (
-                f"Claro 😊 A las *{hora}* ya no tenemos horario de atención para visitas. "
-                "Podemos coordinar entre *6:00 AM y 5:00 PM*.\n\n"
-                "*¿Qué otra hora dentro de ese horario le quedaría bien?*"
-            ), False
-        estado["hora"] = hora
-        estado["cerrada"] = False
-
-    if punto:
-        estado["punto"] = punto
-        estado["cerrada"] = False
-
-    # La cita solo queda completamente coordinada con día + hora + punto.
-    if estado.get("dia") and estado.get("hora") and estado.get("punto"):
-        estado["cerrada"] = True
-        detalle = f"{estado['dia']} {estado['hora']} · {estado['punto']}"
-        _palmeras_marcar_crm(
-            numero,
-            "Visita pendiente",
-            f"✅ Visita Palmeras: {detalle}",
-        )
-        _actualizar_estado_palmeras(
-            numero,
-            palmeras_etapa="visita_agendada",
-            palmeras_visita_agendada=True,
-            palmeras_visita_dia=estado.get("dia"),
-            palmeras_visita_hora=estado.get("hora"),
-            palmeras_visita_punto=estado.get("punto"),
-            palmeras_esperando_cliente=False,
-            palmeras_pregunta_pendiente=None,
-        )
-        _palmeras_alertar_interes_comercial(numero, "visita_agendada", detalle)
-        return (
-            "¡Perfecto! 😊 Su visita a *Palmeras San Miguel* queda coordinada así:\n\n"
-            f"📅 *{estado['dia']}*\n"
-            f"🕙 *{estado['hora']}*\n"
-            f"📍 *{estado['punto']}*\n\n"
-            "Con gusto estaré pendiente para atenderle 🏡✨\n\n"
-            "Si antes de su visita le surge cualquier duda sobre precios, formas de pago, servicios, fases o el proyecto, puede escribirme con confianza 😊."
-        ), True
-
-    # Si ya tenemos día + hora, falta únicamente el punto de encuentro.
-    if estado.get("dia") and estado.get("hora"):
-        _palmeras_marcar_crm(
-            numero,
-            "Visita pendiente",
-            f"📅 Fecha y hora definidas Palmeras: {estado['dia']} {estado['hora']} · esperando punto",
-        )
-        _actualizar_estado_palmeras(
-            numero,
-            palmeras_etapa="coordinando_punto_visita",
-            palmeras_visita_agendada=False,
-            palmeras_visita_dia=estado.get("dia"),
-            palmeras_visita_hora=estado.get("hora"),
-            palmeras_visita_punto=None,
-            palmeras_esperando_cliente=True,
-            palmeras_pregunta_pendiente="punto de encuentro para la visita",
-        )
-        return (
-            f"Perfecto 😊 Podemos coordinar su visita para *{estado['dia']} a las {estado['hora']}* 🏡\n\n"
-            "Podemos encontrarnos *directamente en Palmeras San Miguel* o en *Centro Comercial La Trinidad* 📍\n\n"
-            "*¿Cuál de los dos puntos le queda más cómodo?*"
-        ), False
-
-    if estado.get("dia"):
-        _actualizar_estado_palmeras(
-            numero,
-            palmeras_etapa="coordinando_visita",
-            palmeras_visita_agendada=False,
-            palmeras_visita_dia=estado.get("dia"),
-            palmeras_esperando_cliente=True,
-            palmeras_pregunta_pendiente="hora de visita",
-        )
-        return (
-            f"Perfecto 😊 Ya tengo el día: *{estado['dia']}*. "
-            "*¿A qué hora le quedaría bien?* Podemos coordinar entre *6:00 AM y 5:00 PM*."
-        ), False
-
-    if estado.get("hora"):
-        _actualizar_estado_palmeras(
-            numero,
-            palmeras_etapa="coordinando_visita",
-            palmeras_visita_agendada=False,
-            palmeras_visita_hora=estado.get("hora"),
-            palmeras_esperando_cliente=True,
-            palmeras_pregunta_pendiente="día de visita",
-        )
-        return (
-            f"Perfecto 😊 Ya tengo la hora: *{estado['hora']}*. *¿Qué día le quedaría bien visitarnos?*"
-        ), False
-
-    _actualizar_estado_palmeras(
-        numero,
-        palmeras_etapa="coordinando_visita",
-        palmeras_visita_agendada=False,
-        palmeras_esperando_cliente=True,
-        palmeras_pregunta_pendiente="día y hora de visita",
-    )
-    return (
-        "¡Claro! 😊 Con gusto coordinamos su visita a *Palmeras San Miguel* 🏡\n\n"
-        "Podemos atenderle *cualquier día*, incluso fines de semana y días festivos, en horario de *6:00 AM a 5:00 PM* 📅\n\n"
-        "*¿Qué día y a qué hora le quedaría bien visitarlo?*"
-    ), False
-
-
-def _palmeras_respuesta_reserva(numero, texto):
-    estado = _estado_palmeras(numero)
-    etapa_previa = estado.get("palmeras_etapa")
-    fase_mencionada = _palmeras_detectar_fase(texto)
-    fase_guardada = estado.get("palmeras_fase")
-    fase = fase_mencionada if fase_mencionada in {"fase_1", "fase_2"} else (
-        fase_guardada if fase_guardada in {"fase_1", "fase_2"} else None
-    )
-
-    # La intención de reserva merece una alerta especial en el CRM, pero no pausa la IA.
-    detalle_alerta = "Fase 1" if fase == "fase_1" else ("Fase 2" if fase == "fase_2" else "")
-    _palmeras_alertar_interes_comercial(numero, "reserva", detalle_alerta)
-
-    # Si ya sabemos qué fase está revisando, no lo hacemos retroceder ni repetimos presentación.
-    if fase in {"fase_1", "fase_2"}:
-        nombre = "Fase 1" if fase == "fase_1" else "Fase 2"
-        _actualizar_estado_palmeras(
-            numero,
-            palmeras_etapa="reserva_esperando_modalidad",
-            palmeras_reserva_en_curso=True,
-            palmeras_fase=fase,
-            palmeras_reserva_fase=fase,
-            palmeras_reserva_presentacion_ofrecida=True,
-            palmeras_esperando_cliente=True,
-            palmeras_pregunta_pendiente="qué modalidad de pago desea para la reserva",
-        )
-        _palmeras_marcar_crm(
-            numero,
-            "Interesado",
-            f"🔑 Cliente quiere reservar Palmeras - {nombre}",
-        )
-        return (
-            f"Claro 😊 Para reservar un terreno en *Palmeras San Miguel - {nombre}* puede hacerlo con *Q3,000* y presentar *DPI o pasaporte* 🔑\n\n"
-            "Ese monto *forma parte del enganche* y mantiene el terreno apartado durante *15 días*, mientras completa los requisitos y define la forma de pago 🏡\n\n"
-            "Para avanzar, *¿qué forma de pago le gustaría revisar: financiamiento, semicontado o contado?* 💳"
-        )
-
-    # Si el cliente ya conoció las fases/planos en la conversación, no los presentamos otra vez.
-    ya_conoce_fases = etapa_previa in {
-        "esperando_fase", "esperando_modalidad", "propuesta_enviada", "conversacion_abierta",
-        "coordinando_visita", "visita_agendada", "requiere_gabriel", "reserva_esperando_fase"
-    }
-    if ya_conoce_fases:
-        _actualizar_estado_palmeras(
-            numero,
-            palmeras_etapa="reserva_esperando_fase",
-            palmeras_reserva_en_curso=True,
-            palmeras_esperando_cliente=True,
-            palmeras_pregunta_pendiente="en qué fase desea reservar",
-        )
-        _palmeras_marcar_crm(
-            numero,
-            "Interesado",
-            "🔑 Cliente quiere reservar Palmeras - esperando elección de fase",
-        )
-        return (
-            "Claro 😊 Para reservar un terreno en *Palmeras San Miguel* puede hacerlo con *Q3,000* y presentar *DPI o pasaporte* 🔑\n\n"
-            "Ese monto *forma parte del enganche* y mantiene el terreno apartado durante *15 días*, mientras completa los requisitos y define la forma de pago 🏡\n\n"
-            "Como ya conoce las opciones, *¿en cuál de las dos fases le gustaría realizar su reserva: Fase 1 o Fase 2?* 😊"
-        )
-
-    # Entrada del anuncio / primera consulta de reserva: responde primero cómo reservar
-    # y luego ofrece presentar las fases. No mostramos de entrada la condición de no reembolso.
-    _actualizar_estado_palmeras(
-        numero,
-        palmeras_etapa="reserva_esperando_planos",
-        palmeras_reserva_en_curso=True,
-        palmeras_reserva_presentacion_ofrecida=True,
-        palmeras_esperando_cliente=True,
-        palmeras_pregunta_pendiente="si desea conocer planos y fases disponibles",
-    )
-    _palmeras_marcar_crm(
-        numero,
-        "Interesado",
-        "🔑 Cliente quiere reservar Palmeras - esperando conocer fase",
-    )
-    saludo = _palmeras_saludo_actual()
-    return (
-        f"¡{saludo}! 👋 Le saluda *Gabriel Polero, asesor de ventas de Multiproyectos DIVE* 😊\n\n"
-        "Para reservar un terreno en *Palmeras San Miguel* puede hacerlo con *Q3,000* y presentar *DPI o pasaporte* 🔑\n\n"
-        "Ese monto *forma parte del enganche* y mantiene el terreno apartado durante *15 días*, mientras completa los requisitos y define la forma de pago 🏡\n\n"
-        "Si gusta, puedo compartirle los *planos y las dos fases disponibles* para que conozca cuál se adapta mejor a lo que está buscando 📄✨\n\n"
-        "*¿Desea que se los comparta?* 😊"
-    )
-
-
-def _palmeras_marcar_intervencion(numero, pregunta):
-    _actualizar_estado_palmeras(
-        numero,
-        palmeras_esperando_gabriel=True,
-        palmeras_requiere_intervencion=True,
-        palmeras_esperando_cliente=False,
-        palmeras_pregunta_pendiente=None,
-        palmeras_etapa="requiere_gabriel"
-    )
-    _palmeras_marcar_crm(numero, "Interesado", f"⚠️ Requiere intervención: {pregunta[:120]}")
-    try:
-        enviar_ntfy_crm(numero, f"⚠️ Requiere intervención de Gabriel: {pregunta}")
-    except Exception as exc:
-        print("PALMERAS NTFY INTERVENCION ERROR:", exc)
-
-
-def _palmeras_quitar_firma_innecesaria(mensaje):
-    """El cliente ya conversa con Gabriel; nunca añadimos una firma al final."""
-    texto = str(mensaje or "").strip()
-    if not texto:
-        return texto
-    # Firma al final de la misma línea: "... — Gabriel" / "... - Gabriel Polero".
-    texto = re.sub(
-        r"\s*[—–-]\s*Gabriel(?:\s+Polero)?\s*[.!]*\s*$",
-        "",
-        texto,
-        flags=re.IGNORECASE,
-    ).rstrip()
-    # Firma en una línea independiente al final.
-    texto = re.sub(
-        r"(?:\n\s*)+(?:[—–-]\s*)?Gabriel(?:\s+Polero)?\s*[.!]*\s*$",
-        "",
-        texto,
-        flags=re.IGNORECASE,
-    ).rstrip()
-    return texto
-
-
-def _palmeras_quitar_cierre_abono_incoherente(mensaje, cliente_ya_compro=False):
-    """Evita preguntas como '¿Desea hacer un abono ahora?' cuando aún es prospecto."""
-    texto = str(mensaje or "").strip()
-    if cliente_ya_compro or not texto:
-        return texto
-    parrafos = re.split(r"\n\s*\n", texto)
-    if not parrafos:
-        return texto
-    ultimo = normalizar_ventas(parrafos[-1])
-    patrones = [
-        "hacer un abono", "realizar un abono", "registrar un abono",
-        "programar un abono", "programarlos", "aplicar un abono",
-        "hacer el abono", "realizar el abono", "abono extra ahora",
-        "mostrar un ejemplo", "afectar la cuota", "simular", "simulacion",
-    ]
-    if "?" in parrafos[-1] and any(p in ultimo for p in patrones):
-        parrafos = parrafos[:-1]
-    return "\n\n".join(p for p in parrafos if p.strip()).strip()
-
-
-def _palmeras_es_consulta_abono_extra(texto_cliente):
-    """Detecta dudas de prospectos sobre aportar dinero extra al capital."""
-    t = normalizar_ventas(texto_cliente or "")
-    claves = (
-        "abonar", "abono a capital", "abonos a capital", "abono extra",
-        "abonos extra", "dinero extra", "pagar de mas", "pagar mas",
-    )
-    return any(k in t for k in claves)
-
-
-def _palmeras_cierre_calido_abonos(mensaje, texto_cliente, cliente_ya_compro=False, historial=None):
-    """
-    Para un prospecto que pregunta por abonos, abre conversación sin ofrecer
-    simulaciones ni asumir que ya tiene un lote financiado.
-    """
-    texto = str(mensaje or "").strip()
-    if cliente_ya_compro or not texto or not _palmeras_es_consulta_abono_extra(texto_cliente):
-        return texto
-
-    # Si esta pregunta ya se hizo recientemente, no la repetimos.
-    historial_texto = " ".join(str(x.get("content") or "") for x in (historial or []))
-    h = normalizar_ventas(historial_texto)
-    if "construir mas adelante" in h and "como inversion" in h:
-        return texto
-
-    # Sustituye cualquier pregunta final generada por la IA; la respuesta factual
-    # se conserva intacta y cerramos con una pregunta segura de descubrimiento.
-    parrafos = [p.strip() for p in re.split(r"\n\s*\n", texto) if p.strip()]
-    if parrafos and "?" in parrafos[-1]:
-        parrafos = parrafos[:-1]
-
-    pregunta = "*¿Su idea sería comprar el terreno para construir más adelante o lo está viendo más como inversión?* 😊"
-    base = "\n\n".join(parrafos).strip()
-    return f"{base}\n\n{pregunta}" if base else pregunta
-
-
-def _palmeras_generar_abierto(numero, texto_cliente):
-    estado = _estado_palmeras(numero)
-    historial = obtener_historial(numero)[-10:]
-    meta_crm = crm_obtener_meta(numero)
-    etapa_crm = str(meta_crm.get("etapa") or "")
-    cliente_ya_compro = etapa_crm.strip().lower() == "venta"
-    visita_actual = dict(estado_visitas.get(numero, {})) if numero in estado_visitas else {}
-    estado_resumido = {
-        "fase": estado.get("palmeras_fase"),
-        "forma_pago": estado.get("palmeras_forma_pago"),
-        "plazo": estado.get("palmeras_plazo"),
-        "etapa": estado.get("palmeras_etapa"),
-        "etapa_crm": etapa_crm,
-        "cliente_ya_compro": cliente_ya_compro,
-        "pregunta_pendiente": estado.get("palmeras_pregunta_pendiente"),
-        "cotizacion_enviada": estado.get("palmeras_cotizacion_enviada"),
-        "video_enviado": estado.get("palmeras_video_enviado"),
-        "visita_agendada": bool(estado.get("palmeras_visita_agendada") or visita_actual.get("cerrada")),
-        "visita_dia": estado.get("palmeras_visita_dia") or visita_actual.get("dia"),
-        "visita_hora": estado.get("palmeras_visita_hora") or visita_actual.get("hora"),
-        "visita_punto": estado.get("palmeras_visita_punto") or visita_actual.get("punto"),
-        "reserva_en_curso": bool(estado.get("palmeras_reserva_en_curso")),
-        "reserva_fase": estado.get("palmeras_reserva_fase"),
-    }
-    instrucciones = f"""
-Usted ES Gabriel Polero atendiendo personalmente por WhatsApp.
-TRATO OBLIGATORIO: SIEMPRE use usted, le, su, sus. NUNCA tú, vos, te, ti, contigo, puedes, quieres, tienes, querés, podés o tenés.
-No diga que es IA, bot o asistente. No diga que consultará con Gabriel: usted es Gabriel.
-
-DATOS OFICIALES DE PALMERAS SAN MIGUEL:
-{PALMERAS_FICHA_OFICIAL}
-
-ESTADO COMERCIAL ACTUAL:
-{json.dumps(estado_resumido, ensure_ascii=False)}
-
-REGLAS DE CONVERSACIÓN:
-- El mensaje actual SIEMPRE tiene prioridad. El cliente puede cambiar de tema, fase, forma de pago, visita o reserva en cualquier momento.
-- ESTADO COMERCIAL y TEMA ACTUAL son cosas distintas. Haber agendado una visita, estar reservando o haber avanzado en la compra NUNCA cierra la conversación. El cliente puede seguir haciendo todas las consultas que quiera.
-- Responda primero exactamente lo que el cliente acaba de preguntar. No obligue al cliente a volver al paso anterior del protocolo.
-- PRINCIPIO DE RESPUESTA MINIMA SUFICIENTE: antes de escribir, identifique la pregunta o intención ACTUAL y responda solo con la información necesaria para resolverla. Que un dato sea verdadero NO significa que deba incluirlo.
-- Puede añadir como máximo UN detalle relacionado si realmente ayuda a entender la respuesta o evita una confusión. No agregue datos solo "por si acaso".
-- NO mezcle temas no solicitados. Por ejemplo, si preguntan por financiamiento o comparan financiamiento vs. semicontado, NO agregue construcción, servicios, documentos, compra desde EE. UU., escrituración, reserva o amenidades salvo que el cliente también haya preguntado por alguno de esos temas o sea indispensable para responder.
-- Si el cliente pide una comparación entre dos modalidades, compare SOLO las diferencias relevantes entre esas modalidades: enganche, plazo, interés, cuotas y abonos cuando correspondan. Termine con una pregunta breve que ayude a elegir o avanzar.
-- Si el cliente expresa una decisión y además hace una pregunta en el mismo bloque, no envíe primero una ficha completa de la decisión y luego otra respuesta. Integre ambos mensajes en UNA respuesta coherente centrada en la pregunta actual.
-- Solo entregue una explicación amplia del proyecto cuando el cliente pida explícitamente "toda la información", "explíqueme todo", "qué incluye" o una solicitud equivalente.
-- Evite convertir cada respuesta en una ficha técnica. Una pregunta sencilla merece una respuesta sencilla. Una comparación puede ser un poco más completa, pero siempre enfocada.
-- Si visita_agendada es true, conserve día, hora y punto de encuentro en memoria. Responda dudas posteriores normalmente y NO vuelva a ofrecer, pedir ni agendar otra visita, salvo que el cliente expresamente quiera cambiarla, cancelarla, confirmar los datos o pregunte por la cita.
-- Si la etapa es coordinando_punto_visita, significa que el día y la hora YA están definidos y solo falta el punto. Si el cliente hace una pregunta distinta antes de elegir el punto, responda primero esa pregunta normalmente y conserve pendiente el punto; NO repita la coordinación de visita en la misma respuesta salvo que resulte natural.
-- Una cita o reserva NUNCA limita qué puede preguntar el cliente. Después de cualquiera de esas acciones, siga contestando cualquier consulta respaldada por la ficha oficial. Si no sabe o no está seguro, active intervención en vez de inventar.
-- Si reserva_en_curso es true, responda dudas posteriores normalmente. No vuelva a explicar ni ofrecer la reserva en cada respuesta. No diga que un lote específico ya quedó reservado o disponible mientras esa disponibilidad no haya sido confirmada.
-- Después de una visita agendada o una reserva iniciada, use TODA la ficha oficial para contestar preguntas de precios, pagos, servicios, construcción, agua, requisitos, escrituras, ubicación y amenidades igual que antes.
-- NUNCA repita ni copie la pregunta del cliente como primera línea, encabezado o cita. Empiece directamente con la respuesta.
-- No vuelva a mandar toda la información del proyecto.
-- No interrogue. Como máximo UNA pregunta al final. La pregunta final es OPCIONAL: si no aporta valor, termine la respuesta sin preguntar nada.
-- Antes de hacer una pregunta final, compruebe que tenga sentido con la etapa real del cliente y con lo que ya se sabe de la conversación.
-- Si cliente_ya_compro es false, NUNCA pregunte si desea hacer, registrar, programar o aplicar un abono ahora. El cliente todavía está evaluando la compra. Puede explicar cómo funcionan los abonos, pero no actuar como si ya tuviera una deuda activa.
-- Si un PROSPECTO pregunta por abonos a capital o por poner dinero extra, NO ofrezca simulaciones, ejemplos de amortización ni cálculos de cómo cambiaría la cuota. Después de responder la duda, la pregunta preferida para mantener viva la conversación es: "¿Su idea sería comprar el terreno para construir más adelante o lo está viendo más como inversión? 😊". Esa pregunta descubre la intención del cliente sin inventar datos.
-- En financiamiento, no diga "simulación" ni "ejemplo de cuotas" cuando ya existen cuotas oficiales cargadas por plazo. Si necesita continuar la conversación, pregunte simplemente qué plazo desea revisar entre 2 y 8 años y responda con la cuota oficial disponible.
-- No invente procedimientos que no estén en la ficha (por ejemplo, no ofrezca explicar "cómo registrar un abono" si ese procedimiento no está documentado).
-- No ofrezca ejecutar acciones que el sistema no puede realizar directamente, como cobrar, registrar pagos o aplicar abonos.
-- Una pregunta técnica o informativa NO es por sí sola una señal para pedir visita. Responda y deje respirar la conversación.
-- FORMATO VISUAL OBLIGATORIO: haga que cada respuesta informativa sea fácil y agradable de leer en WhatsApp.
-- NUNCA entregue un bloque largo con varios datos pegados. Separe por temas con líneas en blanco: por ejemplo financiamiento, abonos, reserva, servicios, ubicación o construcción.
-- Si una respuesta contiene 3 o más datos concretos, organícelos visualmente en líneas cortas o pequeños bloques. El cliente debe poder localizar montos, plazos y condiciones en segundos desde el celular.
-- Use emojis como señales visuales, no solo como decoración: 💳 financiamiento, 💰 montos/abonos, 🔑 reserva, 📍 ubicación, 💧 agua, ⚡ energía, 🏡 proyecto/amenidades, 📄 documentos.
-- Use *negritas de WhatsApp* con UN solo asterisco para destacar de 2 a 5 datos realmente importantes: precios, montos, plazos, nombres de fase, servicios o restricciones relevantes. No use **doble asterisco**.
-- Use normalmente entre 2 y 5 emojis naturales por respuesta cuando el contenido lo permita. Reparta los emojis con intención (por ejemplo 🏡 💰 💧 ✅ 📍 🌳), sin poner uno al final de cada oración ni saturar el mensaje.
-- Cuando enumere 3 o más características o servicios, prefiera una lista breve y visual con viñetas o emojis, en lugar de un párrafo pesado.
-- Si hay una pregunta final, puede ponerla en *negrita* cuando ayude a que el cliente identifique claramente el siguiente paso.
-- Mantenga párrafos cortos y saltos de línea. La prioridad es que el cliente pueda identificar rápidamente la información importante al leer desde el celular.
-- Revise ortografía, concordancia y sentido antes de responder. Evite frases poco naturales o ambiguas.
-- Responda con calidez y lenguaje cotidiano de un asesor por WhatsApp; evite sonar técnico, jurídico o como manual salvo que el cliente realmente pregunte algo técnico.
-- NUNCA firme los mensajes con "Gabriel", "Gabriel Polero", "— Gabriel", "- Gabriel" ni despedidas de firma. El cliente ya está hablando directamente con Gabriel desde el inicio.
-- No envíe enlaces de Google Maps.
-- No invente disponibilidad, descuentos superiores al 3%, plazos legales, fechas exactas ni datos que no aparezcan en la ficha.
-- Si el cliente muestra intención alta, avance hacia visita o reserva sin obligarlo a seguir el protocolo inicial.
-- Solo sugiera visita cuando el mensaje actual muestre interés claro en conocer el proyecto, una reacción positiva a una propuesta económica o intención de avanzar. No sugiera visita automáticamente después de preguntas técnicas.
-- Si existe una pregunta pendiente, puede retomarla solamente si resulta natural después de responder el mensaje actual.
-- Si el cliente dice que lo pensará, respete su decisión y no presione.
-
-IMPORTANTE SOBRE DATOS DESCONOCIDOS:
-Si la pregunta NO puede responderse de forma segura usando únicamente la ficha oficial y el historial, NO invente ni complete por intuición.
-Esto aplica especialmente a disponibilidad de lotes específicos, aprobaciones especiales, fechas exactas no indicadas, procesos legales no documentados, tarifas no indicadas o cualquier dato del que no esté seguro.
-En ese caso establezca "puede_responder" en false y escriba una respuesta natural en primera persona como:
-"Permítame confirmarle ese detalle para darle la información correcta 😊."
-El sistema avisará a Gabriel para intervención. Aunque exista una duda pendiente de Gabriel, el cliente puede seguir haciendo otras preguntas y usted debe responder las que sí estén respaldadas por la ficha.
-
-Devuelva EXCLUSIVAMENTE JSON válido con este formato:
-{{"puede_responder": true, "mensaje": "texto para el cliente", "sugerir_visita": false}}
-"""
-    mensajes = []
-    for item in historial:
-        if item.get("role") in {"user", "assistant"}:
-            mensajes.append({"role": item["role"], "content": str(item.get("content") or "")})
-    if not (
-        mensajes
-        and mensajes[-1].get("role") == "user"
-        and str(mensajes[-1].get("content") or "").strip() == str(texto_cliente or "").strip()
-    ):
-        mensajes.append({"role": "user", "content": texto_cliente})
-    try:
-        r = client.responses.create(model="gpt-5-mini", instructions=instrucciones, input=mensajes)
-        raw = (r.output_text or "").strip()
-        m = re.search(r"\{.*\}", raw, flags=re.S)
-        data = json.loads(m.group(0) if m else raw)
-        mensaje = eliminar_eco_pregunta_cliente(str(data.get("mensaje") or "").strip(), texto_cliente)
-        mensaje = formalizar_trato_usted(mensaje)
-        mensaje = _palmeras_quitar_firma_innecesaria(mensaje)
-        mensaje = _palmeras_quitar_cierre_abono_incoherente(mensaje, cliente_ya_compro=cliente_ya_compro)
-        mensaje = _palmeras_cierre_calido_abonos(
-            mensaje,
-            texto_cliente,
-            cliente_ya_compro=cliente_ya_compro,
-            historial=historial,
-        )
-        return bool(data.get("puede_responder", True)), mensaje, bool(data.get("sugerir_visita", False))
-    except Exception as exc:
-        print("PALMERAS IA ABIERTA ERROR:", exc)
-        return False, "Permítame confirmarle ese detalle para darle la información correcta 😊.", False
-
-
-def _palmeras_es_pregunta_conocida_especial(texto):
-    """Intenciones que deben disparar una acción técnica antes de la IA abierta."""
-    return {
-        "ubicacion": pide_ubicacion(texto),
-        "fotos": pide_fotos(texto),
-        "videos": pide_videos(texto),
-        "plano": pide_plano(texto),
-        "visita": detectar_intencion_visita(texto),
-        "reserva": any(x in normalizar_ventas(texto) for x in ["reservar", "reserva", "apartar", "apartarlo"]),
-        "disponibilidad": _palmeras_pregunta_disponibilidad(texto),
-    }
-
-
-def manejar_nuevo_cerebro_palmeras(numero, texto, message_id=None):
-    """
-    Motor principal de Palmeras. Devuelve True cuando el mensaje quedó atendido.
-    Toda conversación de Palmeras entra aquí antes de los flujos comerciales antiguos.
-    """
-    if not texto:
-        return False
-    if _palmeras_menciona_varios_proyectos(texto):
-        return False
-
-    estado = _estado_palmeras(numero)
-    estado["proyecto_actual"] = "palmeras"
-    proyecto_activo[numero] = "palmeras"
-    marcar_cliente_presentado(numero)
-
-    # Guardamos el mensaje real una sola vez dentro de este nuevo motor.
-    guardar_mensaje(numero, "user", texto)
-
-    especiales = _palmeras_es_pregunta_conocida_especial(texto)
-    intencion = _palmeras_intencion_actual(texto)
-
-    # Capturamos decisiones explícitas ANTES de ejecutar una acción de mayor prioridad.
-    # Así, un bloque como "Fase 2, contado y quiero ir el sábado" no pierde Fase 2/contado
-    # aunque la visita sea lo primero que atendamos.
-    if intencion.get("fase_elegida") in {"fase_1", "fase_2"}:
-        estado["palmeras_fase"] = intencion["fase_elegida"]
-    if intencion.get("modalidad_elegida") in {"financiamiento", "semicontado", "contado"}:
-        estado["palmeras_forma_pago"] = intencion["modalidad_elegida"]
-    if intencion.get("plazo"):
-        estado["palmeras_plazo"] = intencion["plazo"]
-    persistir_cliente(numero)
-
-    # Intención alta siempre rompe el protocolo. Si ya estamos coordinando una visita,
-    # basta con que el cliente aporte un día/fecha u hora; no tiene que repetir "quiero visitar".
-    continuacion_visita = (
-        estado.get("palmeras_etapa") in {"coordinando_visita", "coordinando_punto_visita", "visita_agendada"}
-        and _palmeras_mensaje_aporta_dato_visita(texto)
-    )
-    if especiales["visita"] or continuacion_visita:
-        respuesta, cerrada = _palmeras_manejar_visita(numero, texto)
-        _palmeras_enviar_y_recordar(numero, respuesta)
-        return True
-
-    if especiales["reserva"]:
-        respuesta = _palmeras_respuesta_reserva(numero, texto)
-        _palmeras_enviar_y_recordar(numero, respuesta)
-        return True
-
-    if especiales["disponibilidad"]:
-        respuesta = "Permítame confirmarle la disponibilidad actual para darle una opción correcta 😊."
-        _palmeras_marcar_intervencion(numero, texto)
-        _palmeras_enviar_y_recordar(numero, respuesta)
-        return True
-
-    if especiales["ubicacion"]:
-        respuesta = (
-            "Claro 😊 *Palmeras San Miguel* está en *Zona 5 de Retalhuleu, camino a La Verde* 📍.\n\n"
-            "Si desea conocerlo personalmente, podemos encontrarnos directamente en el proyecto o en *Centro Comercial La Trinidad*."
-        )
-        if not cita_ya_cerrada(numero):
-            respuesta += "\n\n*¿Le gustaría que coordinemos una visita?*"
-            _actualizar_estado_palmeras(numero, palmeras_esperando_cliente=True, palmeras_pregunta_pendiente="si desea coordinar visita")
-        _palmeras_enviar_y_recordar(numero, respuesta)
-        return True
-
-    if especiales["plano"]:
-        fase = _palmeras_detectar_fase(texto)
-        _palmeras_enviar_y_recordar(numero, "Claro 😊 Le comparto el plano de *Palmeras San Miguel* para que pueda revisar la distribución.")
-        _palmeras_enviar_planos_protocolo(numero, fase if fase in {"fase_1", "fase_2"} else None)
-        return True
-
-    if especiales["fotos"] or especiales["videos"]:
-        if especiales["fotos"]:
-            _palmeras_enviar_y_recordar(numero, "Claro 😊 Le comparto algunos *renders de referencia* de cómo quedarán los espacios y amenidades de Palmeras San Miguel.")
-            _palmeras_enviar_fotos_protocolo(numero)
-        if especiales["videos"]:
-            _palmeras_enviar_video_protocolo(numero, contexto="general")
-        return True
-
-    # Si el cliente ya pidió que confirmemos algo, puede seguir preguntando otras cosas;
-    # el bot no inventa la respuesta pendiente, pero sí atiende preguntas conocidas.
-
-    entrada = _palmeras_detectar_entrada(texto)
-    etapa = estado.get("palmeras_etapa")
-    fase_directa = _palmeras_detectar_fase(texto)
-    fase_elegida = intencion.get("fase_elegida")
-    modalidad_directa = intencion.get("modalidad")
-    modalidad_elegida = intencion.get("modalidad_elegida")
-    consulta_monto_modalidad = intencion.get("consulta_monto_modalidad")
-    plazo_directo = intencion.get("plazo")
-
-    # Si llegó por la pregunta de RESERVA y aceptó conocer el proyecto,
-    # recién aquí presentamos fases + planos. La reserva sigue siendo el objetivo.
-    if etapa == "reserva_esperando_planos" and _palmeras_respuesta_afirmativa(texto):
-        _palmeras_enviar_y_recordar(numero, _palmeras_respuesta_presentacion_reserva())
-        _palmeras_enviar_planos_protocolo(numero)
-        _actualizar_estado_palmeras(
-            numero,
-            palmeras_etapa="reserva_esperando_fase",
-            palmeras_reserva_en_curso=True,
-            palmeras_esperando_cliente=True,
-            palmeras_pregunta_pendiente="en qué fase desea reservar",
-        )
-        _palmeras_enviar_y_recordar(
-            numero,
-            "*¿En cuál de las dos fases le gustaría realizar su reserva: Fase 1 o Fase 2?* 🔑",
-        )
-        return True
-
-    # ========================================================
-    # PRIORIDADES GENERALES DE CONVERSACIÓN
-    # ========================================================
-    # El protocolo es una ruta sugerida, no una cárcel. Una decisión nueva del
-    # cliente tiene prioridad sin importar en qué etapa venía la conversación.
-
-    # Cambio/elección explícita de fase durante una conversación ya avanzada.
-    if fase_elegida in {"fase_1", "fase_2"} and etapa not in {None, "inicio", "esperando_fase", "reserva", "reserva_esperando_fase", "reserva_esperando_planos"}:
-        fase_anterior = estado.get("palmeras_fase")
-        _actualizar_estado_palmeras(numero, palmeras_fase=fase_elegida)
-
-        # Si en el mismo mensaje también escogió modalidad o plazo, respondemos todo junto.
-        modalidad_para_propuesta = modalidad_elegida or consulta_monto_modalidad
-        if modalidad_para_propuesta or plazo_directo:
-            _palmeras_aplicar_propuesta(
-                numero,
-                fase_elegida,
-                modalidad_para_propuesta or "financiamiento",
-                plazo_directo
-            )
-            return True
-
-        # Si solamente cambió de fase, evitamos mensajes de sistema como
-        # "la mantengo como referencia". Respondemos con algo útil y natural.
-        nombre_fase = "Fase 1" if fase_elegida == "fase_1" else "Fase 2"
-        modalidad_actual = estado.get("palmeras_forma_pago")
-        plazo_actual = estado.get("palmeras_plazo")
-
-        # Si ya veníamos revisando una modalidad concreta, mostramos la misma
-        # modalidad aplicada a la nueva fase: es la continuación más natural.
-        if modalidad_actual in {"financiamiento", "semicontado", "contado"}:
-            _palmeras_aplicar_propuesta(
-                numero,
-                fase_elegida,
-                modalidad_actual,
-                plazo_actual if modalidad_actual == "financiamiento" else None,
-            )
-            return True
-
-        _actualizar_estado_palmeras(
-            numero,
-            palmeras_etapa="conversacion_abierta",
-            palmeras_esperando_cliente=True,
-            palmeras_pregunta_pendiente="qué desea revisar de la fase elegida"
-        )
-        if fase_elegida == "fase_1":
-            respuesta_fase = (
-                "Claro 😊 La *Fase 1* tiene terrenos de *8x16 m* desde *Q67,200*, "
-                "con piscina y área verde 🏊🌳.\n\n"
-                "*¿Qué le gustaría revisar de esta opción?*"
-            )
-        else:
-            respuesta_fase = (
-                "Claro 😊 La *Fase 2* tiene terrenos de *8x16 m* desde *Q70,400*, "
-                "con área verde y acceso interno a la piscina de Fase 1 🌳🏊.\n\n"
-                "*¿Qué le gustaría revisar de esta opción?*"
-            )
-        _palmeras_enviar_y_recordar(numero, respuesta_fase)
-        return True
-
-    # Cambio de modalidad en CUALQUIER etapa cuando ya conocemos la fase.
-    # No depende de frases exactas como "me interesa": basta con que exista una
-    # única modalidad clara en el mensaje.
-    fase_contexto = estado.get("palmeras_fase")
-    modalidad_para_propuesta = modalidad_elegida or consulta_monto_modalidad
-    if (
-        fase_contexto in {"fase_1", "fase_2"}
-        and modalidad_para_propuesta in {"financiamiento", "semicontado", "contado", "todas"}
-        and etapa not in {None, "inicio", "esperando_fase"}
-    ):
-        _palmeras_aplicar_propuesta(numero, fase_contexto, modalidad_para_propuesta, plazo_directo)
-        return True
-
-    # Un plazo concreto siempre se interpreta como financiamiento si la fase ya está definida.
-    if (
-        fase_contexto in {"fase_1", "fase_2"}
-        and plazo_directo
-        and etapa not in {None, "inicio", "esperando_fase"}
-        and not intencion.get("compara_modalidades")
-    ):
-        _palmeras_aplicar_propuesta(numero, fase_contexto, "financiamiento", plazo_directo)
-        return True
-
-    # Si compara dos modalidades (ej. "contado o financiamiento"), NO escogemos una
-    # por él. Dejamos que la conversación abierta responda la comparación.
-
-    # Si el cliente ya viene diciendo fase + forma/plazo, no lo obligamos a
-    # recorrer preguntas que ya respondió. Saltamos directamente a su propuesta.
-    modalidad_inicial = modalidad_elegida or consulta_monto_modalidad
-    if not etapa and fase_elegida in {"fase_1", "fase_2"} and (modalidad_inicial or plazo_directo):
-        modalidad_inicial = modalidad_inicial or "financiamiento"
-        _palmeras_aplicar_propuesta(numero, fase_elegida, modalidad_inicial, plazo_directo)
-        return True
-
-    # Si simplemente eligió una fase desde el primer mensaje, avanzamos a formas de pago.
-    if not etapa and fase_elegida in {"fase_1", "fase_2"}:
-        fase_directa = fase_elegida
-        _actualizar_estado_palmeras(
-            numero,
-            palmeras_fase=fase_directa,
-            palmeras_etapa="esperando_modalidad",
-            palmeras_esperando_cliente=True,
-            palmeras_pregunta_pendiente="qué modalidad de pago le interesa"
-        )
-        _palmeras_enviar_y_recordar(numero, _palmeras_explicar_modalidades())
-        video_enviado = _palmeras_enviar_video_protocolo(numero, contexto="pagos")
-        _actualizar_estado_palmeras(numero, palmeras_video_enviado=bool(video_enviado))
-        if not video_enviado:
-            print("PALMERAS: no fue posible enviar el video de referencia; no se anunció al cliente para evitar incoherencias.")
-        return True
-
-    # Inicio genérico o entrada desde FAQ de información.
-    if entrada == "informacion" and etapa in {None, "inicio"}:
-        respuesta = _palmeras_generar_bienvenida(numero, texto, "informacion")
-        _palmeras_enviar_y_recordar(numero, respuesta)
-        _palmeras_enviar_planos_protocolo(numero)
-        _actualizar_estado_palmeras(
-            numero,
-            palmeras_etapa="esperando_fase",
-            palmeras_esperando_cliente=True,
-            palmeras_pregunta_pendiente="qué fase le parece más atractiva",
-            palmeras_esperando_gabriel=False,
-            palmeras_requiere_intervencion=False
-        )
-        _palmeras_marcar_crm(numero, "Información enviada", "Esperando elección de Fase 1 o Fase 2")
-        return True
-
-    # FAQ: precios y formas de pago.
-    if entrada == "precios_pagos" and etapa in {None, "inicio", "esperando_fase"}:
-        respuesta = _palmeras_generar_bienvenida(numero, texto, "precios_pagos")
-        _palmeras_enviar_y_recordar(numero, respuesta)
-        _palmeras_enviar_planos_protocolo(numero)
-        _actualizar_estado_palmeras(
-            numero,
-            palmeras_etapa="esperando_fase",
-            palmeras_esperando_cliente=True,
-            palmeras_pregunta_pendiente="qué fase le interesa más"
-        )
-        _palmeras_marcar_crm(numero, "Información enviada", "Esperando elección de fase para mostrar plan de pago")
-        return True
-
-    # Entrada explícita de reserva aunque detector semántico no la capturó arriba.
-    if entrada == "reserva":
-        _palmeras_enviar_y_recordar(numero, _palmeras_respuesta_reserva(numero, texto))
-        return True
-
-    # Esperando que escoja fase.
-    if etapa in {"esperando_fase", "reserva", "reserva_esperando_fase"}:
-        fase_mencionada = _palmeras_detectar_fase(texto)
-        fase = _palmeras_es_eleccion_fase(texto)
-        if fase_mencionada == "ambas" and not _palmeras_tiene_pregunta_real(texto):
-            fase = "ambas"
-        if fase == "ambas":
-            respuesta = (
-                "Claro 😊 Puede revisar ambas. La *Fase 1* está en Q67,200 y la *Fase 2* en Q70,400.\n\n"
-                "Para continuar con una cotización concreta, *¿cuál desea que revisemos primero?*"
-            )
-            _palmeras_enviar_y_recordar(numero, respuesta)
-            _actualizar_estado_palmeras(numero, palmeras_esperando_cliente=True, palmeras_pregunta_pendiente="qué fase revisar primero")
-            return True
-        if fase in {"fase_1", "fase_2"}:
-            venia_de_reserva = etapa == "reserva_esperando_fase" or bool(estado.get("palmeras_reserva_en_curso"))
-            if venia_de_reserva:
-                _actualizar_estado_palmeras(
-                    numero,
-                    palmeras_reserva_en_curso=True,
-                    palmeras_reserva_fase=fase,
-                )
-                _palmeras_marcar_crm(
-                    numero,
-                    "Interesado",
-                    f"🔑 Quiere reservar {'Fase 1' if fase == 'fase_1' else 'Fase 2'}; esperando forma de pago",
-                )
-            modalidad_mismo_bloque = _palmeras_es_eleccion_modalidad(texto) or _palmeras_consulta_monto_modalidad(texto)
-            plazo_mismo_bloque = _palmeras_detectar_plazo(texto)
-
-            if modalidad_mismo_bloque or plazo_mismo_bloque:
-                modalidad_mismo_bloque = modalidad_mismo_bloque or "financiamiento"
-                _palmeras_aplicar_propuesta(numero, fase, modalidad_mismo_bloque, plazo_mismo_bloque)
-                return True
-
-            _actualizar_estado_palmeras(
-                numero,
-                palmeras_fase=fase,
-                palmeras_etapa="esperando_modalidad",
-                palmeras_esperando_cliente=True,
-                palmeras_pregunta_pendiente="qué modalidad de pago le interesa",
-                palmeras_esperando_gabriel=False,
-                palmeras_requiere_intervencion=False
-            )
-            if not venia_de_reserva:
-                _palmeras_marcar_crm(numero, "Interesado", f"Eligió {'Fase 1' if fase == 'fase_1' else 'Fase 2'}; esperando modalidad de pago")
-            respuesta = _palmeras_explicar_modalidades()
-            _palmeras_enviar_y_recordar(numero, respuesta)
-            video_enviado = _palmeras_enviar_video_protocolo(numero, contexto="pagos")
-            _actualizar_estado_palmeras(numero, palmeras_video_enviado=bool(video_enviado))
-            if not video_enviado:
-                print("PALMERAS: no fue posible enviar el video de referencia después de mostrar las modalidades.")
-            return True
-
-        # Responder pregunta lateral sin perder la fase pendiente.
-        puede, respuesta, _ = _palmeras_generar_abierto(numero, texto)
-        if not puede:
-            _palmeras_marcar_intervencion(numero, texto)
-        elif estado.get("palmeras_pregunta_pendiente") and "?" not in respuesta[-5:]:
-            respuesta += "\n\nY para orientarle mejor, *¿cuál fase le parece más atractiva: Fase 1 o Fase 2?*"
-        _palmeras_enviar_y_recordar(numero, respuesta)
-        return True
-
-    # Esperando modalidad después del video.
-    if etapa == "esperando_modalidad":
-        modalidad = _palmeras_es_eleccion_modalidad(texto) or _palmeras_consulta_monto_modalidad(texto)
-        # Si responde simplemente "financiamiento", "contado" o "sin intereses", es una elección.
-        if not modalidad and not _palmeras_tiene_pregunta_real(texto):
-            modalidad = _palmeras_modalidad_unica(texto)
-        fase = estado.get("palmeras_fase")
-        if modalidad:
-            _palmeras_aplicar_propuesta(numero, fase, modalidad, _palmeras_detectar_plazo(texto))
-            return True
-
-        if _palmeras_reaccion_positiva(texto):
-            respuesta = (
-                "Me alegra que le haya gustado 😊🏡.\n\n"
-                "Y de las formas de pago que le comenté, *¿cuál le gustaría revisar: financiamiento, 1 año sin intereses o contado?*"
-            )
-            _palmeras_enviar_y_recordar(numero, respuesta)
-            return True
-
-        puede, respuesta, _ = _palmeras_generar_abierto(numero, texto)
-        if not puede:
-            _palmeras_marcar_intervencion(numero, texto)
-        else:
-            if estado.get("palmeras_pregunta_pendiente") and not any(x in normalizar_ventas(respuesta) for x in ["financiamiento", "sin intereses", "contado"]):
-                respuesta += "\n\nCuando guste, podemos continuar con la forma de pago que más le interese."
-        _palmeras_enviar_y_recordar(numero, respuesta)
-        return True
-
-    # Propuesta ya enviada: primero respetar cualquier CAMBIO DE MODALIDAD que el
-    # cliente exprese. Ej.: "mejor me interesa el plan sin intereses".
-    # Esto tiene prioridad sobre interpretar "me interesa" como una reacción positiva
-    # o intentar llevarlo a visita.
-    if etapa in {"propuesta_enviada", "conversacion_abierta", "requiere_gabriel"}:
-        fase = estado.get("palmeras_fase")
-        modalidad = estado.get("palmeras_forma_pago")
-        nueva_modalidad = _palmeras_es_eleccion_modalidad(texto) or _palmeras_consulta_monto_modalidad(texto)
-        nuevo_plazo = _palmeras_detectar_plazo(texto)
-
-        if fase in {"fase_1", "fase_2"} and nueva_modalidad:
-            _palmeras_aplicar_propuesta(numero, fase, nueva_modalidad, nuevo_plazo)
-            return True
-
-        plazo = nuevo_plazo
-        if modalidad in {"financiamiento", "todas"} and plazo and fase in PALMERAS_CUOTAS_FINANCIAMIENTO:
-            cuota = PALMERAS_CUOTAS_FINANCIAMIENTO[fase].get(plazo)
-            if cuota:
-                _actualizar_estado_palmeras(numero, palmeras_plazo=plazo, palmeras_etapa="conversacion_abierta", palmeras_pregunta_pendiente="si desea conocer el proyecto")
-                respuesta = (
-                    f"Claro 😊 En *{'Fase 1' if fase == 'fase_1' else 'Fase 2'}*, a *{plazo} años* la cuota es de aproximadamente *{cuota} mensuales*, con enganche de Q6,000.\n\n"
-                    "Si ese rango de cuota le parece cómodo, lo ideal es que conozca el proyecto personalmente. *¿Qué día tendría disponibilidad para visitarlo?*"
-                )
-                _palmeras_enviar_y_recordar(numero, respuesta)
-                return True
-
-        if _palmeras_reaccion_positiva(texto) and estado.get("palmeras_cotizacion_enviada") and not cita_ya_cerrada(numero):
-            _actualizar_estado_palmeras(numero, palmeras_etapa="conversacion_abierta", palmeras_esperando_cliente=True, palmeras_pregunta_pendiente="día para visitar")
-            respuesta = (
-                "Me alegra que la opción le haya parecido bien 😊🏡. Lo ideal sería que conozca *Palmeras San Miguel* personalmente para que pueda ver la ubicación y las fases.\n\n"
-                "*¿Qué día tendría disponibilidad para visitarlo?*"
-            )
-            _palmeras_enviar_y_recordar(numero, respuesta)
-            return True
-
-    # Preguntas comunes / conversación abierta con razonamiento de IA.
-    etapa_antes_de_pregunta_abierta = estado.get("palmeras_etapa")
-    puede, respuesta, sugerir_visita = _palmeras_generar_abierto(numero, texto)
-    if not puede:
-        _palmeras_marcar_intervencion(numero, texto)
-    else:
-        # Si estábamos coordinando una visita y el cliente hizo una pregunta lateral,
-        # respondemos esa pregunta sin borrar el día/hora que ya se había conversado.
-        if etapa_antes_de_pregunta_abierta in {"coordinando_visita", "coordinando_punto_visita"}:
-            _actualizar_estado_palmeras(
-                numero,
-                palmeras_etapa=etapa_antes_de_pregunta_abierta,
-                palmeras_esperando_gabriel=False,
-                palmeras_requiere_intervencion=False,
-            )
-        elif estado.get("palmeras_visita_agendada") or cita_ya_cerrada(numero):
-            # La conversación sigue abierta, pero la cita permanece como estado comercial
-            # para no volver a pedir día/hora ni ofrecer otra visita por accidente.
-            _actualizar_estado_palmeras(
-                numero,
-                palmeras_etapa="visita_agendada",
-                palmeras_visita_agendada=True,
-                palmeras_esperando_gabriel=False,
-                palmeras_requiere_intervencion=False,
-            )
-        elif estado.get("palmeras_reserva_en_curso"):
-            _actualizar_estado_palmeras(
-                numero,
-                palmeras_etapa="reserva",
-                palmeras_esperando_gabriel=False,
-                palmeras_requiere_intervencion=False,
-            )
-        else:
-            _actualizar_estado_palmeras(numero, palmeras_etapa="conversacion_abierta", palmeras_esperando_gabriel=False, palmeras_requiere_intervencion=False)
-        # No convierta cada respuesta técnica en una invitación a visitar.
-        # Solo aceptamos la sugerencia de la IA si el MENSAJE ACTUAL muestra una
-        # señal comercial clara.
-        señal_visita = _palmeras_texto_tiene_intencion_alta(texto) or _palmeras_reaccion_positiva(texto)
-        if sugerir_visita and señal_visita and not cita_ya_cerrada(numero) and "?" not in respuesta[-8:]:
-            respuesta += "\n\n*¿Le gustaría que coordinemos una visita al proyecto?*"
-            _actualizar_estado_palmeras(numero, palmeras_esperando_cliente=True, palmeras_pregunta_pendiente="si desea visitar")
-    _palmeras_enviar_y_recordar(numero, respuesta)
-    return True
-
-
-# ============================================================
-# SEGUIMIENTO AUTOMATICO CONTEXTUAL - 10 MIN + 1 / 3 / 5 / 7
-# ============================================================
-# 10 minutos y Día 1 se envían dentro de la ventana normal de WhatsApp.
-# Para Día 3 / 5 / 7, WhatsApp exige plantillas aprobadas por Meta. Si las
-# variables de entorno no están configuradas, esos envíos se omiten de forma
-# segura y quedan registrados en logs para activarlos después.
-
-SEGUIMIENTO_10_MIN = 10 * 60
-SEGUIMIENTO_DIA1 = 23 * 60 * 60  # 23h para permanecer dentro de la ventana de 24h.
-SEGUIMIENTO_DIA3_ESPERA = 2 * 24 * 60 * 60
-SEGUIMIENTO_DIA5_ESPERA = 2 * 24 * 60 * 60
-SEGUIMIENTO_DIA7_ESPERA = 2 * 24 * 60 * 60
-
-WA_TEMPLATE_LANGUAGE = os.getenv("WA_TEMPLATE_LANGUAGE", "es").strip() or "es"
-WA_TEMPLATE_SEGUIMIENTO_DIA3 = os.getenv("WA_TEMPLATE_SEGUIMIENTO_DIA3", "").strip()
-WA_TEMPLATE_SEGUIMIENTO_DIA5 = os.getenv("WA_TEMPLATE_SEGUIMIENTO_DIA5", "").strip()
-WA_TEMPLATE_SEGUIMIENTO_DIA7 = os.getenv("WA_TEMPLATE_SEGUIMIENTO_DIA7", "").strip()
+# PRODUCCION: seguimiento después de 8 horas sin respuesta.
+SEGUIMIENTO_SEGUNDOS = 8 * 60 * 60
+
+SEGUIMIENTO_TEXTO = (
+    "Hola 👋😊 Solo paso por aquí.\n\n"
+    "Quizá no ha tenido tiempo de revisar con calma la información de los terrenos "
+    "que le envié 🏡. No hay problema.\n\n"
+    "Cuando pueda verla, escríbame. Si alguna opción le interesa, con gusto le ayudo "
+    "a hacer números para buscar una cuota cómoda para usted ✅\n\n"
+    "👉 ¿Qué cuota mensual le quedaría cómoda?"
+)
 
 seguimiento_version = {}
 lock_seguimiento = Lock()
@@ -10287,290 +8258,45 @@ def cancelar_seguimiento(numero):
     """Invalida cualquier seguimiento pendiente de ese cliente."""
     if not numero:
         return
+
     with lock_seguimiento:
         seguimiento_version[numero] = seguimiento_version.get(numero, 0) + 1
 
 
-def _seguimiento_debe_detenerse(numero, version):
-    with lock_seguimiento:
-        if seguimiento_version.get(numero) != version:
-            return True
-    if crm_esta_manual(numero):
-        return True
-
-    meta = crm_obtener_meta(numero)
-    # Una reserva o una visita NO cierran la conversación. Solo detenemos
-    # definitivamente la secuencia si el lead ya está vendido/perdido.
-    if meta.get("etapa") in {"Venta", "Perdido"}:
-        return True
-
-    estado = obtener_estado_conversacion(numero)
-    if estado.get("palmeras_esperando_gabriel") or estado.get("palmeras_requiere_intervencion"):
-        return True
-    if estado.get("altamira_esperando_gabriel") or estado.get("altamira_requiere_intervencion"):
-        return True
-
-    # En Palmeras y Altamira solo damos seguimiento automático cuando el BOT dejó una
-    # pregunta real pendiente. Esto evita perseguir al cliente después de una
-    # confirmación de visita, una respuesta informativa o un cierre natural.
-    proyecto = estado.get("proyecto_actual") or proyecto_activo.get(numero)
-    if proyecto == "palmeras" and not estado.get("palmeras_esperando_cliente"):
-        return True
-    if proyecto == "altamira" and not estado.get("altamira_esperando_cliente"):
-        return True
-
-    return False
-
-
-def _seguimiento_contexto(numero):
-    estado = obtener_estado_conversacion(numero)
-    proyecto = estado.get("proyecto_actual") or proyecto_activo.get(numero)
-    nombres = {
-        "palmeras": "Palmeras San Miguel",
-        "buenaventura": "Buenaventura Cuyotenango",
-        "vista_hermosa": "Vista Hermosa",
-        "altamira": "Altamira · Palestina de los Altos",
-    }
-    return proyecto, nombres.get(proyecto, "el proyecto"), estado
-
-
-def _mensaje_seguimiento_contextual(numero, momento="10m"):
-    proyecto, nombre, estado = _seguimiento_contexto(numero)
-    if proyecto == "palmeras":
-        pendiente_raw = str(estado.get("palmeras_pregunta_pendiente") or "").strip()
-    elif proyecto == "altamira":
-        pendiente_raw = str(estado.get("altamira_pregunta_pendiente") or "").strip()
-    else:
-        pendiente_raw = ""
-    pendiente = pendiente_raw.lower()
-
-    if momento == "10m":
-        if proyecto == "palmeras":
-            if "punto" in pendiente and "visita" in pendiente:
-                return (
-                    "Quedó pendiente definir dónde nos encontramos para su visita 😊. "
-                    "Puede ser *directamente en Palmeras San Miguel* o en *Centro Comercial La Trinidad*. "
-                    "*¿Cuál le queda más cómodo?* 📍"
-                )
-            if "día y hora" in pendiente or ("día" in pendiente and "hora" in pendiente):
-                return (
-                    "Quedó pendiente coordinar su visita a *Palmeras San Miguel* 😊. "
-                    "*¿Qué día y a qué hora le quedaría bien?* 📅"
-                )
-            if "hora" in pendiente and "visita" in pendiente:
-                return "Quedó pendiente la hora de su visita 😊. *¿A qué hora le quedaría bien?* 📅"
-            if "día" in pendiente and "visita" in pendiente:
-                return "Quedó pendiente el día de su visita 😊. *¿Qué día le quedaría bien?* 📅"
-            if "fase" in pendiente:
-                return (
-                    "Quedó pendiente saber cuál de las dos fases le parece más atractiva 😊. "
-                    "*¿Le interesa más Fase 1 o Fase 2?* 🏡"
-                )
-            if "modalidad" in pendiente or "forma de pago" in pendiente:
-                return (
-                    "Quedó pendiente la forma de pago 😊. "
-                    "*¿Le gustaría revisar financiamiento, semicontado o contado?* 💳"
-                )
-            if "planos" in pendiente or "se los comparta" in pendiente:
-                return (
-                    "Quedó pendiente si desea conocer los *planos y las fases disponibles* de Palmeras San Miguel 😊. "
-                    "*¿Desea que se los comparta?* 📄"
-                )
-            if "construir" in pendiente and "invers" in pendiente:
-                return (
-                    "Para poder orientarle mejor 😊, quedó pendiente saber si su idea es *construir más adelante* "
-                    "o si está viendo el terreno más como *inversión*. 🏡"
-                )
-            if "propuesta" in pendiente or "qué le parece" in pendiente or "que le parece" in pendiente:
-                return "Quedó pendiente saber qué le pareció la opción que revisamos 😊. *¿Cómo la ve hasta ahora?*"
-
-            # Conversación libre: reutilizamos únicamente la última pregunta que
-            # realmente dejó el bot. No agregamos información ni inventamos temas.
-            if pendiente_raw:
-                pregunta = pendiente_raw
-                if not pregunta.endswith("?"):
-                    pregunta += "?"
-                return (
-                    "Quedó pendiente esta parte de nuestra conversación 😊. "
-                    f"*{pregunta}*"
-                )
-
-        if proyecto == "altamira" and pendiente_raw:
-            pregunta = pendiente_raw if pendiente_raw.endswith("?") else pendiente_raw + "?"
-            return (
-                "Quedó pendiente esta parte de nuestra conversación sobre *Altamira* 😊. "
-                f"*{pregunta}*"
-            )
-
-        return (
-            f"Quedó pendiente nuestra conversación sobre *{nombre}* 😊. "
-            "Si desea, continuamos desde donde quedamos."
-        )
-
-    # Día 1: retoma exactamente el pendiente sin volver a soltar toda la información.
-    if proyecto == "palmeras" and pendiente_raw:
-        if "fase" in pendiente:
-            return (
-                "¡Hola! 👋 Ayer dejamos pendiente cuál fase de *Palmeras San Miguel* le interesaba más. "
-                "Si desea, podemos continuar desde ahí 😊."
-            )
-        if "modalidad" in pendiente or "forma de pago" in pendiente:
-            return (
-                "¡Hola! 👋 Ayer dejamos pendiente revisar la forma de pago que mejor se adapte a usted en *Palmeras San Miguel*. "
-                "Con gusto continuamos desde donde quedamos 😊."
-            )
-        if "visita" in pendiente or "día" in pendiente or "hora" in pendiente or "punto" in pendiente:
-            return (
-                "¡Hola! 👋 Ayer dejamos pendiente un detalle para coordinar su visita a *Palmeras San Miguel*. "
-                "Si todavía desea conocerlo, con gusto continuamos desde donde quedamos 😊."
-            )
-        return (
-            "¡Hola! 👋 Ayer quedó pendiente una parte de nuestra conversación sobre *Palmeras San Miguel*. "
-            f"Si desea, retomamos desde aquí: *{pendiente_raw}* 😊"
-        )
-
-    if proyecto == "altamira" and pendiente_raw:
-        return (
-            "¡Hola! 👋 Ayer quedó pendiente una parte de nuestra conversación sobre *Altamira*. "
-            f"Si desea, retomamos desde aquí: *{pendiente_raw}* 😊"
-        )
-
-    return (
-        f"¡Hola! 👋 Ayer dejamos pendiente la información de *{nombre}*. "
-        "Si todavía desea continuar, con gusto retomamos desde donde quedamos 😊."
-    )
-
-
-def _notificar_gabriel_sin_respuesta(numero, hito):
-    """
-    Avisa a Gabriel en sus notificaciones del CRM cuando el cliente sigue sin
-    responder en Día 1 / 3 / 5 / 7. La alerta NO pausa al bot y NO se envía al cliente.
-    """
-    proyecto, nombre, estado = _seguimiento_contexto(numero)
-    if proyecto == "palmeras":
-        pendiente = str(estado.get("palmeras_pregunta_pendiente") or "").strip()
-    elif proyecto == "altamira":
-        pendiente = str(estado.get("altamira_pregunta_pendiente") or "").strip()
-    else:
-        pendiente = ""
-    detalle = f"\nPendiente: {pendiente[:150]}" if pendiente else ""
-    aviso = (
-        f"⏳ Cliente sin responder · {hito} · {nombre}"
-        f"{detalle}\nPuede revisar el chat y darle seguimiento manual si lo considera conveniente."
-    )
-    event_id = f"sin-respuesta-{numero}-{hito}-{time.time_ns()}"
-
-    # Mismo esquema de alertas que usa el CRM para los mensajes entrantes.
-    try:
-        Thread(target=enviar_push_crm, args=(numero, aviso, event_id), daemon=True).start()
-    except Exception as exc:
-        print("ALERTA SIN RESPUESTA PUSH ERROR:", exc)
-    try:
-        Thread(target=enviar_ntfy_crm, args=(numero, aviso, event_id), daemon=True).start()
-    except Exception as exc:
-        print("ALERTA SIN RESPUESTA NTFY ERROR:", exc)
-
-    return True
-
-
-def enviar_template_whatsapp(numero, template_name):
-    """Envía una plantilla aprobada por Meta para seguimientos fuera de 24 horas."""
-    if not template_name or crm_es_facebook(numero):
-        return False
-    url = f"https://graph.facebook.com/v26.0/{PHONE_NUMBER_ID}/messages"
-    headers = {
-        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": numero,
-        "type": "template",
-        "template": {
-            "name": template_name,
-            "language": {"code": WA_TEMPLATE_LANGUAGE},
-        },
-    }
-    try:
-        r = requests.post(url, headers=headers, json=payload, timeout=20)
-        print("SEGUIMIENTO TEMPLATE", template_name, "STATUS:", r.status_code, r.text)
-        if 200 <= r.status_code < 300:
-            crm_registrar_mensaje(numero, "out", f"📨 Seguimiento automático: {template_name}")
-            return True
-    except Exception as exc:
-        print("SEGUIMIENTO TEMPLATE ERROR:", exc)
-    return False
-
-
-def _enviar_seguimiento_libre(numero, texto):
-    if not texto:
-        return False
-    ok = enviar_whatsapp(numero, texto)
-    if ok:
-        guardar_mensaje(numero, "assistant", texto)
-    return ok
-
 
 def programar_seguimiento_inactividad(numero):
     """
-    Cadencia global cuando el BOT dejó una pregunta pendiente y el cliente no responde:
-    - 10 minutos: UN solo seguimiento contextual.
-    - Día 1: seguimiento contextual dentro de la ventana de 24h + alerta a Gabriel.
-    - Día 3 / 5 / 7: plantilla aprobada por Meta (si está configurada) + alerta a Gabriel.
-
-    Si el cliente responde en cualquier momento, cancelar_seguimiento() invalida TODA
-    esta secuencia y la siguiente se calcula desde la nueva conversación. Gabriel también
-    puede tomar control manual y detenerla.
+    Programa dos seguimientos automáticos: a las 8 y 16 horas de inactividad.
+    Si el cliente escribe de nuevo antes de cualquiera de los dos envíos,
+    la versión anterior queda cancelada automáticamente.
     """
     with lock_seguimiento:
         version = seguimiento_version.get(numero, 0) + 1
         seguimiento_version[numero] = version
 
     def esperar_y_enviar():
-        # 10 MINUTOS: exactamente un recordatorio, coherente con lo último pendiente.
-        time.sleep(SEGUIMIENTO_10_MIN)
-        if _seguimiento_debe_detenerse(numero, version):
-            return
-        _enviar_seguimiento_libre(numero, _mensaje_seguimiento_contextual(numero, "10m"))
+        # Primer recordatorio: 8 horas después del último mensaje del cliente.
+        time.sleep(SEGUIMIENTO_SEGUNDOS)
 
-        # DÍA 1 (23h para mantener el mensaje libre dentro de la ventana de WhatsApp).
-        time.sleep(max(0, SEGUIMIENTO_DIA1 - SEGUIMIENTO_10_MIN))
-        if _seguimiento_debe_detenerse(numero, version):
-            return
-        _notificar_gabriel_sin_respuesta(numero, "Día 1")
-        _enviar_seguimiento_libre(numero, _mensaje_seguimiento_contextual(numero, "dia1"))
+        with lock_seguimiento:
+            if seguimiento_version.get(numero) != version:
+                return
 
-        # DÍA 3: fuera de 24h, el cliente solo recibe mensaje si hay plantilla aprobada.
-        # La alerta de Gabriel SIEMPRE se genera aunque la plantilla todavía no exista.
-        time.sleep(SEGUIMIENTO_DIA3_ESPERA)
-        if _seguimiento_debe_detenerse(numero, version):
-            return
-        _notificar_gabriel_sin_respuesta(numero, "Día 3")
-        if WA_TEMPLATE_SEGUIMIENTO_DIA3:
-            enviar_template_whatsapp(numero, WA_TEMPLATE_SEGUIMIENTO_DIA3)
-        else:
-            print("SEGUIMIENTO DIA 3 OMITIDO AL CLIENTE: falta WA_TEMPLATE_SEGUIMIENTO_DIA3")
+        enviar_whatsapp(numero, SEGUIMIENTO_TEXTO)
+        guardar_mensaje(numero, "assistant", SEGUIMIENTO_TEXTO)
 
-        # DÍA 5.
-        time.sleep(SEGUIMIENTO_DIA5_ESPERA)
-        if _seguimiento_debe_detenerse(numero, version):
-            return
-        _notificar_gabriel_sin_respuesta(numero, "Día 5")
-        if WA_TEMPLATE_SEGUIMIENTO_DIA5:
-            enviar_template_whatsapp(numero, WA_TEMPLATE_SEGUIMIENTO_DIA5)
-        else:
-            print("SEGUIMIENTO DIA 5 OMITIDO AL CLIENTE: falta WA_TEMPLATE_SEGUIMIENTO_DIA5")
+        # Segundo recordatorio: otras 8 horas después (16 horas en total).
+        time.sleep(SEGUIMIENTO_SEGUNDOS)
 
-        # DÍA 7: último intento automático. Después termina la secuencia.
-        time.sleep(SEGUIMIENTO_DIA7_ESPERA)
-        if _seguimiento_debe_detenerse(numero, version):
-            return
-        _notificar_gabriel_sin_respuesta(numero, "Día 7")
-        if WA_TEMPLATE_SEGUIMIENTO_DIA7:
-            enviar_template_whatsapp(numero, WA_TEMPLATE_SEGUIMIENTO_DIA7)
-        else:
-            print("SEGUIMIENTO DIA 7 OMITIDO AL CLIENTE: falta WA_TEMPLATE_SEGUIMIENTO_DIA7")
+        with lock_seguimiento:
+            if seguimiento_version.get(numero) != version:
+                return
 
+        enviar_whatsapp(numero, SEGUIMIENTO_TEXTO)
+        guardar_mensaje(numero, "assistant", SEGUIMIENTO_TEXTO)
+
+        # Después del segundo recordatorio damos esta secuencia por terminada.
+        # Si el cliente vuelve a escribir, el flujo normal creará una nueva secuencia.
         with lock_seguimiento:
             if seguimiento_version.get(numero) == version:
                 seguimiento_version[numero] = version + 1
@@ -10774,6 +8500,744 @@ def _worker_bloques_texto(numero):
 
 
 
+
+# ============================================================
+# PALMERAS SAN MIGUEL - FLUJO COMERCIAL HUMANO / PROGRESIVO
+# ============================================================
+
+PSM_FASES = {
+    "fase_1": {
+        "nombre": "Fase 1",
+        "precio": 67200,
+        "precio_texto": "Q67,200",
+        "enganche": 6000,
+        "amenidad": "piscina y área verde",
+        "imagen_cotizacion": "media/cotizaciones/palmeras/8x16_no_esquina.jpeg",
+    },
+    "fase_2": {
+        "nombre": "Fase 2",
+        "precio": 70400,
+        "precio_texto": "Q70,400",
+        "enganche": 6000,
+        "amenidad": "área verde",
+        "imagen_cotizacion": "media/cotizaciones/palmeras/8x16_segunda_fase.jpeg",
+    },
+}
+
+PSM_CUOTAS_FINANCIAMIENTO = {
+    "fase_1": {
+        2: 3026.26, 3: 2181.31, 4: 1766.17, 5: 1521.20,
+        6: 1361.30, 7: 1251.28, 8: 1170.60,
+    },
+    "fase_2": {
+        2: 3184.50, 3: 2295.37, 4: 1858.52, 5: 1600.74,
+        6: 1432.48, 7: 1316.71, 8: 1231.81,
+    },
+}
+
+PSM_RECORDATORIO_PLAN_SEGUNDOS = 10 * 60
+
+
+def _inicializar_estado_psm(estado):
+    estado.setdefault("psm_etapa", None)
+    estado.setdefault("psm_fase", None)
+    estado.setdefault("psm_plan", None)
+    estado.setdefault("psm_plazo", None)
+    estado.setdefault("psm_cotizacion_enviada", False)
+    estado.setdefault("psm_video_amenidades_enviado", False)
+    estado.setdefault("psm_pregunta_pendiente", None)
+    estado.setdefault("psm_visita_ofrecida", False)
+    estado.setdefault("psm_recordatorio_token", None)
+    return estado
+
+
+def estado_psm(numero):
+    return _inicializar_estado_psm(obtener_estado_conversacion(numero))
+
+
+def invalidar_recordatorio_psm(numero):
+    estado = estado_psm(numero)
+    if estado.get("psm_recordatorio_token"):
+        estado["psm_recordatorio_token"] = None
+        persistir_cliente(numero)
+
+
+def programar_recordatorio_plan_psm(numero):
+    estado = estado_psm(numero)
+    token = uuid.uuid4().hex
+    estado["psm_recordatorio_token"] = token
+    persistir_cliente(numero)
+
+    def _recordar():
+        time.sleep(PSM_RECORDATORIO_PLAN_SEGUNDOS)
+        try:
+            actual = estado_psm(numero)
+            if actual.get("psm_recordatorio_token") != token:
+                return
+            if actual.get("psm_etapa") != "esperando_plan":
+                return
+            if obtener_proyecto_actual(numero) != "palmeras":
+                return
+            if crm_esta_manual(numero):
+                return
+
+            actual["psm_recordatorio_token"] = None
+            persistir_cliente(numero)
+            enviar_whatsapp(
+                numero,
+                "¿Qué le parecieron las opciones de pago? 😊 Si desea, puedo ayudarle a comparar "
+                "financiamiento, 1 año sin intereses o contado para ver cuál se ajusta mejor a usted."
+            )
+        except Exception as exc:
+            print("ERROR RECORDATORIO PSM 10 MIN:", exc)
+
+    Thread(target=_recordar, daemon=True).start()
+
+
+def detectar_fase_psm(texto):
+    t = normalizar_texto_topografia(texto)
+    if any(x in t for x in [
+        "las dos", "ambas", "las 2", "cualquiera", "quiero comparar"
+    ]):
+        return "ambas"
+    if any(x in t for x in [
+        "fase 1", "fase1", "fase uno", "primera fase", "la primera",
+        "67200", "67,200", "la de piscina", "con piscina"
+    ]):
+        return "fase_1"
+    if any(x in t for x in [
+        "fase 2", "fase2", "fase dos", "segunda fase", "la segunda",
+        "70400", "70,400", "la de area verde", "solo area verde"
+    ]):
+        return "fase_2"
+    return None
+
+
+def detectar_plan_psm(texto):
+    t = normalizar_texto_topografia(texto)
+    if any(x in t for x in ["las tres", "los tres", "las 3", "todos", "todas", "ver las tres"]):
+        return "todos"
+    if any(x in t for x in [
+        "sin intereses", "sin interes", "1 ano", "un ano", "11 cuotas",
+        "semicontado", "semi contado"
+    ]):
+        return "sin_intereses"
+    if any(x in t for x in ["contado", "de contado", "un solo pago", "pago completo"]):
+        return "contado"
+    if any(x in t for x in [
+        "financiamiento", "financiado", "cuotas", "mensualidades", "credito",
+        "2 anos", "3 anos", "4 anos", "5 anos", "6 anos", "7 anos", "8 anos"
+    ]):
+        return "financiamiento"
+    return None
+
+
+def es_reaccion_video_psm(texto):
+    t = normalizar_texto_topografia(texto)
+    frases = [
+        "que bonito", "que bonita", "muy bonito", "muy bonita", "esta bonito",
+        "esta bonita", "me gusta", "me gusto", "gracias por el video", "gracias",
+        "bonitas amenidades", "bonito proyecto", "que chilero", "esta bien bonito"
+    ]
+    return len(t.split()) <= 12 and any(x in t for x in frases)
+
+
+def es_intencion_reserva_psm(texto):
+    t = normalizar_texto_topografia(texto)
+    return any(x in t for x in [
+        "quiero reservar", "quiero apartar", "quiero apartarlo", "quiero apartarla",
+        "como reservo", "como aparto", "quiero comprar", "quiero uno",
+        "dar la reserva", "pagar la reserva", "mandeme la cuenta", "envieme la cuenta"
+    ])
+
+
+def pide_enlace_maps_psm(texto):
+    t = normalizar_texto_topografia(texto)
+    return any(x in t for x in [
+        "google maps", "maps", "link de ubicacion", "enlace de ubicacion",
+        "link de maps", "enlace de maps", "ubicacion exacta", "mandeme la ubicacion",
+        "envieme la ubicacion"
+    ])
+
+
+def es_inicio_general_psm(texto):
+    """Inicio genérico: aquí sí usamos el protocolo de presentación progresiva."""
+    t = normalizar_texto_topografia(texto)
+
+    # Intenciones que deben romper el protocolo desde el primer mensaje.
+    if es_intencion_reserva_psm(texto) or detectar_intencion_visita(texto):
+        return False
+    if pide_enlace_maps_psm(texto):
+        return False
+    if any(x in t for x in [
+        "precio", "cuanto cuesta", "cuanto vale", "cuota", "financiamiento",
+        "enganche", "requisitos", "documentos", "escritur", "mantenimiento",
+        "gastos", "plano", "disponibilidad", "foto", "video", "donde queda",
+        "ubicacion", "agua", "construir", "abono", "capital"
+    ]):
+        return False
+
+    if es_solo_saludo(texto):
+        return True
+
+    frases = [
+        "quiero informacion", "quisiera informacion", "mas informacion", "deseo informacion",
+        "me interesa", "estoy interesado", "informacion de palmeras", "info de palmeras",
+        "palmeras san miguel", "palmeras", "vi el anuncio", "vengo del anuncio"
+    ]
+    return any(x in t for x in frases)
+
+
+def saludo_actual_guatemala():
+    try:
+        hora = datetime.now(ZoneInfo("America/Guatemala")).hour
+    except Exception:
+        hora = 12
+    if hora < 12:
+        return "Buenos días"
+    if hora < 19:
+        return "Buenas tardes"
+    return "Buenas noches"
+
+
+def generar_bienvenida_psm(numero, texto_cliente):
+    saludo = saludo_actual_guatemala()
+    instrucciones = f"""
+Redacte UN mensaje de bienvenida de WhatsApp como Gabriel Polero, asesor de ventas.
+Trate SIEMPRE al cliente de USTED. Nunca use tú, te, ti ni vos.
+Suene natural, humano, cercano y profesional, no como un menú ni como un anuncio copiado.
+Use 2 a 4 párrafos cortos y emojis moderados.
+
+Debe incluir de manera natural TODOS estos datos, sin inventar otros:
+- Saludo apropiado: {saludo}.
+- Presentarse una sola vez como Gabriel Polero, asesor de ventas.
+- Proyecto: Palmeras San Miguel, Zona 5 de Retalhuleu, camino a La Verde.
+- Actualmente únicamente hay lotes de 8x16 (128 m²).
+- Fase 1: Q67,200; piscina y área verde.
+- Fase 2: Q70,400; área verde.
+- Ambas fases están en proceso de urbanización.
+- Servicios: agua potable, energía eléctrica, calles pavimentadas y drenajes con planta de tratamiento.
+- Los lotes tienen escritura registrada y se desmembran legalmente.
+- Indique que a continuación se compartirán los planos para que pueda comparar las fases.
+- Termine con UNA sola pregunta: cuál fase le parece más atractiva, Fase 1 o Fase 2.
+
+NO explique todavía cuotas, plazos de pago, contado, gastos adicionales ni requisitos.
+NO diga que tiene garita o muro perimetral.
+NO mencione lotes 8x18, esquina ni bulevar como opciones disponibles.
+"""
+    try:
+        r = client.responses.create(
+            model="gpt-5-mini",
+            instructions=instrucciones,
+            input=[{"role": "user", "content": texto_cliente or "Quiero información"}]
+        )
+        texto = (r.output_text or "").strip()
+        if texto:
+            return formalizar_trato_usted(texto)
+    except Exception as exc:
+        print("ERROR BIENVENIDA IA PSM:", exc)
+
+    return formalizar_trato_usted(
+        f"¡Hola! 👋 {saludo}, le saluda Gabriel Polero, asesor de ventas. "
+        "Con gusto le cuento sobre Palmeras San Miguel 🏡, ubicado en Zona 5 de Retalhuleu, camino a La Verde.\n\n"
+        "Actualmente tenemos lotes de 8x16 (128 m²) en dos fases: Fase 1 en Q67,200, con piscina y área verde 🏊🌳; "
+        "y Fase 2 en Q70,400, con área verde 🌳. Ambas fases están en proceso de urbanización y contarán con agua potable, "
+        "energía eléctrica, calles pavimentadas y drenajes con planta de tratamiento. Los lotes cuentan con escritura registrada ✅.\n\n"
+        "Le comparto los planos para que pueda comparar ambas fases. ¿Cuál de las dos le parece más atractiva: Fase 1 o Fase 2? 😊"
+    )
+
+
+def enviar_planos_psm_sin_topografia(numero, fase=None):
+    planos = PLANOS_PROYECTOS.get("palmeras", {})
+    claves = []
+    if fase in ("fase_1", "fase_2"):
+        claves = [fase]
+    else:
+        claves = ["fase_1", "fase_2"]
+
+    enviados = 0
+    for clave in claves:
+        plano = planos.get(clave)
+        if not plano:
+            continue
+        if enviar_documento_url_whatsapp(
+            numero, plano["url"], plano["archivo"], caption=plano["nombre"]
+        ):
+            enviados += 1
+
+    if enviados:
+        enviar_whatsapp(
+            numero,
+            "En los planos, 🟢 verde significa disponible y 🔴 rojo vendido. "
+            "Si alguna ubicación le llama la atención, indíqueme cuál y la revisamos 😊. "
+            "Todos los lotes tienen calle al frente."
+        )
+    return enviados > 0
+
+
+def texto_planes_pago_psm(fase):
+    datos = PSM_FASES[fase]
+    return (
+        f"Perfecto 😊 Tomamos como referencia {datos['nombre']}. Para comprar tenemos tres modalidades:\n\n"
+        "💳 Financiamiento propio de 2 a 8 años.\n"
+        "✨ Plan de 1 año sin intereses.\n"
+        "💰 Pago al contado en un solo pago.\n\n"
+        "¿Cuál modalidad le gustaría revisar primero, o prefiere que le muestre las tres?"
+    )
+
+
+def enviar_video_referencia_amenidades_psm(numero):
+    for ruta in VIDEOS_GENERALES:
+        if os.path.exists(ruta):
+            enviar_video_whatsapp(
+                numero,
+                ruta,
+                caption=(
+                    "Le comparto un pequeño video de amenidades realizadas en otros proyectos de la empresa 🏡✨, "
+                    "para que pueda darse una idea del tipo de espacios que desarrollamos."
+                )
+            )
+            return True
+    return False
+
+
+def cuota_sin_intereses_psm(fase):
+    datos = PSM_FASES[fase]
+    saldo = datos["precio"] - datos["enganche"]
+    return round(saldo / 11, 2)
+
+
+def precio_contado_psm(fase, descuento=0.03):
+    return round(PSM_FASES[fase]["precio"] * (1 - descuento), 2)
+
+
+def enviar_financiamiento_psm(numero, fase, plazo):
+    cuota = PSM_CUOTAS_FINANCIAMIENTO.get(fase, {}).get(plazo)
+    if cuota is None:
+        return False
+    datos = PSM_FASES[fase]
+    enviar_whatsapp(
+        numero,
+        f"En {datos['nombre']}, el lote 8x16 tiene precio de {datos['precio_texto']} y enganche de Q6,000. "
+        f"A {plazo} años la cuota es de {formatear_quetzales(cuota)} al mes con financiamiento propio 💳🏡."
+    )
+    # La imagen histórica incluye una fila de 1 año que no corresponde al plan
+    # actual sin intereses. Para evitar confusión, aquí enviamos únicamente la
+    # cuota exacta del plazo elegido. Más adelante se pueden cargar imágenes
+    # nuevas ya corregidas para este flujo.
+    return True
+
+
+def enviar_plan_sin_intereses_psm(numero, fase):
+    datos = PSM_FASES[fase]
+    cuota = cuota_sin_intereses_psm(fase)
+    saldo = datos["precio"] - datos["enganche"]
+    enviar_whatsapp(
+        numero,
+        f"En {datos['nombre']}, el plan de 1 año sin intereses queda así 😊:\n\n"
+        f"• Precio: {datos['precio_texto']}\n"
+        "• Enganche: Q6,000\n"
+        f"• Saldo: {formatear_quetzales(saldo)}\n"
+        f"• 11 mensualidades de {formatear_quetzales(cuota)}\n\n"
+        "No se agregan intereses a ese saldo."
+    )
+
+
+def enviar_contado_psm(numero, fase):
+    datos = PSM_FASES[fase]
+    precio_3 = precio_contado_psm(fase, 0.03)
+    enviar_whatsapp(
+        numero,
+        f"En {datos['nombre']}, el precio regular es {datos['precio_texto']}. "
+        f"Por pago al contado puedo ofrecerle inicialmente un 3% de descuento, quedando en {formatear_quetzales(precio_3)} 💰. "
+        "Si ya está considerando realizar la compra, puedo revisar si es posible mejorar un poco más esa condición."
+    )
+
+
+def enviar_comparacion_planes_psm(numero, fase):
+    datos = PSM_FASES[fase]
+    cuota_0 = cuota_sin_intereses_psm(fase)
+    contado = precio_contado_psm(fase, 0.03)
+    enviar_whatsapp(
+        numero,
+        f"Claro 😊 Para {datos['nombre']} ({datos['precio_texto']}) puede comparar así:\n\n"
+        "💳 Financiamiento propio: de 2 a 8 años; si me indica el plazo le doy la cuota exacta.\n"
+        f"✨ 1 año sin intereses: 11 cuotas de {formatear_quetzales(cuota_0)} después del enganche.\n"
+        f"💰 Contado: con 3% inicial de descuento queda en {formatear_quetzales(contado)}.\n\n"
+        "¿Cuál de estas opciones le gustaría revisar con más detalle?"
+    )
+
+
+def invitar_visita_despues_propuesta_psm(numero):
+    estado = estado_psm(numero)
+    if estado.get("psm_visita_ofrecida") or cita_ya_cerrada(numero):
+        return
+    estado["psm_visita_ofrecida"] = True
+    estado["psm_pregunta_pendiente"] = "visita"
+    persistir_cliente(numero)
+    enviar_whatsapp(
+        numero,
+        "Si esta opción está dentro de lo que busca, lo ideal sería que conozca Palmeras San Miguel personalmente 🏡. "
+        "Así puede ver el avance, las ubicaciones y escoger con más seguridad. ¿Qué día le quedaría bien visitarlo? 📆"
+    )
+
+
+def respuesta_reserva_psm(numero):
+    estado = estado_psm(numero)
+    estado["psm_etapa"] = "reserva"
+    estado["psm_pregunta_pendiente"] = "lote_para_reservar"
+    persistir_cliente(numero)
+    return (
+        "Claro 🙌 Para reservar en Palmeras San Miguel se depositan Q3,000 a la cuenta de la empresa. "
+        "Ese monto forma parte del enganche y sirve para apartar exclusivamente el lote que usted escoja. "
+        "Se emite la factura correspondiente y dispone de un máximo de 15 días para completar el enganche, "
+        "reunir los requisitos y definir la modalidad de pago.\n\n"
+        "¿Ya tiene alguna ubicación vista en el plano o desea que le comparta los planos actualizados?"
+    )
+
+
+def respuesta_ubicacion_psm(texto):
+    base = (
+        "Palmeras San Miguel está en Zona 5 de Retalhuleu, camino a La Verde / carretera hacia Las Pilas 📍. "
+        "Para una visita normalmente nos reunimos en Centro Comercial La Trinidad y desde allí le acompaño al proyecto."
+    )
+    if pide_enlace_maps_psm(texto):
+        return base + "\n\nGoogle Maps:\n" + UBICACIONES_PROYECTOS["palmeras"]["maps"]
+    return base + "\n\nSi desea conocerlo, avíseme antes para coordinar y asegurarme de poder atenderle personalmente."
+
+
+def _mensaje_es_pregunta_especifica_psm(texto):
+    t = normalizar_texto_topografia(texto)
+    return any(x in t for x in [
+        "mantenimiento", "escritur", "titulo de agua", "agua", "requisitos", "documentos",
+        "abono", "capital", "construir", "urbanizacion", "cuando entregan", "gastos",
+        "donde queda", "ubicacion", "maps", "plano", "disponibilidad", "medida", "calle",
+        "garita", "muro", "piscina", "servicios", "banco"
+    ])
+
+
+def manejar_flujo_palmeras_humano(numero, texto, proyecto, message_id):
+    """Ruta progresiva de Palmeras. Devuelve True cuando consumió el mensaje."""
+    if proyecto != "palmeras":
+        return False
+
+    estado = estado_psm(numero)
+    # Cualquier respuesta real del cliente invalida el recordatorio de 10 minutos.
+    invalidar_recordatorio_psm(numero)
+    t = normalizar_texto_topografia(texto)
+
+    # Multi-intención común: precio + ubicación. Respondemos ambas sin disparar el paquete completo.
+    pide_precio_multi = any(x in t for x in [
+        "precio", "precios", "cuanto cuesta", "cuanto vale", "cuanto cuestan", "valor", "costo"
+    ])
+    if pide_precio_multi and pide_ubicacion(texto) and not estado.get("psm_fase"):
+        ubicacion = respuesta_ubicacion_psm(texto)
+        respuesta = (
+            "Claro 😊 Actualmente los lotes son de 8x16 (128 m²):\n"
+            "• Fase 1: Q67,200 — piscina y área verde.\n"
+            "• Fase 2: Q70,400 — área verde.\n\n"
+            + ubicacion + "\n\n¿De las dos fases, cuál le parece más atractiva?"
+        )
+        estado["psm_etapa"] = "esperando_fase"
+        estado["psm_pregunta_pendiente"] = "fase"
+        persistir_cliente(numero)
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+            enviar_planos_psm_sin_topografia(numero)
+        return True
+
+    # Intención alta rompe el protocolo.
+    if es_intencion_reserva_psm(texto):
+        respuesta = respuesta_reserva_psm(numero)
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+        return True
+
+    if detectar_intencion_visita(texto):
+        respuesta = respuesta_visita(numero, texto, "palmeras")
+        estado["psm_etapa"] = "visita"
+        estado["psm_pregunta_pendiente"] = "dia_hora_visita"
+        persistir_cliente(numero)
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+        return True
+
+    # Si ya se ofreció visita y el cliente responde afirmativamente, seguimos a agenda.
+    if estado.get("psm_pregunta_pendiente") == "visita":
+        t = normalizar_texto_topografia(texto)
+        if t in {"si", "si por favor", "claro", "de acuerdo", "esta bien", "bueno", "dale"}:
+            estado["psm_etapa"] = "visita"
+            estado["psm_pregunta_pendiente"] = "dia_hora_visita"
+            persistir_cliente(numero)
+            respuesta = respuesta_visita(numero, "quiero visitar", "palmeras")
+            guardar_mensaje(numero, "user", texto)
+            guardar_mensaje(numero, "assistant", respuesta)
+            if procesamiento_sigue_vigente(numero, message_id):
+                enviar_whatsapp(numero, respuesta)
+            return True
+
+    # Ubicación: jamás mandamos Maps salvo solicitud explícita.
+    if pide_ubicacion(texto):
+        respuesta = respuesta_ubicacion_psm(texto)
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+        return True
+
+    # Plano / disponibilidad: enviamos plano actualizado, colores y nada de topografía.
+    if pide_plano(texto):
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", "Se compartió el plano actualizado de Palmeras San Miguel.")
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_planos_psm_sin_topografia(numero, estado.get("psm_fase"))
+        return True
+
+    # Inicio genérico de la conversación.
+    if not estado.get("psm_etapa") and es_inicio_general_psm(texto):
+        bienvenida = generar_bienvenida_psm(numero, texto)
+        estado["psm_etapa"] = "esperando_fase"
+        estado["psm_pregunta_pendiente"] = "fase"
+        marcar_cliente_presentado(numero)
+        persistir_cliente(numero)
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", bienvenida)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, bienvenida)
+            enviar_planos_psm_sin_topografia(numero)
+        return True
+
+    # Si pide cuotas/cotización/financiamiento antes de elegir fase, no mandamos todas las imágenes.
+    pide_pago_general = any(x in t for x in [
+        "cotizacion", "cuota", "cuotas", "mensualidad", "mensualidades",
+        "financiamiento", "plan de pago", "planes de pago"
+    ])
+    if pide_pago_general and not estado.get("psm_fase"):
+        respuesta = (
+            "Con gusto 😊 Para darle el plan correcto primero necesito saber cuál fase desea tomar como referencia. "
+            "La Fase 1 está en Q67,200 y contará con piscina y área verde; la Fase 2 está en Q70,400 y contará con área verde. "
+            "¿Cuál le interesa más?"
+        )
+        estado["psm_etapa"] = "esperando_fase"
+        estado["psm_pregunta_pendiente"] = "fase"
+        persistir_cliente(numero)
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+            enviar_planos_psm_sin_topografia(numero)
+        return True
+
+    if pide_pago_general and estado.get("psm_fase") and estado.get("psm_etapa") not in ("esperando_plazo", "propuesta_enviada"):
+        estado["psm_etapa"] = "esperando_plan"
+        estado["psm_pregunta_pendiente"] = "plan_pago"
+        persistir_cliente(numero)
+        respuesta = texto_planes_pago_psm(estado["psm_fase"])
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+            if enviar_video_referencia_amenidades_psm(numero):
+                estado["psm_video_amenidades_enviado"] = True
+                persistir_cliente(numero)
+            programar_recordatorio_plan_psm(numero)
+        return True
+
+    # Consulta de precio antes de escoger fase: responder sin soltar todo el catálogo.
+    pide_precio = any(x in t for x in [
+        "precio", "precios", "cuanto cuesta", "cuanto vale", "cuanto cuestan", "valor", "costo"
+    ])
+    fase_en_mensaje = detectar_fase_psm(texto)
+
+    if pide_precio and not estado.get("psm_fase") and fase_en_mensaje not in ("fase_1", "fase_2"):
+        respuesta = (
+            "Claro 😊 Actualmente los lotes son de 8x16 (128 m²):\n\n"
+            "🏊 Fase 1: Q67,200, con piscina y área verde.\n"
+            "🌳 Fase 2: Q70,400, con área verde.\n\n"
+            "¿Cuál de las dos fases le parece más atractiva?"
+        )
+        estado["psm_etapa"] = "esperando_fase"
+        estado["psm_pregunta_pendiente"] = "fase"
+        persistir_cliente(numero)
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+            enviar_planos_psm_sin_topografia(numero)
+        return True
+
+    # Elección de fase, tanto durante el protocolo como si la menciona directamente.
+    if fase_en_mensaje in ("fase_1", "fase_2") and (
+        estado.get("psm_etapa") in (None, "esperando_fase") or
+        estado.get("psm_pregunta_pendiente") == "fase" or
+        pide_precio
+    ):
+        estado["psm_fase"] = fase_en_mensaje
+        estado["psm_etapa"] = "esperando_plan"
+        estado["psm_pregunta_pendiente"] = "plan_pago"
+        persistir_cliente(numero)
+        respuesta = texto_planes_pago_psm(fase_en_mensaje)
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+            if enviar_video_referencia_amenidades_psm(numero):
+                estado["psm_video_amenidades_enviado"] = True
+                persistir_cliente(numero)
+            programar_recordatorio_plan_psm(numero)
+        return True
+
+    if fase_en_mensaje == "ambas" and estado.get("psm_etapa") == "esperando_fase":
+        respuesta = (
+            "Con gusto podemos comparar ambas 😊. La Fase 1 está en Q67,200 y contará con piscina y área verde; "
+            "la Fase 2 está en Q70,400 y contará con área verde. Ambas tienen lotes de 8x16 y están en proceso de urbanización. "
+            "Para revisar pagos sin revolverle los números, ¿cuál desea tomar primero como referencia: Fase 1 o Fase 2?"
+        )
+        estado["psm_pregunta_pendiente"] = "fase"
+        persistir_cliente(numero)
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+        return True
+
+    # Si comenta el video sin contestar el plan, reconocemos el comentario y retomamos la pregunta pendiente.
+    if estado.get("psm_etapa") == "esperando_plan" and es_reaccion_video_psm(texto):
+        respuesta = (
+            "Sí 😊 esos espacios ayudan mucho a visualizar cómo puede quedar el proyecto terminado. "
+            "Y sobre las formas de pago, ¿cuál desea que revisemos primero: financiamiento de 2 a 8 años, "
+            "1 año sin intereses o contado?"
+        )
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+            programar_recordatorio_plan_psm(numero)
+        return True
+
+    # Elección de modalidad de pago.
+    plan = detectar_plan_psm(texto)
+    if estado.get("psm_fase") and plan:
+        fase = estado["psm_fase"]
+        estado["psm_plan"] = plan
+
+        if plan == "financiamiento":
+            plazo = extraer_plazo_cuota(texto)
+            if plazo and 2 <= plazo <= 8:
+                estado["psm_plazo"] = plazo
+                estado["psm_etapa"] = "propuesta_enviada"
+                estado["psm_cotizacion_enviada"] = True
+                estado["psm_pregunta_pendiente"] = None
+                persistir_cliente(numero)
+                guardar_mensaje(numero, "user", texto)
+                if procesamiento_sigue_vigente(numero, message_id):
+                    enviar_financiamiento_psm(numero, fase, plazo)
+                    invitar_visita_despues_propuesta_psm(numero)
+                return True
+
+            estado["psm_etapa"] = "esperando_plazo"
+            estado["psm_pregunta_pendiente"] = "plazo_financiamiento"
+            persistir_cliente(numero)
+            respuesta = "Perfecto 😊 ¿A cuántos años le gustaría revisar el financiamiento? Puede ser de 2 a 8 años."
+            guardar_mensaje(numero, "user", texto)
+            guardar_mensaje(numero, "assistant", respuesta)
+            if procesamiento_sigue_vigente(numero, message_id):
+                enviar_whatsapp(numero, respuesta)
+            return True
+
+        if plan == "sin_intereses":
+            estado["psm_etapa"] = "propuesta_enviada"
+            estado["psm_cotizacion_enviada"] = True
+            estado["psm_pregunta_pendiente"] = None
+            persistir_cliente(numero)
+            guardar_mensaje(numero, "user", texto)
+            if procesamiento_sigue_vigente(numero, message_id):
+                enviar_plan_sin_intereses_psm(numero, fase)
+                invitar_visita_despues_propuesta_psm(numero)
+            return True
+
+        if plan == "contado":
+            estado["psm_etapa"] = "propuesta_enviada"
+            estado["psm_cotizacion_enviada"] = True
+            estado["psm_pregunta_pendiente"] = None
+            persistir_cliente(numero)
+            guardar_mensaje(numero, "user", texto)
+            if procesamiento_sigue_vigente(numero, message_id):
+                enviar_contado_psm(numero, fase)
+                invitar_visita_despues_propuesta_psm(numero)
+            return True
+
+        if plan == "todos":
+            estado["psm_etapa"] = "esperando_plan"
+            estado["psm_pregunta_pendiente"] = "plan_pago"
+            persistir_cliente(numero)
+            guardar_mensaje(numero, "user", texto)
+            if procesamiento_sigue_vigente(numero, message_id):
+                enviar_comparacion_planes_psm(numero, fase)
+                programar_recordatorio_plan_psm(numero)
+            return True
+
+    # Esperando únicamente el plazo del financiamiento.
+    if estado.get("psm_etapa") == "esperando_plazo" and estado.get("psm_fase"):
+        plazo = extraer_plazo_cuota(texto)
+        if plazo and 2 <= plazo <= 8:
+            estado["psm_plazo"] = plazo
+            estado["psm_etapa"] = "propuesta_enviada"
+            estado["psm_cotizacion_enviada"] = True
+            estado["psm_pregunta_pendiente"] = None
+            persistir_cliente(numero)
+            guardar_mensaje(numero, "user", texto)
+            if procesamiento_sigue_vigente(numero, message_id):
+                enviar_financiamiento_psm(numero, estado["psm_fase"], plazo)
+                invitar_visita_despues_propuesta_psm(numero)
+            return True
+
+    # Pregunta directa por fraccionar enganche: facilidad REACTIVA, nunca de primera.
+    if pregunta_enganche(texto) and any(x in t for x in [
+        "dividir", "fraccionar", "dos pagos", "2 pagos", "no tengo completo", "medio enganche",
+        "pagar despues", "pagar después"
+    ]):
+        respuesta = (
+            "Sí 😊 si lo necesita podemos facilitar el enganche de Q6,000 en dos pagos de Q3,000. "
+            "En ese esquema puede realizar la primera parte el primer mes, completar el enganche el segundo mes "
+            "y comenzar su primera cuota en el tercer mes. Esta facilidad aplica en ambas fases."
+        )
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+        return True
+
+    # Si pregunta directamente por 1 año sin intereses y aún no eligió fase, primero necesitamos la fase.
+    if plan == "sin_intereses" and not estado.get("psm_fase"):
+        respuesta = (
+            "Sí 😊 contamos con un plan de 1 año sin intereses. Para darle la cuota exacta necesito saber cuál fase desea tomar como referencia: "
+            "Fase 1 en Q67,200 o Fase 2 en Q70,400."
+        )
+        estado["psm_etapa"] = "esperando_fase"
+        estado["psm_pregunta_pendiente"] = "fase"
+        persistir_cliente(numero)
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+        return True
+
+    # Una pregunta puntual durante el protocolo debe contestarse libremente por el resto del bot/IA.
+    # Conservamos el estado para que luego pueda retomar la pregunta pendiente.
+    if _mensaje_es_pregunta_especifica_psm(texto):
+        persistir_cliente(numero)
+        return False
+
+    return False
+
+
 # ============================================================
 # CONSULTAS MULTIPLES EN UN MISMO BLOQUE
 # ============================================================
@@ -10951,475 +9415,6 @@ def manejar_intenciones_multiples(numero, texto, proyecto, message_id):
 
 
 # ============================================================
-# CEREBRO DE ALTAMIRA - PALESTINA DE LOS ALTOS
-# APERTURA 28/09/2026
-# ============================================================
-
-ALTAMIRA_FECHA_APERTURA = "2026-09-28"
-ALTAMIRA_PLANO_URL = os.getenv("ALTAMIRA_PLANO_URL", "").strip()
-
-ALTAMIRA_FICHA_OFICIAL = """
-PROYECTO: Altamira.
-UBICACIÓN CONFIRMADA: Palestina de los Altos, Quetzaltenango.
-APERTURA OFICIAL: lunes 28 de septiembre de 2026.
-
-ESTADO DE PRECIOS:
-- Antes de la apertura, los precios oficiales todavía NO están liberados.
-- Hasta que Gabriel cargue la tabla oficial, NO inventar, estimar ni calcular precios o cuotas.
-- Si preguntan precio/cuota antes de tenerlos cargados, explicar con transparencia que serán liberados con la apertura y ofrecer únicamente la información ya confirmada.
-
-DISPONIBILIDAD GENERAL DE APERTURA:
-- Actualmente hay opciones en diferentes sectores del proyecto.
-- Hay opciones cercanas a la entrada.
-- Hay esquinas.
-- Hay opciones cercanas a las amenidades.
-- Hay otras ubicaciones interiores.
-- NUNCA afirmar que un lote/número específico está disponible sin confirmación de Gabriel, porque la disponibilidad cambia en vivo.
-
-PROYECTO / SERVICIOS:
-- El proyecto contará con servicios y amenidades.
-- No detallar amenidades específicas si Gabriel no las ha confirmado.
-- No mencionar garita ni muro perimetral de forma espontánea.
-- Si preguntan directamente por garita, muro, una amenidad específica o un detalle técnico no cargado, pedir tiempo para confirmarlo y activar intervención.
-
-FINANCIAMIENTO Y COMPRA:
-- Financiamiento propio directamente con la empresa, sin banco.
-- Plazo: 1 a 8 años.
-- Interés: 17% anual sobre saldos.
-- Enganche: Q6,000.
-- Reserva: desde Q5,000.
-- Abonos a capital: desde Q2,000 a partir del primer mes, sin penalización.
-- Si cancela el 100% del saldo pendiente, no paga intereses futuros.
-- Semicontado: enganche de Q6,000 + saldo restante dividido en 11 cuotas mensuales sin intereses. NO calcular las cuotas hasta tener precio oficial.
-- Contado: se puede ofrecer inicialmente 3% de descuento. Dependiendo de cantidad de lotes puede llegar hasta 5%, pero cualquier descuento mayor al 3% debe confirmarse. NO calcular el monto final hasta tener precio oficial.
-
-REQUISITOS EN GUATEMALA:
-- DPI.
-- Enganche.
-- Estados de cuenta O carta/constancia de ingresos.
-- Recibo de luz o agua.
-- Datos generales del comprador.
-
-COMPRA DESDE ESTADOS UNIDOS / EXTRANJERO:
-- DPI o pasaporte.
-- Enganche.
-- Constancia/comprobantes de remesas.
-- Datos generales del comprador.
-- Gestor de confianza en Guatemala que firme en representación; puede ser familiar o amigo.
-- El gestor NO se convierte en propietario ni adquiere potestad sobre el terreno. El propietario es únicamente el comprador.
-
-NO CONFIRMADO / NO INVENTAR:
-- Precio por lote.
-- Cuotas exactas por plazo.
-- Medidas exactas si no están en el plano/ficha cargada.
-- Garita o muro perimetral.
-- Lista exacta de amenidades.
-- Costos de mantenimiento/agua/escrituración de este proyecto si no han sido cargados.
-- Fecha de urbanización/construcción.
-- Dirección exacta o enlace de Maps.
-- Disponibilidad de un número de lote específico.
-"""
-
-
-def _estado_altamira(numero):
-    estado = obtener_estado_conversacion(numero)
-    estado["proyecto_actual"] = "altamira"
-    proyecto_activo[numero] = "altamira"
-    return estado
-
-
-def _altamira_status_precios():
-    hoy = datetime.now(ZoneInfo("America/Guatemala")).date().isoformat()
-    if hoy < ALTAMIRA_FECHA_APERTURA:
-        return "preapertura"
-    if hoy == ALTAMIRA_FECHA_APERTURA:
-        return "apertura_sin_precios_cargados"
-    return "sin_precios_cargados"
-
-
-def _altamira_saludo_actual():
-    hora = datetime.now(ZoneInfo("America/Guatemala")).hour
-    if hora < 12:
-        return "¡Buenos días!"
-    if hora < 19:
-        return "¡Buenas tardes!"
-    return "¡Buenas noches!"
-
-
-def _altamira_normalizar(texto):
-    return normalizar_ventas(str(texto or ""))
-
-
-def _altamira_es_entrada_general(texto):
-    t = _altamira_normalizar(texto)
-    frases = [
-        "quiero recibir info de la apertura", "quiero recibir informacion de la apertura",
-        "quiero informacion de la apertura", "quiero info de la apertura",
-        "quiero mas informacion", "quiero informacion", "mas informacion",
-        "informacion de altamira", "info de altamira", "quiero conocer altamira",
-        "altamira", "palestina de los altos"
-    ]
-    if any(f in t for f in frases):
-        # Preguntas concretas deben resolverse como tales, no como bienvenida general.
-        concretas = ["precio", "cuota", "financ", "reserva", "apartar", "requisito", "donde", "ubicacion", "plano", "amenidad", "garita", "muro"]
-        return not any(c in t for c in concretas)
-    return False
-
-
-def _altamira_pide_precio_o_cuota(texto):
-    t = _altamira_normalizar(texto)
-    return any(x in t for x in [
-        "precio", "precios", "cuanto cuesta", "cuanto vale", "valor", "cotizacion", "cotizar",
-        "cuota", "cuotas", "mensualidad", "pago mensual", "a 1 ano", "a 2 anos", "a 3 anos",
-        "a 4 anos", "a 5 anos", "a 6 anos", "a 7 anos", "a 8 anos"
-    ])
-
-
-def _altamira_pide_reserva(texto):
-    t = _altamira_normalizar(texto)
-    return any(x in t for x in ["reservar", "reserva", "apartar", "apartarlo", "separar un lote", "asegurar un lote"])
-
-
-def _altamira_pide_plano(texto):
-    t = _altamira_normalizar(texto)
-    return any(x in t for x in ["plano", "croquis", "mapa de lotes", "distribucion de lotes"])
-
-
-def _altamira_preferencia_ubicacion(texto):
-    t = _altamira_normalizar(texto)
-    if "esquina" in t:
-        return "esquina"
-    if any(x in t for x in ["entrada", "cerca de la entrada", "por la entrada"]):
-        return "cerca de la entrada"
-    if any(x in t for x in ["amenidad", "amenidades", "cerca de las amenidades"]):
-        return "cerca de las amenidades"
-    if any(x in t for x in ["interior", "adentro", "parte interna"]):
-        return "ubicación interior"
-    return None
-
-
-def _altamira_clasificar_intencion(texto):
-    """Distingue comprador de apertura vs. interesado que decidirá después."""
-    t = _altamira_normalizar(texto)
-
-    posterior = [
-        "primero quiero ver precios", "primero ver precios", "quiero ver los precios primero",
-        "cuando salgan los precios", "despues de ver precios", "mas adelante", "mas adelante compro",
-        "no tengo prisa", "lo voy a pensar", "voy a pensarlo", "consultarlo con mi familia",
-        "consultar con mi familia", "solo estoy viendo", "solo quiero informacion", "solo quiero info"
-    ]
-    if any(x in t for x in posterior):
-        return "posterior"
-
-    alta = [
-        "quiero comprar manana", "quiero comprar en apertura", "quiero comprar desde apertura",
-        "quiero escoger desde apertura", "quiero escoger en apertura", "quiero elegir desde apertura",
-        "quiero reservar", "quiero apartar", "quiero asegurar", "quiero uno de esquina",
-        "quiero una esquina", "quiero uno cerca de la entrada", "quiero cerca de la entrada",
-        "quiero uno cerca de las amenidades", "quiero cerca de las amenidades",
-        "no quiero que me lo ganen", "no quiero que me ganen", "quiero ser de los primeros",
-        "quiero comprar ya", "quiero apartarlo ya", "lo quiero reservar"
-    ]
-    if any(x in t for x in alta):
-        return "apertura"
-
-    # Una preferencia concreta solo cuenta como intención alta cuando el cliente
-    # expresa deseo personal. Preguntar "¿hay esquinas?" NO basta para etiquetarlo.
-    pref = _altamira_preferencia_ubicacion(texto)
-    if pref and any(x in t for x in [
-        "quiero", "busco", "me interesa", "prefiero", "necesito",
-        "me gustaria", "quisiera", "quiero uno", "quiero una"
-    ]):
-        return "apertura"
-    return None
-
-
-def _altamira_marcar_crm(numero, etapa=None, accion=""):
-    meta = crm_obtener_meta(numero)
-    crm_guardar_meta(
-        numero,
-        etapa or meta.get("etapa") or "Nuevo lead",
-        accion,
-        meta.get("proxima_accion_fecha") or ""
-    )
-
-
-def _altamira_alertar_clasificacion(numero, clasificacion, detalle=""):
-    estado = _estado_altamira(numero)
-    detalle = str(detalle or "").strip()
-    if clasificacion == "apertura":
-        estado["altamira_intencion_compra"] = "apertura"
-        if estado.get("altamira_alerta_alta_enviada"):
-            persistir_cliente(numero)
-            return
-        estado["altamira_alerta_alta_enviada"] = True
-        accion = "🔥 PRIORIDAD APERTURA · Altamira" + (f" · {detalle}" if detalle else "")
-        _altamira_marcar_crm(numero, "Interesado", accion)
-        aviso = "🔥 Cliente con intención alta de comprar/escoger en la apertura de Altamira"
-        if detalle:
-            aviso += f"\nPreferencia: {detalle}"
-        event_id = f"altamira-alta-{numero}-{time.time_ns()}"
-        try:
-            Thread(target=enviar_push_crm, args=(numero, aviso, event_id), daemon=True).start()
-            Thread(target=enviar_ntfy_crm, args=(numero, aviso, event_id), daemon=True).start()
-        except Exception as exc:
-            print("ALTAMIRA ALERTA ALTA ERROR:", exc)
-    elif clasificacion == "posterior":
-        estado["altamira_intencion_compra"] = "posterior"
-        if not estado.get("altamira_alerta_posterior_enviada"):
-            estado["altamira_alerta_posterior_enviada"] = True
-            accion = "🟡 Interesado · decidirá después de conocer precios de Altamira"
-            _altamira_marcar_crm(numero, "Interesado", accion)
-    persistir_cliente(numero)
-
-
-def _altamira_marcar_intervencion(numero, pregunta):
-    estado = _estado_altamira(numero)
-    estado["altamira_esperando_gabriel"] = True
-    estado["altamira_requiere_intervencion"] = True
-    estado["altamira_esperando_cliente"] = False
-    estado["altamira_pregunta_pendiente"] = None
-    persistir_cliente(numero)
-    texto = str(pregunta or "").strip()
-    accion = "⚠️ Requiere intervención · Altamira"
-    if texto:
-        accion += f" · {texto[:100]}"
-    _altamira_marcar_crm(numero, crm_obtener_meta(numero).get("etapa") or "Interesado", accion)
-    aviso = "⚠️ Altamira requiere su intervención"
-    if texto:
-        aviso += f"\nCliente preguntó: {texto[:180]}"
-    event_id = f"altamira-intervencion-{numero}-{time.time_ns()}"
-    try:
-        Thread(target=enviar_push_crm, args=(numero, aviso, event_id), daemon=True).start()
-        Thread(target=enviar_ntfy_crm, args=(numero, aviso, event_id), daemon=True).start()
-    except Exception as exc:
-        print("ALTAMIRA INTERVENCION ERROR:", exc)
-
-
-def _altamira_enviar_y_recordar(numero, texto):
-    texto = formalizar_trato_usted(texto)
-    texto = _palmeras_formatear_visual(texto)
-    estado = _estado_altamira(numero)
-    if not estado.get("altamira_esperando_gabriel") and not estado.get("altamira_requiere_intervencion"):
-        pregunta = _palmeras_extraer_ultima_pregunta_respuesta(texto)
-        estado["altamira_pregunta_pendiente"] = pregunta
-        estado["altamira_esperando_cliente"] = bool(pregunta)
-        persistir_cliente(numero)
-    enviar_whatsapp(numero, texto)
-    guardar_mensaje(numero, "assistant", texto)
-    return texto
-
-
-def _altamira_presentacion_base():
-    status = _altamira_status_precios()
-    if status == "preapertura":
-        precios = "Los *precios oficiales se liberan mañana con la apertura*; prefiero no adelantarle una cifra que pueda cambiar. 💰"
-    elif status == "apertura_sin_precios_cargados":
-        precios = "Los *precios oficiales se liberan hoy con la apertura*. Todavía no tengo cargada la tabla final, así que prefiero no inventarle un monto. 💰"
-    else:
-        precios = "Aún no tengo cargada la *tabla oficial de precios*, así que prefiero no inventarle un monto. 💰"
-    return (
-        f"{_altamira_saludo_actual()} 👋 Le saluda *Gabriel Polero, asesor de ventas de Multiproyectos DIVE* 😊\n\n"
-        "Le comparto información de nuestra nueva residencial *Altamira*, en *Palestina de los Altos, Quetzaltenango* 🏡⛰️\n\n"
-        "El proyecto contará con *servicios y amenidades*, y para la apertura tenemos opciones en distintos sectores: "
-        "*cerca de la entrada, esquinas, próximas a las amenidades y ubicaciones interiores*. 📍\n\n"
-        f"{precios}\n\n"
-        "*Para orientarle mejor, ¿su idea es escoger una buena ubicación desde la apertura o prefiere conocer primero los precios y decidir con más calma?* 😊"
-    )
-
-
-def _altamira_respuesta_precio():
-    status = _altamira_status_precios()
-    if status == "preapertura":
-        inicio = "Los *precios y cuotas oficiales todavía no han sido liberados*; se conocerán mañana con la apertura. 💰"
-    elif status == "apertura_sin_precios_cargados":
-        inicio = "Los *precios oficiales se están liberando con la apertura de hoy*, pero todavía no tengo cargada la tabla final. Prefiero no darle una cifra incorrecta. 💰"
-    else:
-        inicio = "Todavía no tengo cargada la *tabla oficial de precios y cuotas*, por lo que prefiero no darle una cifra incorrecta. 💰"
-    return (
-        f"{inicio}\n\n"
-        "💳 Sí puedo confirmarle que manejamos *financiamiento propio de 1 a 8 años*, directamente con la empresa, y la *reserva es desde Q5,000*.\n\n"
-        "En cuanto tenga el precio oficial cargado, podré darle la cuota exacta según el plazo que le interese.\n\n"
-        "*¿Está buscando alguna ubicación en especial: esquina, cerca de la entrada o próxima a las amenidades?* 🏡"
-    )
-
-
-def _altamira_respuesta_reserva():
-    return (
-        "Claro 😊 En *Altamira* la reserva se maneja *desde Q5,000* 🔑\n\n"
-        "Ese monto le permite avanzar con el proceso sobre una opción disponible, pero antes de confirmar un lote específico debo validar su disponibilidad en ese momento. 🏡\n\n"
-        "Para compra manejamos los mismos requisitos habituales y *financiamiento propio de 1 a 8 años*.\n\n"
-        "*¿Qué ubicación le gustaría priorizar: esquina, cerca de la entrada, próxima a las amenidades o una ubicación interior?* 📍"
-    )
-
-
-def _altamira_enviar_plano(numero):
-    # Si Gabriel configura una URL externa, tiene prioridad.
-    url_plano = ALTAMIRA_PLANO_URL
-
-    # De lo contrario usamos el PDF incluido con el bot y servido públicamente
-    # por el mismo Render mediante /messenger-media/.
-    if not url_plano:
-        base = _messenger_base_publica()
-        if base:
-            url_plano = f"{base}/messenger-media/planos/altamira-palestina.pdf"
-
-    if url_plano:
-        return enviar_documento_url_whatsapp(
-            numero,
-            url_plano,
-            "Plano_Altamira_Palestina_de_los_Altos.pdf",
-            caption="Plano general de Altamira · Palestina de los Altos 📄🏡"
-        )
-    return False
-
-
-def _altamira_generar_respuesta(numero, texto_cliente):
-    estado = _estado_altamira(numero)
-    historial = obtener_historial(numero)[-10:]
-    status_precios = _altamira_status_precios()
-    resumen_estado = {
-        "intencion_compra": estado.get("altamira_intencion_compra"),
-        "preferencia_ubicacion": estado.get("altamira_preferencia_ubicacion"),
-        "estado_precios": status_precios,
-        "esperando_gabriel": estado.get("altamira_esperando_gabriel"),
-    }
-    instrucciones = f"""
-Usted ES Gabriel Polero atendiendo personalmente por WhatsApp.
-TRATO OBLIGATORIO: SIEMPRE use usted, le, su, sus. Nunca use tú, vos, te o ti.
-No diga que es IA, bot o asistente. No firme al final como Gabriel.
-
-DATOS OFICIALES DE ALTAMIRA:
-{ALTAMIRA_FICHA_OFICIAL}
-
-ESTADO DEL CLIENTE:
-{json.dumps(resumen_estado, ensure_ascii=False)}
-
-REGLAS:
-- Responda PRIMERO exactamente lo que el cliente preguntó. No convierta cada respuesta en una ficha completa.
-- Use respuesta mínima suficiente: datos correctos, párrafos cortos, 2 a 5 emojis naturales y *negritas de WhatsApp* para lo importante.
-- Como máximo UNA pregunta al final y solo si ayuda a que la conversación avance.
-- Si el cliente hace varias preguntas en el mismo bloque, responda todas las que estén respaldadas.
-- NO invente precio, cuota, medida, amenidad específica, garita, muro, mantenimiento, fechas, disponibilidad exacta ni ubicación precisa.
-- Si preguntan por precio/cuotas, explique que aún no están cargados y NO haga cálculos estimados.
-- Puede explicar financiamiento 1 a 8 años, reserva Q5,000, enganche Q6,000, 17% sobre saldos, abonos a capital y requisitos porque sí están confirmados.
-- Si preguntan por una ubicación específica del plano, puede decir que existen opciones generales en entrada/esquinas/cerca de amenidades, pero la disponibilidad de un lote concreto debe confirmarse.
-- Si la pregunta no puede contestarse de forma segura con la ficha, devuelva puede_responder=false y una respuesta cálida: "Permítame confirmarle ese detalle para darle la información correcta 😊."
-- No mencione garita ni muro espontáneamente.
-- Si el cliente ya dijo que quiere comprar/reservar en apertura, avance de forma natural preguntando qué sector desea priorizar; no vuelva a preguntarle si comprará en apertura.
-- Si dijo que esperará precios, respete eso y ayúdele a conocer el proyecto sin presión.
-
-Devuelva EXCLUSIVAMENTE JSON válido:
-{{"puede_responder": true, "mensaje": "respuesta para el cliente"}}
-"""
-    mensajes=[]
-    for item in historial:
-        if item.get("role") in {"user","assistant"}:
-            mensajes.append({"role":item["role"],"content":str(item.get("content") or "")})
-    if not (mensajes and mensajes[-1].get("role")=="user" and str(mensajes[-1].get("content") or "").strip()==str(texto_cliente or "").strip()):
-        mensajes.append({"role":"user","content":texto_cliente})
-    try:
-        r=client.responses.create(model="gpt-5-mini", instructions=instrucciones, input=mensajes)
-        raw=(r.output_text or "").strip()
-        m=re.search(r"\{.*\}",raw,flags=re.S)
-        data=json.loads(m.group(0) if m else raw)
-        msg=eliminar_eco_pregunta_cliente(str(data.get("mensaje") or "").strip(), texto_cliente)
-        msg=formalizar_trato_usted(msg)
-        msg=_palmeras_quitar_firma_innecesaria(msg)
-        return bool(data.get("puede_responder",True)), msg
-    except Exception as exc:
-        print("ALTAMIRA IA ERROR:",exc)
-        return False,"Permítame confirmarle ese detalle para darle la información correcta 😊."
-
-
-def manejar_cerebro_altamira(numero, texto, message_id=None):
-    if not texto:
-        return False
-    # Comparaciones explícitas entre proyectos se dejan al motor general.
-    tnorm=_altamira_normalizar(texto)
-    otros=sum(1 for x in ["palmeras","buenaventura","vista hermosa"] if x in tnorm)
-    if otros and ("altamira" in tnorm or "palestina" in tnorm):
-        return False
-
-    estado=_estado_altamira(numero)
-    primer_contacto=necesita_presentacion_inicial(numero)
-    marcar_cliente_presentado(numero)
-    guardar_mensaje(numero,"user",texto)
-
-    preferencia=_altamira_preferencia_ubicacion(texto)
-    if preferencia:
-        estado["altamira_preferencia_ubicacion"]=preferencia
-
-    clasificacion=_altamira_clasificar_intencion(texto)
-    if clasificacion:
-        _altamira_alertar_clasificacion(numero,clasificacion,preferencia or "")
-
-    # Pregunta general del anuncio/preapertura.
-    if _altamira_es_entrada_general(texto):
-        estado["altamira_etapa"]="clasificando_apertura"
-        persistir_cliente(numero)
-        _altamira_enviar_y_recordar(numero,_altamira_presentacion_base())
-        return True
-
-    # Precio o cuota: nunca estimar mientras la tabla no esté cargada.
-    if _altamira_pide_precio_o_cuota(texto):
-        _altamira_enviar_y_recordar(numero,_altamira_respuesta_precio())
-        return True
-
-    # Reserva = intención alta, aun si la frase no coincidió con el clasificador.
-    if _altamira_pide_reserva(texto):
-        estado["altamira_reserva_interes"]=True
-        _altamira_alertar_clasificacion(numero,"apertura",preferencia or "reserva")
-        _altamira_enviar_y_recordar(numero,_altamira_respuesta_reserva())
-        return True
-
-    # Plano: si ya tenemos URL pública lo enviamos. Si todavía no está cargado,
-    # no fingimos haberlo enviado y Gabriel recibe intervención.
-    if _altamira_pide_plano(texto):
-        if _altamira_enviar_plano(numero):
-            _altamira_enviar_y_recordar(
-                numero,
-                "Le compartí el *plano general de Altamira* 📄🏡. Tenemos opciones en distintos sectores del proyecto.\n\n*¿Qué ubicación le llama más la atención: esquina, entrada o cerca de las amenidades?* 😊"
-            )
-        else:
-            _altamira_marcar_intervencion(numero,"Solicitó el plano de Altamira y ALTAMIRA_PLANO_URL todavía no está configurada")
-            _altamira_enviar_y_recordar(numero,"Permítame compartirle el plano correcto de *Altamira* en un momento 😊📄.")
-        return True
-
-    # Respuestas directas a la pregunta de clasificación inicial.
-    if clasificacion == "apertura":
-        pref=estado.get("altamira_preferencia_ubicacion")
-        if pref:
-            respuesta=(
-                f"Perfecto 😊 Entonces voy a tomar como prioridad que está buscando *{pref}* en *Altamira* 🏡\n\n"
-                "Para la apertura tenemos opciones en distintos sectores, pero la disponibilidad cambia conforme se van eligiendo lotes.\n\n"
-                "*¿Desea que le avise cuál opción disponible encaja mejor con esa ubicación cuando se liberen los precios?* 🔥"
-            )
-        else:
-            respuesta=(
-                "Perfecto 😊 Si su idea es escoger desde la *apertura*, conviene definir desde ahora qué ubicación quiere priorizar. 🏡\n\n"
-                "📍 Tenemos opciones *cerca de la entrada, en esquina, próximas a las amenidades y ubicaciones interiores*.\n\n"
-                "*¿Cuál de esas ubicaciones le interesaría más?*"
-            )
-        _altamira_enviar_y_recordar(numero,respuesta)
-        return True
-
-    if clasificacion == "posterior":
-        _altamira_enviar_y_recordar(
-            numero,
-            "Claro 😊 Podemos esperar a conocer los *precios oficiales* para que tome la decisión con toda la información.\n\nMientras tanto, puedo ayudarle a identificar qué sector del proyecto le gusta más para que ya tenga una referencia cuando salgan los precios. 🏡\n\n*¿Le llama más la atención una esquina, estar cerca de la entrada o cerca de las amenidades?* 📍"
-        )
-        return True
-
-    # Cualquier otra consulta entra a IA con ficha cerrada y libertad conversacional.
-    puede,mensaje=_altamira_generar_respuesta(numero,texto)
-    if not puede:
-        _altamira_marcar_intervencion(numero,texto)
-    _altamira_enviar_y_recordar(numero,mensaje)
-    return True
-
-
-# ============================================================
 # RECIBIR MENSAJES DE WHATSAPP
 # ============================================================
 
@@ -11529,49 +9524,18 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
         print("\nMENSAJE DEL CLIENTE:")
         print(texto_cliente)
 
-        # ========================================================
-        # ALTAMIRA PALESTINA - CAMPAÑA DE APERTURA
-        # ========================================================
-        # Se atiende antes de los flujos antiguos para impedir que un lead nuevo
-        # herede datos de Palmeras/Buenaventura/Vista Hermosa. Los anuncios ya
-        # mapeados de los proyectos anteriores siguen conservando su proyecto.
-        proyecto_previo_altamira = detectar_proyecto_en_texto(texto_cliente) or obtener_proyecto_actual(numero_cliente)
-        if proyecto_previo_altamira == "altamira":
-            estado_altamira = obtener_estado_conversacion(numero_cliente)
-            estado_altamira["proyecto_actual"] = "altamira"
-            proyecto_activo[numero_cliente] = "altamira"
-            persistir_cliente(numero_cliente)
-            if manejar_cerebro_altamira(numero_cliente, texto_cliente, message_id):
-                return
-
-        # ========================================================
-        # NUEVO CEREBRO DE PALMERAS - PRIORIDAD SOBRE FLUJOS VIEJOS
-        # ========================================================
-        # Si el mensaje menciona Palmeras o el proyecto ya quedó fijado por el
-        # anuncio/memoria, toda la conversación de Palmeras se atiende aquí.
-        # Si el cliente compara varios proyectos, dejamos pasar al flujo general.
-        proyecto_previo = detectar_proyecto_en_texto(texto_cliente) or obtener_proyecto_actual(numero_cliente)
-        if proyecto_previo == "palmeras" and not _palmeras_menciona_varios_proyectos(texto_cliente):
-            estado_previo = obtener_estado_conversacion(numero_cliente)
-            estado_previo["proyecto_actual"] = "palmeras"
-            proyecto_activo[numero_cliente] = "palmeras"
-            persistir_cliente(numero_cliente)
-
-            if manejar_nuevo_cerebro_palmeras(
+        # PRESENTACION INICIAL:
+        # Palmeras tiene una bienvenida comercial propia y flexible. Si el proyecto
+        # ya viene identificado como Palmeras y el mensaje es genérico, NO mandamos
+        # antes el saludo corto porque duplicaría la presentación.
+        proyecto_previo_presentacion = obtener_proyecto_actual(numero_cliente)
+        if proyecto_previo_presentacion == "palmeras" and es_inicio_general_psm(texto_cliente):
+            presentacion_enviada = False
+        else:
+            presentacion_enviada = enviar_presentacion_si_corresponde(
                 numero_cliente,
-                texto_cliente,
                 message_id
-            ):
-                return
-
-        # PRESENTACION INICIAL OBLIGATORIA:
-        # antes de precios, cotizaciones, ubicación, fotos, videos o respuesta IA.
-        # Si el cliente pidió algo concreto, después de esta presentación
-        # el flujo continúa normalmente y entrega lo solicitado.
-        presentacion_enviada = enviar_presentacion_si_corresponde(
-            numero_cliente,
-            message_id
-        )
+            )
 
         # Si el PRIMER mensaje fue únicamente un saludo, ya respondimos con la
         # presentación. Terminamos aquí para que OpenAI no mande un segundo saludo.
@@ -11597,6 +9561,17 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
             numero_cliente,
             texto_cliente
         )
+
+        # PALMERAS SAN MIGUEL: conversación comercial progresiva.
+        # Va ANTES del coordinador genérico para evitar que una consulta de precio
+        # vuelva a disparar el paquete completo antiguo.
+        if manejar_flujo_palmeras_humano(
+            numero_cliente,
+            texto_cliente,
+            proyecto,
+            message_id
+        ):
+            return
 
         # Si el cliente envió varias preguntas seguidas (o una sola frase con
         # varias solicitudes), las atendemos TODAS antes de entrar a los flujos
@@ -11782,7 +9757,7 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
 
         # PLAZO DE ENTREGA DE ESCRITURA - PRIORIDAD SUPERIOR A GASTOS
         if pregunta_plazo_escritura(texto_cliente):
-            respuesta = respuesta_plazo_escritura()
+            respuesta = respuesta_plazo_escritura(proyecto)
 
             guardar_mensaje(numero_cliente, "user", texto_cliente)
             guardar_mensaje(numero_cliente, "assistant", respuesta)
@@ -14578,44 +12553,9 @@ def crm_enviar(numero):
     if not mensaje:
         return redirect(url_for("crm", numero=numero))
 
-    # Si Gabriel responde una pregunta que el bot marcó como desconocida,
-    # esa respuesta queda en la memoria del cliente y la IA se reactiva sola.
-    # En cualquier otra respuesta manual, conservamos el comportamiento anterior:
-    # la conversación queda en MANUAL hasta que Gabriel pulse "Activar IA".
-    estado_actual = obtener_estado_conversacion(numero)
-    era_intervencion_palmeras = bool(
-        estado_actual.get("palmeras_esperando_gabriel")
-        or estado_actual.get("palmeras_requiere_intervencion")
-    )
-    era_intervencion_altamira = bool(
-        estado_actual.get("altamira_esperando_gabriel")
-        or estado_actual.get("altamira_requiere_intervencion")
-    )
-    era_intervencion_ia = era_intervencion_palmeras or era_intervencion_altamira
-
-    if era_intervencion_ia:
-        if era_intervencion_palmeras:
-            estado_actual["palmeras_esperando_gabriel"] = False
-            estado_actual["palmeras_requiere_intervencion"] = False
-            estado_actual["palmeras_etapa"] = "conversacion_abierta"
-            estado_actual["palmeras_pregunta_pendiente"] = None
-        if era_intervencion_altamira:
-            estado_actual["altamira_esperando_gabriel"] = False
-            estado_actual["altamira_requiere_intervencion"] = False
-            estado_actual["altamira_etapa"] = "conversacion_abierta"
-            estado_actual["altamira_pregunta_pendiente"] = None
-        persistir_cliente(numero)
-        crm_poner_ia(numero)
-        meta_actual = crm_obtener_meta(numero)
-        crm_guardar_meta(
-            numero,
-            meta_actual.get("etapa") or "Interesado",
-            "Respuesta de Gabriel guardada; IA reanudada",
-            meta_actual.get("proxima_accion_fecha") or ""
-        )
-    else:
-        crm_poner_manual(numero)
-
+    # Si Gabriel responde manualmente, la conversación queda en manual
+    # hasta que él pulse "Activar IA".
+    crm_poner_manual(numero)
     cancelar_seguimiento(numero)
 
     # Invalida cualquier respuesta automática que todavía estuviera procesándose.
@@ -14637,11 +12577,6 @@ def crm_enviar(numero):
     else:
         enviar_whatsapp(numero, mensaje, formalizar=False)
         guardar_mensaje(numero, "assistant", mensaje, formalizar=False)
-
-    if era_intervencion_ia:
-        # Gabriel ya resolvió la duda desconocida y ahora la respuesta queda en
-        # memoria. Si el cliente no contesta, retomamos la cadencia normal.
-        programar_seguimiento_inactividad(numero)
 
     return redirect(url_for("crm", numero=numero))
 
@@ -14794,5 +12729,3 @@ if __name__ == "__main__":
     print("")
 
     app.run(port=5000)
-
-# PRUEBA_PERSISTENCIA_CRM_20261004
