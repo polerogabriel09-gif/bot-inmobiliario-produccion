@@ -1,3 +1,4 @@
+# VERSION_PALMERAS_PLAN_CONTINUA_20261004 - evita que "Financiamiento" repita el menú y avanza a plazo
 # VERSION_PALMERAS_SIN_ALGORITMO_VIEJO_20261004 - flujo PSM nuevo exclusivo, sin paquete completo antiguo
 # VERSION_MULTIINTENCION_MENSAJES_8S_20260924 - agrupa 8s y atiende varias solicitudes del mismo bloque
 # VERSION_NUEVOS_ANUNCIOS_20260921
@@ -9091,7 +9092,18 @@ def manejar_flujo_palmeras_humano(numero, texto, proyecto, message_id):
             enviar_planos_psm_sin_topografia(numero)
         return True
 
-    if pide_pago_general and estado.get("psm_fase") and estado.get("psm_etapa") not in ("esperando_plazo", "propuesta_enviada"):
+    # Si ya existe una fase y el cliente pregunta DE FORMA GENERAL por pagos,
+    # mostramos las modalidades. Pero si ya eligió una modalidad concreta
+    # (por ejemplo: "Financiamiento", "contado" o "1 año sin intereses"),
+    # NO debemos interceptarla aquí: debe continuar al bloque de selección de plan
+    # que está más abajo para avanzar correctamente en el algoritmo.
+    plan_mencionado = detectar_plan_psm(texto)
+    if (
+        pide_pago_general
+        and estado.get("psm_fase")
+        and plan_mencionado is None
+        and estado.get("psm_etapa") not in ("esperando_plazo", "propuesta_enviada")
+    ):
         estado["psm_etapa"] = "esperando_plan"
         estado["psm_pregunta_pendiente"] = "plan_pago"
         persistir_cliente(numero)
@@ -9179,7 +9191,9 @@ def manejar_flujo_palmeras_humano(numero, texto, proyecto, message_id):
         return True
 
     # Elección de modalidad de pago.
-    plan = detectar_plan_psm(texto)
+    # Reutilizamos la detección anterior para que una respuesta como "Financiamiento"
+    # avance a pedir el plazo en vez de volver a mostrar las tres modalidades.
+    plan = plan_mencionado
     if estado.get("psm_fase") and plan:
         fase = estado["psm_fase"]
         estado["psm_plan"] = plan
