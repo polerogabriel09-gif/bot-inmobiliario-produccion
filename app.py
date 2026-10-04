@@ -1,4 +1,4 @@
-# VERSION_PALMERAS_FLUJO_HUMANO_20261004 - conversación progresiva PSM + fase + plan + visita
+# VERSION_PALMERAS_BIENVENIDA_ORDENADA_20261004 - bienvenida visual + planos ordenados
 # VERSION_MULTIINTENCION_MENSAJES_8S_20260924 - agrupa 8s y atiende varias solicitudes del mismo bloque
 # VERSION_NUEVOS_ANUNCIOS_20260921
 # VERSION_BUENAVENTURA_2_NUEVOS_IDS_20260908
@@ -8706,7 +8706,14 @@ def generar_bienvenida_psm(numero, texto_cliente):
 Redacte UN mensaje de bienvenida de WhatsApp como Gabriel Polero, asesor de ventas.
 Trate SIEMPRE al cliente de USTED. Nunca use tú, te, ti ni vos.
 Suene natural, humano, cercano y profesional, no como un menú ni como un anuncio copiado.
-Use 2 a 4 párrafos cortos y emojis moderados.
+
+FORMATO OBLIGATORIO PARA QUE SEA FÁCIL DE LEER EN WHATSAPP:
+- Ordene la información en bloques cortos con espacios entre ellos.
+- Use *negrita de WhatsApp* con un solo asterisco para RESALTAR los datos importantes.
+- Resalte obligatoriamente: *Palmeras San Miguel*, *8x16 (128 m²)*, *Fase 1*, *Q67,200*, *Fase 2*, *Q70,400*, *terrenos con todos los servicios* y *escritura registrada*.
+- Puede usar emojis moderados como 📍🏡🏊🌳✅📄, pero no sature el mensaje.
+- NO escriba párrafos largos.
+- NO use la frase "servicios contemplados".
 
 Debe incluir de manera natural TODOS estos datos, sin inventar otros:
 - Saludo apropiado: {saludo}.
@@ -8716,9 +8723,9 @@ Debe incluir de manera natural TODOS estos datos, sin inventar otros:
 - Fase 1: Q67,200; piscina y área verde.
 - Fase 2: Q70,400; área verde.
 - Ambas fases están en proceso de urbanización.
-- Servicios: agua potable, energía eléctrica, calles pavimentadas y drenajes con planta de tratamiento.
+- Diga expresamente que son TERRENOS CON TODOS LOS SERVICIOS y enumere: agua potable, energía eléctrica, calles pavimentadas y drenajes con planta de tratamiento.
 - Los lotes tienen escritura registrada y se desmembran legalmente.
-- Indique que a continuación se compartirán los planos para que pueda comparar las fases.
+- Indique que a continuación se compartirán LOS DOS PLANOS para comparar las fases.
 - Termine con UNA sola pregunta: cuál fase le parece más atractiva, Fase 1 o Fase 2.
 
 NO explique todavía cuotas, plazos de pago, contado, gastos adicionales ni requisitos.
@@ -8738,12 +8745,16 @@ NO mencione lotes 8x18, esquina ni bulevar como opciones disponibles.
         print("ERROR BIENVENIDA IA PSM:", exc)
 
     return formalizar_trato_usted(
-        f"¡Hola! 👋 {saludo}, le saluda Gabriel Polero, asesor de ventas. "
-        "Con gusto le cuento sobre Palmeras San Miguel 🏡, ubicado en Zona 5 de Retalhuleu, camino a La Verde.\n\n"
-        "Actualmente tenemos lotes de 8x16 (128 m²) en dos fases: Fase 1 en Q67,200, con piscina y área verde 🏊🌳; "
-        "y Fase 2 en Q70,400, con área verde 🌳. Ambas fases están en proceso de urbanización y contarán con agua potable, "
-        "energía eléctrica, calles pavimentadas y drenajes con planta de tratamiento. Los lotes cuentan con escritura registrada ✅.\n\n"
-        "Le comparto los planos para que pueda comparar ambas fases. ¿Cuál de las dos le parece más atractiva: Fase 1 o Fase 2? 😊"
+        f"{saludo} 👋 Le saluda Gabriel Polero, asesor de ventas.\n\n"
+        "Con gusto le comparto información de *Palmeras San Miguel* 🏡, ubicado en *Zona 5 de Retalhuleu, camino a La Verde*. 📍\n\n"
+        "Actualmente tenemos únicamente lotes de *8x16 (128 m²)* en dos fases:\n\n"
+        "🏊 *Fase 1 — Q67,200*\nPiscina y área verde.\n\n"
+        "🌳 *Fase 2 — Q70,400*\nÁrea verde.\n\n"
+        "Ambas fases están en proceso de urbanización.\n\n"
+        "✅ Son *terrenos con todos los servicios*: agua potable, energía eléctrica, calles pavimentadas y drenajes con planta de tratamiento.\n"
+        "📄 Los lotes cuentan con *escritura registrada* y se desmembran legalmente.\n\n"
+        "A continuación le comparto *los dos planos* para que pueda comparar las fases.\n\n"
+        "¿Cuál fase le parece más atractiva: *Fase 1* o *Fase 2*? 😊"
     )
 
 
@@ -8766,11 +8777,15 @@ def enviar_planos_psm_sin_topografia(numero, fase=None):
             enviados += 1
 
     if enviados:
+        # Los documentos pueden tardar un poco más en renderizarse en WhatsApp que un texto.
+        # Esperamos después de enviar AMBOS planos para que el mensaje de colores aparezca debajo.
+        time.sleep(3.0)
         enviar_whatsapp(
             numero,
-            "En los planos, 🟢 verde significa disponible y 🔴 rojo vendido. "
-            "Si alguna ubicación le llama la atención, indíqueme cuál y la revisamos 😊. "
-            "Todos los lotes tienen calle al frente."
+            "🟢 *Verde: disponible*\n"
+            "🔴 *Rojo: vendido*\n\n"
+            "Si alguna ubicación le llama la atención, indíqueme cuál y con gusto la revisamos 😊. "
+            "Además, *todos los lotes tienen calle al frente*."
         )
     return enviados > 0
 
