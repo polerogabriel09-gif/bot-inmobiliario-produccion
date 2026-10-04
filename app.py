@@ -6,6 +6,8 @@
 # VERSION_PALMERAS_SIN_ALGORITMO_VIEJO_20261004 - flujo PSM nuevo exclusivo, sin paquete completo antiguo
 # VERSION_MULTIINTENCION_MENSAJES_8S_20260924 - agrupa 8s y atiende varias solicitudes del mismo bloque
 # VERSION_NUEVOS_ANUNCIOS_20260921
+# VERSION_BUENAVENTURA_FLUJO_HUMANO_20261004
+# VERSION_MEDIA_PRIORIDAD_GLOBAL_20261004
 # VERSION_BUENAVENTURA_2_NUEVOS_IDS_20260908
 # VERSION_BUENAVENTURA_CTA_CONTROLADOS_20260908 - CTAs de anuncios + contexto de venta controlado
 # VERSION_BUENAVENTURA_NUEVA_CAMPANA_20260907
@@ -341,8 +343,8 @@ COTIZACIONES_IMAGEN = {
         "8x18": [
             "media/cotizaciones/buenaventura/8x18.jpeg",
         ],
-        "9x20": [
-            "media/cotizaciones/buenaventura/9x20.jpeg",
+        "8x16_comercial": [
+            "media/cotizaciones/buenaventura/8x16_comercial.jpeg",
         ],
     },
 }
@@ -363,11 +365,11 @@ ETIQUETAS_COTIZACIONES = {
     },
     "buenaventura": {
         "media/cotizaciones/buenaventura/8x16.jpeg":
-            "Buenaventura Cuyotenango - 8x16",
+            "Buenaventura Cuyotenango - 8x16 residencial / inversión",
         "media/cotizaciones/buenaventura/8x18.jpeg":
-            "Buenaventura Cuyotenango - 8x18",
-        "media/cotizaciones/buenaventura/9x20.jpeg":
-            "Buenaventura Cuyotenango - 9x20",
+            "Buenaventura Cuyotenango - 8x18 residencial / inversión",
+        "media/cotizaciones/buenaventura/8x16_comercial.jpeg":
+            "Buenaventura Cuyotenango - 8x16 comercial",
     },
 }
 
@@ -401,8 +403,8 @@ RESUMENES_COTIZACION = {
             "Fase F con piscina y área verde; Fase G con área verde 🏊🌳"
         ),
         "servicios": (
-            "Garita, muro perimetral, calles pavimentadas, agua potable, "
-            "energía eléctrica y drenajes con planta de tratamiento ✅"
+            "Calles pavimentadas, agua potable, energía eléctrica y drenajes con planta de tratamiento; "
+            "el sector residencial contempla garita y muro perimetral, mientras el área comercial no ✅"
         ),
         "cierre": (
             "Le comparto las opciones disponibles y con gusto revisamos la fase que más le interese 👇💰"
@@ -504,16 +506,16 @@ CUOTAS_POR_PROYECTO = {
     },
     "buenaventura": {
         "8x16": {
-            1: 7040.85, 2: 3817.44, 3: 2751.59, 4: 2227.92,
-            5: 1918.90, 6: 1717.20, 7: 1578.42, 8: 1476.64
+            2: 3817, 3: 2752, 4: 2228, 5: 1919,
+            6: 1717, 7: 1578, 8: 1476
         },
         "8x18": {
-            1: 7806.95, 2: 4232.81, 3: 3050.99, 4: 2470.34,
-            5: 2127.69, 6: 1904.05, 7: 1750.16, 8: 1637.32
+            2: 4232, 3: 3052, 4: 2470, 5: 2127,
+            6: 1904, 7: 1749, 8: 1637
         },
-        "9x20": {
-            1: 9758.69, 2: 5291.01, 3: 3813.73, 4: 3087.92,
-            5: 2659.61, 6: 2380.06, 7: 2187.70, 8: 2046.64
+        "8x16 Comercial": {
+            2: 6032, 3: 4350, 4: 3520, 5: 3032,
+            6: 2714, 7: 2493, 8: 2333
         },
     },
     "palmeras": {
@@ -770,9 +772,8 @@ DATOS_MEDIDAS = {
     "buenaventura": {
         "nombre": "Buenaventura Cuyotenango",
         "medidas": {
-            "8x16": {"precio": "desde Q83,200", "enganche": "Q6,000"},
+            "8x16": {"precio": "Q83,200 residencial / inversión o Q128,000 comercial", "enganche": "Q6,000"},
             "8x18": {"precio": "Q93,600", "enganche": "Q8,000"},
-            "9x20": {"precio": "Q117,000", "enganche": "Q10,000"},
         },
     },
     "vista_hermosa": {
@@ -810,7 +811,7 @@ def respuesta_medidas_disponibles(proyecto):
     if proyecto == "palmeras":
         return "En Palmeras San Miguel actualmente tenemos lotes de 8x16 (128 m²) en Fase 1 y Fase 2 😊🏡. Todos los lotes tienen calle al frente."
     if proyecto == "buenaventura":
-        return "En Buenaventura Cuyotenango tenemos lotes de 8x16, 8x18 y 9x20 😊🏡"
+        return "En Buenaventura Cuyotenango tenemos 8x16 y 8x18 para vivir o invertir; para negocio contamos con 8x16 comercial 😊🏡. ¿Lo busca para vivir, invertir o para negocio?"
     if proyecto == "vista_hermosa":
         return "En Ciudad Vista Hermosa tenemos lotes de 8x16 en Fase F y Fase G 😊🏡"
     return None
@@ -1034,11 +1035,10 @@ def info_completa_ya_enviada(numero, proyecto=None):
 
 def respuesta_precio_breve_buenaventura():
     return (
-        "Claro 😊 En Buenaventura Cuyotenango tenemos:\n\n"
-        "• 8x16 desde Q83,200\n"
-        "• 8x18 Q93,600\n\n"
-        "¿Qué medida le interesa y la busca para construir su casa, hacer locales "
-        "o tenerlo como patrimonio?"
+        "Claro 😊 En Buenaventura el precio depende del uso del terreno. "
+        "Para vivir o invertir tenemos 8x16 en Q83,200 y 8x18 en Q93,600; "
+        "para negocio tenemos 8x16 comercial en Q128,000. "
+        "¿Lo busca para vivir, invertir o para negocio?"
     )
 
 
@@ -1054,10 +1054,8 @@ def respuesta_ubicacion_cta_buenaventura():
 
 def respuesta_lotes_disponibles_cta_buenaventura():
     return (
-        "Con gusto 👍 Puedo mostrarle las ubicaciones disponibles actualmente en "
-        "Buenaventura Cuyotenango.\n\n"
-        "¿Está buscando un lote para construir su casa, hacer locales o para tenerlo "
-        "como patrimonio?"
+        "Con gusto 😊 Le comparto el plano general de Buenaventura para revisar las ubicaciones. "
+        "¿El terreno lo busca para vivir, invertir o para negocio?"
     )
 
 
@@ -1106,18 +1104,16 @@ def respuesta_seguimiento_uso_lote_buenaventura(numero, texto):
 
     if uso == "casa":
         return (
-            "Perfecto 😊 Para construir su casa tenemos medidas de 8x16, 8x18 y 9x20. "
-            "¿Qué medida le interesa más?"
+            "Perfecto 😊 Para vivir tenemos 8x16 y 8x18. ¿Qué medida le interesa más?"
         )
     if uso == "locales":
         return (
-            "Perfecto 😊 El diseño de construcción es libre, por lo que puede desarrollar "
-            "locales con construcción formal en block. Tenemos 8x16, 8x18 y 9x20. "
-            "¿Qué medida le interesa más?"
+            "Perfecto 😊 Para negocio contamos con el 8x16 comercial en Q128,000 y enganche Q6,000. "
+            "¿Desea revisar el financiamiento de 2 a 8 años?"
         )
     return (
-        "Perfecto 😊 Para tenerlo como patrimonio puede revisar las opciones de 8x16, "
-        "8x18 y 9x20. ¿Qué medida le interesa revisar primero?"
+        "Perfecto 😊 Para invertir puede revisar 8x16 en Q83,200 o 8x18 en Q93,600. "
+        "¿Qué medida le interesa revisar primero?"
     )
 
 
@@ -3407,12 +3403,11 @@ def enviar_info_todos_proyectos(numero):
         "🏡 *Buenaventura Cuyotenango*\n"
         "📍 Km 168 de la carretera hacia la playa de Tulate, Cuyotenango.\n"
         "📌 https://maps.app.goo.gl/4wTj52Ez32rdigXk8\n"
-        "• 8x16 desde Q83,200 | enganche Q6,000\n"
-        "• 8x18 Q93,600 | enganche Q8,000\n"
-        "• 9x20 Q117,000 | enganche Q10,000\n"
+        "• Para vivir o invertir: 8x16 Q83,200 | enganche Q6,000; 8x18 Q93,600 | enganche Q8,000\n"
+        "• Para negocio: 8x16 comercial Q128,000 | enganche Q6,000\n"
         "• Financiamiento propio de 2 a 8 años + abonos a capital.\n"
         "• Amenidades: casa club, piscinas, áreas verdes, juegos para niños y caminamientos.\n"
-        "• Servicios: garita, muro perimetral, calles pavimentadas, agua potable, energía eléctrica y drenajes con planta de tratamiento.\n\n"
+        "• Servicios: calles pavimentadas, agua potable, energía eléctrica y drenajes con planta de tratamiento. El sector residencial contempla garita y muro; el área comercial no.\n\n"
         "🌴 *Palmeras San Miguel*\n"
         "📍 Zona 5 de Retalhuleu, camino a La Verde / carretera hacia Las Pilas.\n"
         "📌 https://maps.app.goo.gl/pBUyn98n8NCkGW8o6\n"
@@ -5945,6 +5940,9 @@ def limpiar_intervencion_automatica(numero, reanudar_ia=True):
     if estado.get("vh_etapa") == "requiere_gabriel":
         estado["vh_etapa"] = "conversacion_abierta"
         estado["vh_pregunta_pendiente"] = None
+    if estado.get("bnv_etapa") == "requiere_gabriel":
+        estado["bnv_etapa"] = "conversacion_abierta"
+        estado["bnv_pregunta_pendiente"] = None
     persistir_cliente(numero)
     if reanudar_ia:
         crm_poner_ia(numero)
@@ -5984,6 +5982,9 @@ def marcar_intervencion_automatica(numero, pregunta, motivo="dato no confirmado"
     elif proyecto_intervencion == "vista_hermosa":
         estado["vh_etapa"] = "requiere_gabriel"
         estado["vh_pregunta_pendiente"] = None
+    elif proyecto_intervencion == "buenaventura":
+        estado["bnv_etapa"] = "requiere_gabriel"
+        estado["bnv_pregunta_pendiente"] = None
 
     # El modo manual impide cualquier respuesta automática hasta que Gabriel conteste.
     crm_poner_manual(numero)
@@ -6216,6 +6217,35 @@ Comportamiento en conversación abierta:
 - Después de una propuesta económica concreta puede orientar suavemente a una visita, pero no repita la invitación en cada respuesta.
 """
 
+        contexto_bnv_ia = ""
+        if proyecto_memoria == "buenaventura":
+            _inicializar_estado_bnv(estado_actual_ia)
+            contexto_bnv_ia = f"""
+============================================================
+FICHA MAESTRA Y ESTADO COMERCIAL - BUENAVENTURA CUYOTENANGO
+============================================================
+ESTE BLOQUE TIENE PRIORIDAD sobre cualquier dato antiguo de Buenaventura que aparezca en contexto.txt.
+
+Estado de esta conversación:
+- Etapa comercial: {estado_actual_ia.get('bnv_etapa') or 'CONVERSACION ABIERTA'}
+- Uso buscado: {estado_actual_ia.get('bnv_uso') or 'NO DEFINIDO'}
+- Producto elegido: {estado_actual_ia.get('bnv_producto') or 'NO DEFINIDO'}
+- Plan elegido: {estado_actual_ia.get('bnv_plan') or 'NO DEFINIDO'}
+- Plazo elegido: {estado_actual_ia.get('bnv_plazo') or 'NO DEFINIDO'}
+- Pregunta pendiente: {estado_actual_ia.get('bnv_pregunta_pendiente') or 'NINGUNA'}
+
+{BNV_FICHA_OFICIAL}
+
+Reglas de conversación:
+- Primero responda exactamente lo que el cliente preguntó y termine con UNA pregunta natural para continuar.
+- Si el cliente aún no indicó el uso, pregunte si lo busca para vivir, invertir o para negocio.
+- Vivir e invertir usan las opciones residenciales: 8x16 Q83,200 / enganche Q6,000 y 8x18 Q93,600 / enganche Q8,000.
+- Negocio usa exclusivamente 8x16 comercial Q128,000 / enganche Q6,000.
+- El área comercial NO tiene garita ni muro perimetral. No mezcle esa condición con el sector residencial.
+- Si el cliente pide fotos o videos, el sistema los enviará directamente: no diga que no puede enviarlos.
+- No mencione 9x20: ya no es una opción cargada en este flujo.
+"""
+
         # ====================================================
         # PERSONALIDAD Y REGLAS DEL BOT
         # ====================================================
@@ -6260,6 +6290,8 @@ INFORMACION OFICIAL DE LOS PROYECTOS
 {contexto}
 
 {contexto_psm_ia}
+
+{contexto_bnv_ia}
 
 ============================================================
 PROYECTO ACTIVO DE ESTA CONVERSACION
@@ -6336,9 +6368,8 @@ REGLAS COMERCIALES: CONTADO, CONSTRUCCION Y AMENIDADES
 - Palmeras San Miguel NO tiene ni tendrá garita ni muro perimetral. Nunca los menciones
   como características de Palmeras.
 - Vista Hermosa: sí cuenta con garita y muro perimetral. Sigue en proceso de urbanización y aún no se puede construir; no afirmes que toda la obra o las amenidades estén terminadas si el cliente pregunta por el estado actual.
-- Buenaventura Cuyotenango: garita y amenidades aún no están construidas; las imágenes
-  o videos pueden ser referencias de otros proyectos. Buenaventura sí contará con garita
-  y muro perimetral.
+- Buenaventura Cuyotenango: las amenidades aún no están construidas y las imágenes o videos pueden ser referencias.
+  El sector residencial contempla garita y muro perimetral; el área comercial NO tiene garita ni muro perimetral.
 - Palmeras San Miguel: las amenidades aún no están construidas; las imágenes o videos
   pueden ser referencias de otros proyectos.
 
@@ -6452,12 +6483,12 @@ REGLA CRITICA DE INFORMACION GENERAL Y ENGANCHE:
   pregunta explícitamente cuántos lotes hay o cuántos lotes tiene una fase.
 - No uses la expresión "medida de referencia".
 - Para Palmeras San Miguel la única medida disponible actualmente es 8x16 (128 m²).
-- Para Buenaventura Cuyotenango las únicas medidas cargadas son 8x16, 8x18 y 9x20.
+- Para Buenaventura Cuyotenango: para vivir o invertir hay 8x16 y 8x18; para negocio hay 8x16 comercial.
 - Para Vista Hermosa la medida cargada es 8x16 en Fase F y Fase G.
 - NUNCA respondas con el precio más bajo del proyecto cuando el cliente menciona una medida concreta.
   Usa SIEMPRE el precio y enganche exactos de esa medida/fase:
   Palmeras: 8x16 Fase 1 = Q67,200 / enganche Q6,000; 8x16 Fase 2 = Q70,400 / enganche Q6,000.
-  Buenaventura: 8x16 = desde Q83,200 / enganche Q6,000; 8x18 = Q93,600 / enganche Q8,000; 9x20 = Q117,000 / enganche Q10,000.
+  Buenaventura: vivir/invertir 8x16 = Q83,200 / enganche Q6,000; vivir/invertir 8x18 = Q93,600 / enganche Q8,000; negocio 8x16 comercial = Q128,000 / enganche Q6,000.
   Vista Hermosa: 8x16 Fase F = Q83,200 / enganche Q6,000; 8x16 Fase G = Q89,600 / enganche Q6,000.
 - En Palmeras San Miguel el enganche es Q6,000. NO ofrezca por iniciativa propia dividirlo o iniciar cuota en el tercer mes.
 - Solo si el cliente pregunta explícitamente si puede fraccionar/dividir el enganche, explique Q3,000 + Q3,000 y que la primera cuota puede iniciar en el tercer mes.
@@ -8481,20 +8512,23 @@ def enviar_multimedia_del_proyecto(
     enviar_videos=False
 ):
     """
-    Control de multimedia:
-    - máximo 4 fotos por solicitud;
-    - máximo 2 videos por solicitud;
-    - desde el flujo principal, si el cliente pide fotos O videos, se envían AMBOS;
-    - los videos pueden reemplazarse después conservando el mismo nombre de archivo.
-    """
+    Envía el material que el cliente pidió y respeta el proyecto activo.
 
+    Reglas:
+    - si pide fotos, manda fotos;
+    - si pide videos, manda videos;
+    - si pide ambos, manda ambos;
+    - máximo 4 fotos y 2 videos por solicitud para no saturar;
+    - si no hay fotos cargadas pero sí videos, se ofrece/envía el video como alternativa;
+    - siempre termina con una pregunta para mantener viva la conversación.
+    """
     if not proyecto:
         marcar_multimedia_pendiente(numero)
         enviar_whatsapp(
             numero,
-            "Claro 😊 ¿De cuál proyecto quieres ver las fotos y videos?"
+            "Claro 😊 ¿De cuál proyecto desea ver fotos o videos: Palmeras San Miguel, Vista Hermosa o Buenaventura Cuyotenango?"
         )
-        return
+        return False
 
     limpiar_multimedia_pendiente(numero)
 
@@ -8503,16 +8537,7 @@ def enviar_multimedia_del_proyecto(
         "vista_hermosa": "Vista Hermosa",
         "buenaventura": "Buenaventura Cuyotenango"
     }
-
     nombre = nombres.get(proyecto, "el proyecto")
-
-    # EXCEPCIÓN VISTA HERMOSA:
-    # Las fotos generales antiguas quedan fuera del flujo. Si el cliente
-    # pide fotos, imágenes o videos de Vista Hermosa, enviamos solamente
-    # los videos del proyecto.
-    if proyecto == "vista_hermosa":
-        enviar_fotos = False
-        enviar_videos = True
 
     fotos = IMAGENES_PROYECTOS.get(proyecto, [])
     fotos_disponibles = [r for r in fotos if os.path.exists(r)][:4]
@@ -8520,69 +8545,61 @@ def enviar_multimedia_del_proyecto(
     videos = VIDEOS_PROYECTOS.get(proyecto, [])
     videos_disponibles = [r for r in videos if os.path.exists(r)][:2]
 
-    if enviar_fotos and not fotos_disponibles and not enviar_videos:
+    # Vista Hermosa actualmente no tiene fotos generales habilitadas en la lista.
+    # Si el cliente pide fotos y no existen, no ignoramos la petición: le explicamos
+    # brevemente y le mostramos los videos reales ya cargados del proyecto.
+    if enviar_fotos and not fotos_disponibles and videos_disponibles and not enviar_videos:
         enviar_whatsapp(
             numero,
-            f"En este momento no tengo fotos cargadas de {nombre} para "
-            "enviarlas automáticamente 😊"
+            f"En este momento no tengo fotos generales habilitadas de *{nombre}*, pero sí tengo videos del proyecto 😊. Se los comparto para que pueda conocerlo mejor."
         )
-        return
+        enviar_videos = True
 
-    if enviar_videos and not videos_disponibles and not enviar_fotos:
+    if enviar_fotos and fotos_disponibles:
         enviar_whatsapp(
             numero,
-            f"En este momento no tengo videos cargados de {nombre} para "
-            "enviarlos automáticamente 😊"
+            f"Claro 😊 Le comparto algunas fotos de *{nombre}* para que pueda conocer mejor el proyecto 🏡📸"
         )
-        return
-
-    if enviar_fotos and enviar_videos:
-        enviar_whatsapp(
-            numero,
-            f"¡Claro! 🙌 Te comparto algunas fotos y videos de {nombre} "
-            "para que conozcas mejor el proyecto 🏡📸🎥"
-        )
-    elif enviar_fotos:
-        enviar_whatsapp(
-            numero,
-            f"¡Claro! 🙌 Te comparto algunas imágenes de {nombre} "
-            "para que conozcas mejor el proyecto 🏡📸"
-        )
-    elif enviar_videos:
-        enviar_whatsapp(
-            numero,
-            f"¡Claro! 🎥 Te comparto un par de videos de {nombre} "
-            "para que puedas conocer mejor el proyecto 🏡"
-        )
-
-    if enviar_fotos:
         for i, ruta in enumerate(fotos_disponibles, start=1):
-            caption = f"{nombre} 🏡📸" if i == 1 else ""
             enviar_imagen_whatsapp(
                 numero,
                 ruta,
-                caption=caption
+                caption=f"{nombre} 🏡📸" if i == 1 else ""
             )
+    elif enviar_fotos and not fotos_disponibles and not enviar_videos:
+        enviar_whatsapp(
+            numero,
+            f"En este momento no tengo fotos cargadas de *{nombre}* para enviarlas automáticamente."
+        )
 
     if enviar_videos:
-        for i, ruta in enumerate(videos_disponibles, start=1):
-            caption = f"{nombre} 🎥🏡" if i == 1 else ""
-            enviar_video_whatsapp(
+        if videos_disponibles:
+            enviar_whatsapp(
                 numero,
-                ruta,
-                caption=caption
+                f"Claro 🎥 Le comparto videos de *{nombre}* para que pueda conocer mejor el proyecto 🏡"
+            )
+            for i, ruta in enumerate(videos_disponibles, start=1):
+                enviar_video_whatsapp(
+                    numero,
+                    ruta,
+                    caption=f"{nombre} 🎥🏡" if i == 1 else ""
+                )
+        else:
+            enviar_whatsapp(
+                numero,
+                f"En este momento no tengo videos cargados de *{nombre}* para enviarlos automáticamente."
             )
 
-    # Cuando el cliente pide fotos o videos, además del material general
-    # del proyecto enviamos también fotos y videos de las amenidades.
-    enviar_paquete_amenidades(numero, proyecto)
+    # Las amenidades se muestran en video únicamente cuando el cliente pidió videos
+    # (o cuando videos fue el fallback porque no había fotos habilitadas).
+    if enviar_videos:
+        enviar_paquete_amenidades(numero, proyecto)
 
     enviar_whatsapp(
         numero,
-        "Si quieres, también puedo ayudarte con precios, financiamiento "
-        "o coordinar una visita 🙌📍"
+        "¿Desea que le muestre también los precios y las formas de pago disponibles? 😊"
     )
-
+    return True
 
 def enviar_solo_fotos_del_proyecto(numero, proyecto):
     """
@@ -11094,6 +11111,710 @@ def manejar_flujo_vista_hermosa_humano(numero, texto, proyecto, message_id):
 
 
 # ============================================================
+# BUENAVENTURA CUYOTENANGO - FLUJO COMERCIAL HUMANO / PROGRESIVO
+# ============================================================
+# Replica la misma filosofía comercial de Palmeras/Vista Hermosa:
+# presentación -> plano -> calificación por uso -> producto -> forma de pago
+# -> conversación abierta -> visita. El cliente puede romper el protocolo
+# cuando pregunta algo concreto y el bot debe responder esa pregunta primero.
+
+BNV_PRODUCTOS = {
+    "res_8x16": {
+        "nombre": "8x16 residencial / inversión",
+        "medida": "8x16",
+        "precio": 83200,
+        "precio_texto": "Q83,200",
+        "enganche": 6000,
+        "enganche_texto": "Q6,000",
+        "imagen_financiamiento": "media/cotizaciones/buenaventura/8x16.jpeg",
+        "sector": "residencial",
+    },
+    "res_8x18": {
+        "nombre": "8x18 residencial / inversión",
+        "medida": "8x18",
+        "precio": 93600,
+        "precio_texto": "Q93,600",
+        "enganche": 8000,
+        "enganche_texto": "Q8,000",
+        "imagen_financiamiento": "media/cotizaciones/buenaventura/8x18.jpeg",
+        "sector": "residencial",
+    },
+    "com_8x16": {
+        "nombre": "8x16 comercial",
+        "medida": "8x16",
+        "precio": 128000,
+        "precio_texto": "Q128,000",
+        "enganche": 6000,
+        "enganche_texto": "Q6,000",
+        "imagen_financiamiento": "media/cotizaciones/buenaventura/8x16_comercial.jpeg",
+        "sector": "comercial",
+    },
+}
+
+BNV_CUOTAS_FINANCIAMIENTO = {
+    "res_8x16": {2: 3817, 3: 2752, 4: 2228, 5: 1919, 6: 1717, 7: 1578, 8: 1476},
+    "res_8x18": {2: 4232, 3: 3052, 4: 2470, 5: 2127, 6: 1904, 7: 1749, 8: 1637},
+    "com_8x16": {2: 6032, 3: 4350, 4: 3520, 5: 3032, 6: 2714, 7: 2493, 8: 2333},
+}
+
+BNV_FICHA_OFICIAL = """
+PROYECTO: Buenaventura Cuyotenango.
+UBICACIÓN: km 168 de la carretera hacia la playa de Tulate, Cuyotenango.
+PLANO: existe un solo plano general grande para todo el proyecto.
+
+CALIFICACIÓN OBLIGATORIA:
+- Preguntar si el terreno lo busca para vivir, invertir o para negocio.
+- Para vivir o invertir se usan las opciones residenciales.
+- Para negocio se usa el lote comercial.
+
+VIVIR / INVERTIR:
+- 8x16: Q83,200. Enganche Q6,000.
+- 8x18: Q93,600. Enganche Q8,000.
+- El sector residencial mantiene los servicios y amenidades del proyecto, además de garita y muro perimetral.
+
+NEGOCIO / COMERCIAL:
+- Únicamente 8x16 comercial: Q128,000.
+- Enganche Q6,000.
+- El área comercial NO tiene garita y NO tiene muro perimetral.
+- Conserva los servicios cargados del proyecto.
+
+FORMAS DE PAGO:
+- Financiamiento propio de 2 a 8 años.
+- Plan de 1 año sin intereses: precio menos enganche, dividido entre 11 mensualidades.
+- Pago al contado: ofrecer primero 3% de descuento; se puede negociar hasta un máximo de 5% según la operación.
+- Abonos extraordinarios a capital conforme a las reglas comerciales ya cargadas; no inventar condiciones nuevas.
+
+SERVICIOS:
+- Agua potable.
+- Energía eléctrica.
+- Calles pavimentadas.
+- Drenajes con planta de tratamiento.
+
+AMENIDADES:
+- Casa club.
+- Piscinas.
+- Áreas verdes.
+- Juegos para niños.
+- Caminamientos.
+
+GASTOS ADICIONALES (son los mismos para vivir, invertir o negocio; solo si preguntan):
+- Escrituración 1 lote: Q6,000.
+- Cada lote adicional suma Q2,400 (2 lotes Q8,400; 3 lotes Q10,800).
+- Título de agua: Q4,000.
+- Mantenimiento: Q100 al mes.
+- Agua: Q100 al mes por 30,000 litros.
+
+RESERVA:
+- El monto exacto de reserva NO fue definido en esta actualización. Si el cliente pregunta el monto exacto para reservar, no inventarlo: pausar la IA y avisar a Gabriel.
+
+REGLAS:
+- No ofrecer 9x20: ya no forma parte de las opciones cargadas en este flujo.
+- No mezclar el precio residencial 8x16 con el comercial 8x16.
+- Si el cliente pide fotos o videos, enviarlos inmediatamente desde las carpetas ya cargadas.
+""".strip()
+
+
+def _inicializar_estado_bnv(estado):
+    estado.setdefault("bnv_etapa", None)
+    estado.setdefault("bnv_uso", None)
+    estado.setdefault("bnv_producto", None)
+    estado.setdefault("bnv_plan", None)
+    estado.setdefault("bnv_plazo", None)
+    estado.setdefault("bnv_cotizacion_enviada", False)
+    estado.setdefault("bnv_video_enviado", False)
+    estado.setdefault("bnv_pregunta_pendiente", None)
+    estado.setdefault("bnv_visita_ofrecida", False)
+    return estado
+
+
+def estado_bnv(numero):
+    return _inicializar_estado_bnv(obtener_estado_conversacion(numero))
+
+
+def reiniciar_flujo_bnv_para_presentacion(numero):
+    estado = estado_bnv(numero)
+    for clave, valor in {
+        "bnv_etapa": None,
+        "bnv_uso": None,
+        "bnv_producto": None,
+        "bnv_plan": None,
+        "bnv_plazo": None,
+        "bnv_cotizacion_enviada": False,
+        "bnv_video_enviado": False,
+        "bnv_pregunta_pendiente": None,
+        "bnv_visita_ofrecida": False,
+    }.items():
+        estado[clave] = valor
+    persistir_cliente(numero)
+    return estado
+
+
+def detectar_cta_bnv_nuevo(texto):
+    # Conserva compatibilidad con las preguntas que ya existen en Meta Ads.
+    accion_vieja = detectar_cta_buenaventura(texto)
+    if accion_vieja == "agendar_visita":
+        return "visita"
+    if accion_vieja == "ubicacion":
+        return "ubicacion"
+    if accion_vieja in {"precios_cuotas", "lotes_disponibles"}:
+        return "inicio"
+
+    t = normalizar_texto_topografia(texto)
+    if any(x in t for x in [
+        "quiero mas informacion de buenaventura", "quiero informacion de buenaventura",
+        "mas informacion de buenaventura", "informacion de buenaventura cuyo",
+        "informacion de buenaventura cuyotenango",
+    ]):
+        return "inicio"
+    if any(x in t for x in [
+        "precios y cuotas de buenaventura", "precio y cuotas de buenaventura",
+        "precios y cuotas de buenaventura cuyo",
+    ]):
+        return "inicio"
+    if any(x in t for x in [
+        "puedo agendar una visita al proyecto", "agendar una visita al proyecto",
+        "quiero agendar una visita al proyecto",
+    ]):
+        return "visita"
+    return None
+
+
+def es_inicio_general_bnv(texto):
+    t = normalizar_texto_topografia(texto)
+    if detectar_intencion_visita(texto) or pide_fotos(texto) or pide_videos(texto):
+        return False
+    if any(x in t for x in [
+        "gastos", "mantenimiento", "escritur", "titulo de agua", "finca", "folio", "libro",
+        "reserva", "reservar", "abono", "capital", "plano", "ubicacion", "maps"
+    ]):
+        return False
+    if es_solo_saludo(texto):
+        return True
+    return any(x in t for x in [
+        "buenaventura", "cuyo", "cuyotenango", "quiero informacion", "mas informacion",
+        "me interesa", "vi el anuncio", "vengo del anuncio", "precios y cuotas"
+    ])
+
+
+def detectar_uso_bnv(texto):
+    t = normalizar_texto_topografia(texto)
+    if any(x in t for x in [
+        "negocio", "local", "locales", "comercial", "comercio", "emprendimiento",
+        "poner mi negocio", "para negocio"
+    ]):
+        return "negocio"
+    if any(x in t for x in [
+        "invertir", "inversion", "inversionista", "plusvalia", "patrimonio",
+        "revender", "reventa", "para inversion"
+    ]):
+        return "inversion"
+    if any(x in t for x in [
+        "vivir", "casa", "vivienda", "mi familia", "para mi familia", "construir mi casa",
+        "para vivir"
+    ]):
+        return "vivir"
+    return None
+
+
+def detectar_producto_bnv(texto, estado=None):
+    t = normalizar_texto_topografia(texto)
+    estado = estado or {}
+    uso = estado.get("bnv_uso")
+    if "9x20" in t or "9×20" in t:
+        return "no_disponible_9x20"
+    if "8x18" in t or "8×18" in t:
+        return "res_8x18"
+    if "8x16" in t or "8×16" in t:
+        if uso == "negocio" or any(x in t for x in ["comercial", "negocio", "local", "locales"]):
+            return "com_8x16"
+        if uso in {"vivir", "inversion"}:
+            return "res_8x16"
+        return "8x16_sin_uso"
+    return None
+
+
+def detectar_plan_bnv(texto):
+    t = normalizar_texto_topografia(texto)
+    if any(x in t for x in ["las tres", "las 3", "todas", "todos", "comparar las tres", "ver las tres"]):
+        return "todos"
+    if any(x in t for x in ["1 ano sin intereses", "un ano sin intereses", "sin intereses", "11 pagos", "11 cuotas", "semicontado", "semi contado"]):
+        return "sin_intereses"
+    if any(x in t for x in ["contado", "de contado", "un solo pago", "pagar todo", "pago completo"]):
+        return "contado"
+    if any(x in t for x in ["financiamiento", "financiado", "cuotas", "mensualidades", "credito", "a plazos"]):
+        return "financiamiento"
+    if extraer_plazo_cuota(texto):
+        return "financiamiento"
+    return None
+
+
+def generar_bienvenida_bnv(numero, texto_cliente):
+    saludo = saludo_actual_guatemala()
+    return formalizar_trato_usted(
+        f"{saludo}! 👋 Le saluda *Gabriel Polero, asesor de ventas de Multiproyectos DIVE* 😊\n\n"
+        "En *Buenaventura Cuyotenango* contamos con opciones para vivienda, inversión y también un área comercial 🏡✨\n\n"
+        "📍 El proyecto está ubicado en el *km 168 de la carretera hacia la playa de Tulate, Cuyotenango*.\n\n"
+        "Cuenta con *todos los servicios*: agua potable, energía eléctrica, calles pavimentadas y drenajes con planta de tratamiento ✅\n"
+        "Además, contempla casa club, piscinas, áreas verdes, juegos para niños y caminamientos 🏊🌳\n\n"
+        "Le comparto el *plano general* para que pueda conocer la distribución del proyecto."
+    )
+
+
+def enviar_plano_inicio_bnv(numero):
+    plano = PLANOS_PROYECTOS.get("buenaventura", {}).get("general")
+    if plano:
+        enviar_documento_url_whatsapp(numero, plano["url"], plano["archivo"], caption=plano["nombre"])
+    time.sleep(1.5)
+    enviar_whatsapp(
+        numero,
+        "Para que pueda identificar mejor el plano 😊\n\n"
+        "🟢 *Verde: disponible*\n"
+        "🔴 *Rojo: vendido*\n"
+        "🟡 *Reservado: actualmente apartado*\n\n"
+        "Para orientarle con el precio correcto, ¿el terreno lo busca *para vivir*, *para invertir* o *para negocio*?"
+    )
+    return True
+
+
+def texto_opciones_residenciales_bnv(uso):
+    motivo = "vivir" if uso == "vivir" else "invertir"
+    return (
+        f"Perfecto 😊 Si lo busca para *{motivo}*, tenemos estas dos opciones:\n\n"
+        "🏡 *8x16 — Q83,200* | enganche *Q6,000*\n"
+        "🏡 *8x18 — Q93,600* | enganche *Q8,000*\n\n"
+        "En el sector residencial el proyecto cuenta con sus servicios y amenidades, además de garita y muro perimetral.\n\n"
+        "¿Cuál medida le interesa más: *8x16* o *8x18*?"
+    )
+
+
+def texto_producto_comercial_bnv():
+    return (
+        "Perfecto 😊 Para *negocio* contamos con el lote *8x16 comercial*:\n\n"
+        "🏪 Precio: *Q128,000*\n"
+        "💰 Enganche: *Q6,000*\n\n"
+        "El área comercial cuenta con los servicios del proyecto, pero *no tiene garita ni muro perimetral*.\n\n"
+        + texto_planes_pago_bnv("com_8x16")
+    )
+
+
+def texto_planes_pago_bnv(producto):
+    datos = BNV_PRODUCTOS[producto]
+    return (
+        f"Para el lote *{datos['nombre']}* puede elegir la forma de pago que mejor se adapte a usted:\n\n"
+        "💳 *Financiamiento propio* de 2 a 8 años\n"
+        "✨ *Plan de 1 año sin intereses*\n"
+        "💰 *Pago al contado*\n\n"
+        "¿Cuál de estas opciones le gustaría revisar primero? 😊"
+    )
+
+
+def enviar_video_bnv(numero):
+    rutas = VIDEOS_PROYECTOS.get("buenaventura", [])
+    for ruta in rutas:
+        if os.path.exists(ruta):
+            return enviar_video_whatsapp(
+                numero,
+                ruta,
+                caption="Buenaventura Cuyotenango 🏡🎥"
+            )
+    for ruta in VIDEOS_GENERALES:
+        if os.path.exists(ruta):
+            return enviar_video_whatsapp(
+                numero,
+                ruta,
+                caption="Video de referencia de amenidades 🏡✨"
+            )
+    return False
+
+
+def _texto_tabla_financiamiento_bnv(producto):
+    datos = BNV_PRODUCTOS[producto]
+    tabla = BNV_CUOTAS_FINANCIAMIENTO.get(producto, {})
+    lineas = [
+        f"💳 *Financiamiento propio — {datos['nombre']}*",
+        f"🏡 Precio: *{datos['precio_texto']}*",
+        f"💰 Enganche: *{datos['enganche_texto']}*",
+        "",
+    ]
+    for plazo in range(2, 9):
+        cuota = tabla.get(plazo)
+        if cuota is not None:
+            lineas.append(f"• {plazo} años: *{formatear_quetzales(cuota)}* mensuales")
+    return "\n".join(lineas)
+
+
+def enviar_financiamiento_bnv(numero, producto, plazo=None):
+    datos = BNV_PRODUCTOS[producto]
+    tabla = BNV_CUOTAS_FINANCIAMIENTO.get(producto, {})
+    if plazo and plazo in tabla:
+        enviar_whatsapp(
+            numero,
+            f"Claro 😊 Para *{datos['nombre']}*, a *{plazo} años* la cuota es de aproximadamente "
+            f"*{formatear_quetzales(tabla[plazo])} mensuales*, con enganche de *{datos['enganche_texto']}*.\n\n"
+            "Le comparto también el cuadro completo para que pueda comparar los demás plazos."
+        )
+    else:
+        enviar_whatsapp(
+            numero,
+            f"Claro 😊 Le comparto el cuadro completo de *{datos['nombre']}* para que pueda comparar las cuotas de *2 a 8 años*."
+        )
+    ruta = datos.get("imagen_financiamiento")
+    enviado = False
+    if ruta and os.path.exists(ruta):
+        enviado = enviar_imagen_whatsapp(numero, ruta, caption=f"Buenaventura · {datos['nombre']} · Financiamiento")
+    if not enviado:
+        enviar_whatsapp(numero, _texto_tabla_financiamiento_bnv(producto))
+    return enviar_whatsapp(numero, "¿Qué plazo siente que se adapta mejor a su presupuesto? 😊")
+
+
+def cuota_sin_intereses_bnv(producto):
+    datos = BNV_PRODUCTOS[producto]
+    return round((datos["precio"] - datos["enganche"]) / 11, 2)
+
+
+def precio_contado_bnv(producto, descuento=0.03):
+    return round(BNV_PRODUCTOS[producto]["precio"] * (1 - descuento), 2)
+
+
+def enviar_plan_sin_intereses_bnv(numero, producto):
+    datos = BNV_PRODUCTOS[producto]
+    saldo = datos["precio"] - datos["enganche"]
+    cuota = cuota_sin_intereses_bnv(producto)
+    return enviar_whatsapp(
+        numero,
+        f"Claro 😊 Para *{datos['nombre']}*, el plan de *1 año sin intereses* queda así:\n\n"
+        f"🏡 Precio: *{datos['precio_texto']}*\n"
+        f"💰 Enganche: *{datos['enganche_texto']}*\n"
+        f"📌 Saldo: *{formatear_quetzales(saldo)}*\n"
+        f"✨ *11 pagos de {formatear_quetzales(cuota)}*\n\n"
+        "No se agregan intereses a ese saldo. ¿Qué le parece esta modalidad? 😊"
+    )
+
+
+def enviar_contado_bnv(numero, producto):
+    datos = BNV_PRODUCTOS[producto]
+    precio_3 = precio_contado_bnv(producto, 0.03)
+    return enviar_whatsapp(
+        numero,
+        f"Claro 😊 Para *{datos['nombre']}* el precio regular es *{datos['precio_texto']}*.\n\n"
+        f"💰 Con el *3% de descuento inicial por pago al contado* quedaría en *{formatear_quetzales(precio_3)}*.\n\n"
+        "Si existe una negociación real, puedo revisar una mejora hasta un máximo de 5%. "
+        "¿Desea que revisemos esta opción al contado? 😊"
+    )
+
+
+def enviar_comparacion_bnv(numero, producto):
+    datos = BNV_PRODUCTOS[producto]
+    enviar_whatsapp(numero, f"Claro 😊 Le comparto las tres alternativas para *{datos['nombre']}*.")
+    ruta = datos.get("imagen_financiamiento")
+    if ruta and os.path.exists(ruta):
+        enviar_imagen_whatsapp(numero, ruta, caption=f"Buenaventura · {datos['nombre']} · Financiamiento 2 a 8 años")
+    else:
+        enviar_whatsapp(numero, _texto_tabla_financiamiento_bnv(producto))
+    cuota = cuota_sin_intereses_bnv(producto)
+    contado = precio_contado_bnv(producto, 0.03)
+    return enviar_whatsapp(
+        numero,
+        f"✨ *1 año sin intereses:* enganche {datos['enganche_texto']} + 11 pagos de *{formatear_quetzales(cuota)}*.\n"
+        f"💰 *Contado:* con 3% de descuento inicial queda en *{formatear_quetzales(contado)}*.\n\n"
+        "¿Cuál de las tres formas de pago se adapta mejor a lo que usted busca? 😊"
+    )
+
+
+def respuesta_enganche_bnv(estado):
+    producto = estado.get("bnv_producto")
+    if producto in BNV_PRODUCTOS:
+        datos = BNV_PRODUCTOS[producto]
+        return (
+            f"Para *{datos['nombre']}* el enganche es de *{datos['enganche_texto']}* 😊. "
+            "¿Qué forma de pago le gustaría revisar: financiamiento, 1 año sin intereses o contado?"
+        )
+    return (
+        "En Buenaventura el enganche depende de la opción 😊:\n\n"
+        "• 8x16 para vivir/invertir: *Q6,000*\n"
+        "• 8x18 para vivir/invertir: *Q8,000*\n"
+        "• 8x16 comercial: *Q6,000*\n\n"
+        "¿El terreno lo busca para vivir, invertir o para negocio?"
+    )
+
+
+def _es_pregunta_reserva_bnv(texto):
+    t = normalizar_texto_topografia(texto)
+    return any(x in t for x in ["reserva", "reservar", "apartar", "apartado", "cuanto para reservar", "cuanto para apartar"])
+
+
+def _es_pregunta_registral_bnv(texto):
+    t = normalizar_texto_topografia(texto)
+    return any(x in t for x in ["finca", "folio", "libro"])
+
+
+def _mensaje_es_pregunta_especifica_bnv(texto):
+    t = normalizar_texto_topografia(texto)
+    return any(x in t for x in [
+        "mantenimiento", "escritur", "titulo de agua", "gastos", "agua", "servicios",
+        "amenidades", "piscina", "garita", "muro", "enganche", "abono", "capital",
+        "ubicacion", "donde queda", "maps", "plano", "requisitos", "documentos",
+        "construir", "urbanizacion", "disponibilidad"
+    ])
+
+
+def manejar_flujo_buenaventura_humano(numero, texto, proyecto, message_id):
+    """Flujo progresivo de Buenaventura. Devuelve True cuando consume el mensaje."""
+    if proyecto != "buenaventura":
+        return False
+
+    estado = estado_bnv(numero)
+    t = normalizar_texto_topografia(texto)
+    cta = detectar_cta_bnv_nuevo(texto)
+
+    # Visita siempre rompe el protocolo comercial.
+    if cta == "visita" or detectar_intencion_visita(texto):
+        respuesta = respuesta_visita(numero, texto, "buenaventura")
+        estado["bnv_etapa"] = "visita"
+        estado["bnv_pregunta_pendiente"] = "dia_hora_visita"
+        persistir_cliente(numero)
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+        return True
+
+    if cta == "ubicacion":
+        guardar_mensaje(numero, "user", texto)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_ubicacion_proyecto(numero, "buenaventura")
+        return True
+
+    # Datos no definidos: mejor detenerse que inventar.
+    if _es_pregunta_reserva_bnv(texto):
+        respuesta = (
+            "Con gusto le ayudo a reservar 😊. El monto exacto de reserva de Buenaventura no lo tengo cargado en esta versión, "
+            "así que prefiero confirmarlo antes de darle un dato incorrecto. ¿Me permite revisarlo?"
+        )
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+            marcar_intervencion_automatica(numero, texto, motivo="monto de reserva de Buenaventura no cargado")
+        return True
+
+    if _es_pregunta_registral_bnv(texto):
+        respuesta = (
+            "Ese dato registral prefiero confirmarlo antes de indicárselo para no darle información incorrecta 😊. "
+            "¿Me permite revisarlo?"
+        )
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+            marcar_intervencion_automatica(numero, texto, motivo="dato registral Buenaventura no cargado")
+        return True
+
+    # FAQs de información/precios/lotes disponibles: todas inician el protocolo.
+    if cta == "inicio" or (not estado.get("bnv_etapa") and es_inicio_general_bnv(texto)):
+        estado = reiniciar_flujo_bnv_para_presentacion(numero)
+        bienvenida = generar_bienvenida_bnv(numero, texto)
+        estado["bnv_etapa"] = "esperando_uso"
+        estado["bnv_pregunta_pendiente"] = "uso"
+        persistir_cliente(numero)
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", bienvenida)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, bienvenida)
+            enviar_plano_inicio_bnv(numero)
+        return True
+
+    uso = detectar_uso_bnv(texto)
+    producto = detectar_producto_bnv(texto, estado)
+    plan = detectar_plan_bnv(texto)
+    plazo = extraer_plazo_cuota(texto)
+
+    # Si pide precio/cuotas antes de explicar el uso, calificamos primero.
+    if estado.get("bnv_etapa") in {None, "esperando_uso"} and not uso:
+        if any(x in t for x in ["precio", "precios", "cuota", "cuotas", "financiamiento", "medida", "medidas", "cuanto cuesta", "cuanto vale"]):
+            respuesta = (
+                "Claro 😊 En Buenaventura el precio cambia según el uso del terreno. "
+                "¿Lo busca *para vivir*, *para invertir* o *para negocio*?"
+            )
+            estado["bnv_etapa"] = "esperando_uso"
+            estado["bnv_pregunta_pendiente"] = "uso"
+            persistir_cliente(numero)
+            guardar_mensaje(numero, "user", texto)
+            guardar_mensaje(numero, "assistant", respuesta)
+            if procesamiento_sigue_vigente(numero, message_id):
+                enviar_whatsapp(numero, respuesta)
+            return True
+
+    # Elección de uso.
+    if uso:
+        estado["bnv_uso"] = uso
+        if uso == "negocio":
+            estado["bnv_producto"] = "com_8x16"
+            estado["bnv_etapa"] = "esperando_plan"
+            estado["bnv_pregunta_pendiente"] = "plan_pago"
+            respuesta = texto_producto_comercial_bnv()
+        else:
+            estado["bnv_producto"] = None
+            estado["bnv_etapa"] = "esperando_medida"
+            estado["bnv_pregunta_pendiente"] = "medida"
+            respuesta = texto_opciones_residenciales_bnv(uso)
+        persistir_cliente(numero)
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+            if uso == "negocio" and not estado.get("bnv_video_enviado") and enviar_video_bnv(numero):
+                estado["bnv_video_enviado"] = True
+                persistir_cliente(numero)
+        return True
+
+    # Si menciona 8x16 antes de decir uso, no adivinamos si es residencial o comercial.
+    if producto == "8x16_sin_uso":
+        respuesta = (
+            "Sí 😊 Tenemos 8x16, pero existe una opción residencial/inversión y otra comercial con precios distintos. "
+            "¿Lo busca para vivir, invertir o para negocio?"
+        )
+        estado["bnv_etapa"] = "esperando_uso"
+        estado["bnv_pregunta_pendiente"] = "uso"
+        persistir_cliente(numero)
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+        return True
+
+    if producto == "no_disponible_9x20":
+        respuesta = (
+            "Actualmente en este flujo de Buenaventura estamos manejando *8x16 y 8x18* para vivir/invertir, "
+            "y *8x16 comercial* para negocio 😊. ¿Cuál de esas opciones le interesa revisar?"
+        )
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+        return True
+
+    # Selección de medida residencial.
+    if producto in {"res_8x16", "res_8x18"} and estado.get("bnv_uso") in {"vivir", "inversion"}:
+        estado["bnv_producto"] = producto
+        estado["bnv_etapa"] = "esperando_plan"
+        estado["bnv_pregunta_pendiente"] = "plan_pago"
+        datos = BNV_PRODUCTOS[producto]
+        respuesta = (
+            f"Excelente 😊 El *{datos['medida']}* tiene un valor de *{datos['precio_texto']}* y enganche de *{datos['enganche_texto']}*.\n\n"
+            + texto_planes_pago_bnv(producto)
+        )
+        persistir_cliente(numero)
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+            if not estado.get("bnv_video_enviado") and enviar_video_bnv(numero):
+                estado["bnv_video_enviado"] = True
+                persistir_cliente(numero)
+        return True
+
+    # Pregunta directa de enganche: responder según contexto, sin reiniciar.
+    if "enganche" in t:
+        respuesta = respuesta_enganche_bnv(estado)
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+        return True
+
+    # Gastos fijos para cualquier uso.
+    if pide_gastos_adicionales(texto) or any(x in t for x in ["escrituracion", "titulo de agua", "mantenimiento"]):
+        respuesta = respuesta_gastos_adicionales("buenaventura")
+        if "?" not in respuesta[-30:]:
+            respuesta += "\n\n¿Desea que le explique también cuándo se paga cada uno?"
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+        return True
+
+    # Garita / muro depende del sector.
+    if any(x in t for x in ["garita", "muro perimetral", "muro"]):
+        if estado.get("bnv_uso") == "negocio" or estado.get("bnv_producto") == "com_8x16":
+            respuesta = (
+                "En el *área comercial* de Buenaventura no hay garita ni muro perimetral. "
+                "Sí mantiene los servicios cargados del proyecto 😊. ¿Desea que le muestre el financiamiento del 8x16 comercial?"
+            )
+        else:
+            respuesta = (
+                "En el sector residencial de Buenaventura sí se contemplan garita y muro perimetral, además de los servicios y amenidades del proyecto 😊. "
+                "¿Lo está considerando para vivir o para invertir?"
+            )
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+        return True
+
+    # Formas de pago. Requieren producto definido para no mezclar precios.
+    if plan or (plazo and 2 <= plazo <= 8):
+        producto_actual = estado.get("bnv_producto")
+        if producto_actual not in BNV_PRODUCTOS:
+            if estado.get("bnv_uso") in {"vivir", "inversion"}:
+                respuesta = "Con gusto 😊 Antes necesito saber qué medida desea tomar como referencia: *8x16* o *8x18*. ¿Cuál le interesa?"
+                estado["bnv_etapa"] = "esperando_medida"
+                estado["bnv_pregunta_pendiente"] = "medida"
+            else:
+                respuesta = "Con gusto 😊 Para darle el plan correcto, ¿el terreno lo busca para vivir, invertir o para negocio?"
+                estado["bnv_etapa"] = "esperando_uso"
+                estado["bnv_pregunta_pendiente"] = "uso"
+            persistir_cliente(numero)
+            guardar_mensaje(numero, "user", texto)
+            guardar_mensaje(numero, "assistant", respuesta)
+            if procesamiento_sigue_vigente(numero, message_id):
+                enviar_whatsapp(numero, respuesta)
+            return True
+
+        plan = plan or "financiamiento"
+        estado["bnv_plan"] = plan
+        estado["bnv_plazo"] = plazo if plazo and 2 <= plazo <= 8 else None
+        estado["bnv_etapa"] = "esperando_reaccion_propuesta"
+        estado["bnv_cotizacion_enviada"] = True
+        estado["bnv_pregunta_pendiente"] = "reaccion_propuesta"
+        persistir_cliente(numero)
+        guardar_mensaje(numero, "user", texto)
+        if procesamiento_sigue_vigente(numero, message_id):
+            if plan == "financiamiento":
+                enviar_financiamiento_bnv(numero, producto_actual, estado.get("bnv_plazo"))
+            elif plan == "sin_intereses":
+                enviar_plan_sin_intereses_bnv(numero, producto_actual)
+            elif plan == "contado":
+                enviar_contado_bnv(numero, producto_actual)
+            elif plan == "todos":
+                enviar_comparacion_bnv(numero, producto_actual)
+        return True
+
+    # Una reacción positiva después de la propuesta avanza a visita en vez de repetir menús.
+    if estado.get("bnv_etapa") == "esperando_reaccion_propuesta":
+        if es_reaccion_positiva_vh(texto):
+            respuesta = (
+                "Me alegra que la opción le interese 😊🏡. Lo ideal ahora sería que conozca Buenaventura personalmente y vea el proyecto. "
+                "¿Qué día le quedaría bien visitarlo?"
+            )
+            estado["bnv_etapa"] = "visita"
+            estado["bnv_pregunta_pendiente"] = "dia_hora_visita"
+            persistir_cliente(numero)
+            guardar_mensaje(numero, "user", texto)
+            guardar_mensaje(numero, "assistant", respuesta)
+            if procesamiento_sigue_vigente(numero, message_id):
+                enviar_whatsapp(numero, respuesta)
+            return True
+
+    # Si la conversación sigue abierta y es una pregunta puntual, dejamos que la IA
+    # general responda usando BNV_FICHA_OFICIAL y el estado persistente.
+    if _mensaje_es_pregunta_especifica_bnv(texto):
+        persistir_cliente(numero)
+        return False
+
+    return False
+
+# ============================================================
 # CONSULTAS MULTIPLES EN UN MISMO BLOQUE
 # ============================================================
 
@@ -11246,8 +11967,8 @@ def manejar_intenciones_multiples(numero, texto, proyecto, message_id):
             enviar_multimedia_del_proyecto(
                 numero,
                 proyecto,
-                enviar_fotos=True,
-                enviar_videos=True
+                enviar_fotos=pide_fotos(texto),
+                enviar_videos=pide_videos(texto)
             )
 
     if quiere_requisitos:
@@ -11398,6 +12119,7 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
         proyecto_para_presentacion = proyecto_previo_presentacion or proyecto_mencionado_presentacion
         cta_palmeras_presentacion = detectar_cta_palmeras(texto_cliente)
         cta_vh_presentacion = detectar_cta_vista_hermosa(texto_cliente)
+        cta_bnv_presentacion = detectar_cta_bnv_nuevo(texto_cliente)
         if proyecto_para_presentacion == "palmeras" and (
             es_inicio_general_psm(texto_cliente)
             or cta_palmeras_presentacion in {"informacion", "precios_cuotas", "visita"}
@@ -11408,6 +12130,12 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
             or cta_vh_presentacion in {"informacion", "precios_cuotas", "visita"}
         ):
             # Vista Hermosa también tiene su propia presentación comercial progresiva.
+            presentacion_enviada = False
+        elif proyecto_para_presentacion == "buenaventura" and (
+            es_inicio_general_bnv(texto_cliente)
+            or cta_bnv_presentacion in {"inicio", "visita", "ubicacion"}
+        ):
+            # Buenaventura usa su propia presentación y calificación por uso.
             presentacion_enviada = False
         else:
             presentacion_enviada = enviar_presentacion_si_corresponde(
@@ -11439,6 +12167,36 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
             numero_cliente,
             texto_cliente
         )
+
+        # ========================================================
+        # MULTIMEDIA CON PRIORIDAD GLOBAL
+        # ========================================================
+        # Si el cliente pide fotos o videos, se le envía exactamente el tipo
+        # solicitado ANTES de cualquier protocolo comercial. Así Palmeras,
+        # Vista Hermosa y Buenaventura obedecen la petición aunque la conversación
+        # esté esperando fase, uso, medida o forma de pago.
+        quiere_fotos_prioridad = pide_fotos(texto_cliente)
+        quiere_videos_prioridad = pide_videos(texto_cliente)
+        if quiere_fotos_prioridad or quiere_videos_prioridad:
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_multimedia_del_proyecto(
+                    numero_cliente,
+                    proyecto,
+                    enviar_fotos=quiere_fotos_prioridad,
+                    enviar_videos=quiere_videos_prioridad
+                )
+            return
+
+        # BUENAVENTURA CUYOTENANGO: flujo comercial progresivo con
+        # calificación adicional por uso (vivir / invertir / negocio).
+        if manejar_flujo_buenaventura_humano(
+            numero_cliente,
+            texto_cliente,
+            proyecto,
+            message_id
+        ):
+            return
 
         # VISTA HERMOSA: mismo cerebro comercial progresivo de Palmeras,
         # con sus precios, fases, reserva, garita, muro y reglas propias.
@@ -12130,9 +12888,7 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
             )
             return
 
-        # MULTIMEDIA CONTROLADA
-        # NUEVA REGLA:
-        # Si el cliente pide FOTOS O VIDEOS, enviamos AMBOS de una vez.
+        # MULTIMEDIA CONTROLADA (fallback; la prioridad global está arriba).
         quiere_fotos = pide_fotos(texto_cliente)
         quiere_videos = pide_videos(texto_cliente)
 
@@ -12140,8 +12896,8 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
             enviar_multimedia_del_proyecto(
                 numero_cliente,
                 proyecto,
-                enviar_fotos=True,
-                enviar_videos=True
+                enviar_fotos=quiere_fotos,
+                enviar_videos=quiere_videos
             )
             return
 
