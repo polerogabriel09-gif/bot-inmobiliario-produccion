@@ -398,15 +398,14 @@ RESUMENES_COTIZACION = {
             "aproximadamente a 15 minutos del IRTRA 📍🏡"
         ),
         "amenidades": (
-            "Casa club, piscinas, áreas verdes, juegos para niños y caminamientos 🏊🌳"
+            "Fase F con piscina y área verde; Fase G con área verde 🏊🌳"
         ),
         "servicios": (
             "Garita, muro perimetral, calles pavimentadas, agua potable, "
             "energía eléctrica y drenajes con planta de tratamiento ✅"
         ),
         "cierre": (
-            "Te comparto abajo las cotizaciones disponibles con sus fases, "
-            "enganche y planes de pago 👇💰"
+            "Le comparto las opciones disponibles y con gusto revisamos la fase que más le interese 👇💰"
         )
     },
 
@@ -1687,6 +1686,15 @@ def obtener_estado_conversacion(numero):
             "psm_pregunta_pendiente": None,
             "psm_visita_ofrecida": False,
             "psm_recordatorio_token": None,
+            # Flujo humano de Vista Hermosa.
+            "vh_etapa": None,
+            "vh_fase": None,
+            "vh_plan": None,
+            "vh_plazo": None,
+            "vh_cotizacion_enviada": False,
+            "vh_video_amenidades_enviado": False,
+            "vh_pregunta_pendiente": None,
+            "vh_visita_ofrecida": False,
             # Control genérico de intervención humana.
             "requiere_intervencion_ia": False,
             "esperando_respuesta_gabriel": False,
@@ -2160,7 +2168,8 @@ def respuesta_estado_amenidades(numero, proyecto):
 
     if proyecto == "vista_hermosa":
         return (
-            "Sí 😊 En Ciudad Vista Hermosa la garita y las amenidades ya se encuentran construidas. 🏡🌴\n\n"
+            "Vista Hermosa sí cuenta con *garita y muro perimetral* y tendrá sus áreas de amenidades 🏡🌴. "
+            "El proyecto todavía se encuentra en proceso de urbanización, por lo que no se debe dar por terminada toda la obra.\n\n"
             + cta
         )
 
@@ -2885,6 +2894,22 @@ def respuesta_amenidad(proyecto, amenidad, texto_cliente=""):
 
     nombre = nombres.get(proyecto, "el proyecto")
 
+    if proyecto == "vista_hermosa":
+        if amenidad == "piscina":
+            return (
+                "Sí 😊 La piscina corresponde a la *Fase F* de Vista Hermosa, junto con su área verde. "
+                "La Fase G cuenta con área verde. ¿Desea que le comparta los planos para comparar ambas fases?"
+            )
+        if amenidad == "areas_verdes":
+            return (
+                "Sí 😊 Tanto la *Fase F* como la *Fase G* de Vista Hermosa cuentan con área verde 🌳. "
+                "¿Cuál de las dos fases le interesa más?"
+            )
+        return (
+            "Esa amenidad no la tengo confirmada como parte de Vista Hermosa y prefiero no inventarle información 😊. "
+            "¿Desea que le confirme únicamente las amenidades oficiales que sí tenemos cargadas?"
+        )
+
     if proyecto == "palmeras":
         if amenidad == "piscina":
             return (
@@ -3164,6 +3189,15 @@ def pregunta_proceso_compra(texto):
 
 
 def respuesta_proceso_compra(proyecto):
+    if proyecto == "vista_hermosa":
+        return (
+            "En Vista Hermosa el proceso empieza escogiendo la ubicación disponible que más le interese 🏡. "
+            "Puede reservarla con *Q1,500*; ese monto forma parte del enganche total de *Q6,000*.\n\n"
+            "Después completa requisitos y elige entre financiamiento propio de *2 a 8 años*, "
+            "plan de *1 año sin intereses* o pago al contado. "
+            "¿Desea que le comparta los planos de Fase F y Fase G para revisar ubicaciones?"
+        )
+
     if proyecto == "palmeras":
         return (
             "En Palmeras San Miguel el proceso empieza escogiendo el lote disponible que más le interese 🏡. "
@@ -3190,8 +3224,8 @@ def respuesta_proceso_compra(proyecto):
         "vista_hermosa": {
             "nombre": "Vista Hermosa",
             "enganche": "Q6,000",
-            "financiamiento": "de 1 a 8 años",
-            "extra": "",
+            "financiamiento": "de 2 a 8 años",
+            "extra": "También existe plan de 1 año sin intereses y pago al contado.",
         },
     }
 
@@ -3382,18 +3416,18 @@ def enviar_info_todos_proyectos(numero):
         "🌴 *Palmeras San Miguel*\n"
         "📍 Zona 5 de Retalhuleu, camino a La Verde / carretera hacia Las Pilas.\n"
         "📌 https://maps.app.goo.gl/pBUyn98n8NCkGW8o6\n"
-        "• 8x16 Q67,200 | enganche Q6,000\n"
-        "• 8x18 Q79,200 | enganche Q8,000\n"
-        "• Financiamiento propio de 1 a 8 años + abonos a capital.\n"
+        "• 8x16 Fase 1 Q67,200 | enganche Q6,000\n"
+        "• 8x16 Fase 2 Q70,400 | enganche Q6,000\n"
+        "• Financiamiento propio de 2 a 8 años + plan de 1 año sin intereses.\n"
         "• Amenidades: casa club, piscinas, áreas verdes y caminamientos.\n"
         "• Servicios: calles pavimentadas, agua potable, energía eléctrica y drenajes con planta de tratamiento.\n\n"
         "🏘️ *Ciudad Vista Hermosa*\n"
         "📍 CA-2, km 188, Retalhuleu.\n"
-        "📌 https://maps.app.goo.gl/DCckHh97SMMPiLFS9\n"
         "• 8x16 Fase F Q83,200 | enganche Q6,000\n"
         "• 8x16 Fase G Q89,600 | enganche Q6,000\n"
-        "• Financiamiento propio de 1 a 8 años + abonos a capital.\n"
-        "• Amenidades: casa club, piscinas, áreas verdes, juegos para niños y caminamientos.\n"
+        "• Reserva Q1,500 | enganche Q6,000.\n"
+        "• Financiamiento propio de 2 a 8 años + plan de 1 año sin intereses.\n"
+        "• Amenidades: piscina y áreas verdes.\n"
         "• Servicios: garita, muro perimetral, calles pavimentadas, agua potable, energía eléctrica y drenajes con planta de tratamiento.\n\n"
         "🏗️ En los 3 proyectos el diseño de construcción es libre: puedes construir vivienda, apartamentos o locales, siempre que sea una construcción formal con block."
     )
@@ -3457,8 +3491,8 @@ def seguimiento_compra_respuesta_directa(texto, proyecto):
     }
     financiamientos = {
         "buenaventura": "de 2 a 8 años",
-        "palmeras": "de 1 a 8 años",
-        "vista_hermosa": "de 1 a 8 años",
+        "palmeras": "de 2 a 8 años",
+        "vista_hermosa": "de 2 a 8 años",
     }
 
     if any(x in t for x in [
@@ -3563,7 +3597,12 @@ def detectar_intencion_visita(texto):
 
 
 def extraer_dia_visita(texto):
-    t = texto.lower()
+    t = normalizar_texto_topografia(texto)
+
+    if re.search(r"\bmanana\b", t):
+        return "Mañana"
+    if re.search(r"\bhoy\b", t):
+        return "Hoy"
 
     dias = [
         "lunes", "martes", "miércoles", "miercoles",
@@ -3582,17 +3621,30 @@ def extraer_dia_visita(texto):
 
 
 def extraer_hora_visita(texto):
-    t = texto.lower()
+    t = normalizar_texto_topografia(texto)
 
+    # Formatos directos: 3pm, 3:30 pm, 15:30.
     patrones = [
         r"\b(\d{1,2}:\d{2})\s*(am|pm|a\.m\.|p\.m\.)?\b",
         r"\b(\d{1,2})\s*(am|pm|a\.m\.|p\.m\.)\b"
     ]
-
     for patron in patrones:
         m = re.search(patron, t)
         if m:
             return m.group(0)
+
+    # Lenguaje natural: "a las 3", "3 de la tarde", "3 de la mañana".
+    m = re.search(r"(?:a\s+las?\s+)?(\d{1,2})(?::(\d{2}))?\s*(?:de\s+la\s+)?(manana|tarde|noche)?", t)
+    if m:
+        hora = int(m.group(1))
+        minutos = m.group(2) or "00"
+        jornada = m.group(3) or ""
+        if 1 <= hora <= 12:
+            if jornada in {"tarde", "noche"} and hora != 12:
+                return f"{hora}:{minutos} p. m."
+            if jornada == "manana":
+                return f"{hora}:{minutos} a. m."
+            return f"{hora}:{minutos}"
 
     return None
 
@@ -3625,6 +3677,15 @@ def respuesta_visita(numero, texto, proyecto):
             "¿Qué día le quedaría bien? 📆"
         )
 
+    # Vista Hermosa: la visita se coordina directamente en el residencial.
+    # El enlace se entrega únicamente cuando ya existe día y hora confirmados.
+    if proyecto == "vista_hermosa" and not estado.get("dia") and not estado.get("hora"):
+        return (
+            "Con gusto podemos coordinar una visita a *Vista Hermosa* 😊🏡. "
+            "Normalmente nos reunimos directamente en el residencial sobre la CA-2 km 188. "
+            "¿Qué día le quedaría bien visitarlo? 📆"
+        )
+
     if pregunta_horario_para_visita(texto) and not hora:
         if estado.get("dia"):
             return "Podemos atenderle entre 6:00 a. m. y 6:00 p. m. 😊 ¿A qué hora le quedaría bien?"
@@ -3636,9 +3697,18 @@ def respuesta_visita(numero, texto, proyecto):
         if proyecto == "palmeras":
             return (
                 "Sí, perfecto 😊 Queda coordinada su visita a Palmeras San Miguel. "
-                "Nos ponemos de acuerdo para encontrarnos en Centro Comercial La Trinidad y acompañarle al proyecto."
+                "Nos ponemos de acuerdo para encontrarnos en Centro Comercial La Trinidad y acompañarle al proyecto. "
+                "¿Necesita que le indique algo más antes de la visita?"
             )
-        return "Sí, perfecto 😊 Queda coordinado."
+        if proyecto == "vista_hermosa":
+            enlace = UBICACIONES_PROYECTOS.get("vista_hermosa", {}).get("maps", "")
+            return (
+                f"Perfecto 😊 Queda coordinada su visita a *Vista Hermosa* para *{estado['dia']} a las {estado['hora']}*.\n\n"
+                "Nos reunimos directamente en el residencial. Le comparto el enlace para que pueda llegar sin problema 📍:\n"
+                f"{enlace}\n\n"
+                "¿Necesita que le indique algo más antes de llegar?"
+            )
+        return "Sí, perfecto 😊 Queda coordinado. ¿Necesita que le indique algo más antes de la visita?"
 
     if estado["dia"]:
         persistir_cliente(numero)
@@ -4435,6 +4505,14 @@ def _aplicar_snapshot(numero, snap):
     estado.setdefault("psm_pregunta_pendiente", None)
     estado.setdefault("psm_visita_ofrecida", False)
     estado.setdefault("psm_recordatorio_token", None)
+    estado.setdefault("vh_etapa", None)
+    estado.setdefault("vh_fase", None)
+    estado.setdefault("vh_plan", None)
+    estado.setdefault("vh_plazo", None)
+    estado.setdefault("vh_cotizacion_enviada", False)
+    estado.setdefault("vh_video_amenidades_enviado", False)
+    estado.setdefault("vh_pregunta_pendiente", None)
+    estado.setdefault("vh_visita_ofrecida", False)
     estado.setdefault("requiere_intervencion_ia", False)
     estado.setdefault("esperando_respuesta_gabriel", False)
     estado.setdefault("intervencion_pregunta", None)
@@ -5864,6 +5942,9 @@ def limpiar_intervencion_automatica(numero, reanudar_ia=True):
     if estado.get("psm_etapa") == "requiere_gabriel":
         estado["psm_etapa"] = "conversacion_abierta"
         estado["psm_pregunta_pendiente"] = None
+    if estado.get("vh_etapa") == "requiere_gabriel":
+        estado["vh_etapa"] = "conversacion_abierta"
+        estado["vh_pregunta_pendiente"] = None
     persistir_cliente(numero)
     if reanudar_ia:
         crm_poner_ia(numero)
@@ -5896,9 +5977,13 @@ def marcar_intervencion_automatica(numero, pregunta, motivo="dato no confirmado"
     estado["requiere_intervencion_ia"] = True
     estado["esperando_respuesta_gabriel"] = True
     estado["intervencion_pregunta"] = str(pregunta or "").strip()[:1000]
-    if (estado.get("proyecto_actual") or proyecto_activo.get(numero)) == "palmeras":
+    proyecto_intervencion = estado.get("proyecto_actual") or proyecto_activo.get(numero)
+    if proyecto_intervencion == "palmeras":
         estado["psm_etapa"] = "requiere_gabriel"
         estado["psm_pregunta_pendiente"] = None
+    elif proyecto_intervencion == "vista_hermosa":
+        estado["vh_etapa"] = "requiere_gabriel"
+        estado["vh_pregunta_pendiente"] = None
 
     # El modo manual impide cualquier respuesta automática hasta que Gabriel conteste.
     crm_poner_manual(numero)
@@ -6250,7 +6335,7 @@ REGLAS COMERCIALES: CONTADO, CONSTRUCCION Y AMENIDADES
   siempre que sea una construcción formal con block.
 - Palmeras San Miguel NO tiene ni tendrá garita ni muro perimetral. Nunca los menciones
   como características de Palmeras.
-- Vista Hermosa: la garita y las amenidades ya están construidas.
+- Vista Hermosa: sí cuenta con garita y muro perimetral. Sigue en proceso de urbanización y aún no se puede construir; no afirmes que toda la obra o las amenidades estén terminadas si el cliente pregunta por el estado actual.
 - Buenaventura Cuyotenango: garita y amenidades aún no están construidas; las imágenes
   o videos pueden ser referencias de otros proyectos. Buenaventura sí contará con garita
   y muro perimetral.
@@ -6398,6 +6483,22 @@ Todos los lotes tienen calle al frente.
 El flujo especializado del sistema controla la bienvenida, elección de fase, formas de pago, video y propuesta.
 Cuando el cliente se salga de ese flujo, responda con libertad usando los datos oficiales y después continúe naturalmente, sin forzar el protocolo.
 
+REGLA ESPECIFICA DE VISTA HERMOSA - INFORMACION GENERAL:
+Vista Hermosa usa el mismo flujo comercial progresivo de Palmeras San Miguel.
+Única medida disponible: 8x16 (128 m²).
+Fase F: Q83,200; piscina y área verde.
+Fase G: Q89,600; área verde.
+Reserva: Q1,500, que forma parte del enganche.
+Enganche total: Q6,000.
+Financiamiento propio: de 2 a 8 años.
+También existe plan de 1 año sin intereses y pago al contado.
+Pago al contado: ofrecer primero 3% de descuento; máximo 5% sujeto a la operación.
+Servicios: agua potable, energía eléctrica, calles pavimentadas, drenajes con planta de tratamiento, garita y muro perimetral.
+El proyecto sigue en urbanización y aún no se puede construir.
+Al inicio se envían los DOS planos: primero Fase F y luego Fase G, y se pregunta cuál le interesa.
+Para visitas, el punto normal de encuentro es directamente en Vista Hermosa. SOLO después de confirmar día y hora se manda el enlace de Google Maps.
+Si preguntan finca, folio o libro registral, NO inventes: ese dato no está cargado y requiere intervención de Gabriel.
+
 REGLA DE CLIMA:
 Si preguntan por el clima del lugar, responde:
 "Sí 😊 Por acá tenemos el característico clima cálido de costa ☀️🌴. Y justamente por eso se disfrutan mucho las piscinas, áreas verdes y demás amenidades del proyecto. 🏊🌿"
@@ -6523,8 +6624,8 @@ REGLA DE RESPUESTAS CORTAS Y NO REDUNDANTES:
 - Cuando ya haya día y hora, no vuelvas a pedirlos. Si la respuesta la genera la IA, termina con una sola pregunta breve de servicio y no reabras la cita.
 
 REGLA DE PLAZOS:
-Si el cliente menciona directamente un plazo de 1 a 8 años o su equivalente
-en meses (12, 24, 36, 48, 60, 72, 84 o 96 meses), el sistema debe enviar
+Si el cliente menciona directamente un plazo de 2 a 8 años o su equivalente
+en meses (24, 36, 48, 60, 72, 84 o 96 meses), el sistema debe enviar
 las imágenes de cotización del proyecto activo inmediatamente.
 
 Ejemplos que deben disparar cotización:
@@ -10191,6 +10292,808 @@ def manejar_flujo_palmeras_humano(numero, texto, proyecto, message_id):
 
 
 # ============================================================
+# VISTA HERMOSA - FLUJO COMERCIAL HUMANO / PROGRESIVO
+# ============================================================
+
+VH_FASES = {
+    "fase_f": {
+        "nombre": "Fase F",
+        "precio": 83200,
+        "precio_texto": "Q83,200",
+        "enganche": 6000,
+        "reserva": 1500,
+        "amenidad": "piscina y área verde",
+        "imagen_financiamiento": "media/cotizaciones/vista_hermosa/8x16_fase_f.jpeg",
+    },
+    "fase_g": {
+        "nombre": "Fase G",
+        "precio": 89600,
+        "precio_texto": "Q89,600",
+        "enganche": 6000,
+        "reserva": 1500,
+        "amenidad": "área verde",
+        "imagen_financiamiento": "media/cotizaciones/vista_hermosa/8x16_fase_g.jpeg",
+    },
+}
+
+# Se conservan las cuotas oficiales que ya estaban cargadas para Vista Hermosa.
+# El plan de 1 año SIN intereses se calcula aparte y NO usa la fila antigua de 1 año.
+VH_CUOTAS_FINANCIAMIENTO = {
+    "fase_f": {2: 3817, 3: 2752, 4: 2228, 5: 1919, 6: 1717, 7: 1578, 8: 1476},
+    "fase_g": {2: 4133, 3: 2981, 4: 2412, 5: 2078, 6: 1860, 7: 1708, 8: 1599},
+}
+
+VH_FICHA_OFICIAL = """
+PROYECTO: Vista Hermosa.
+UBICACIÓN: CA-2 km 188, Retalhuleu.
+MEDIDA DISPONIBLE ACTUAL: únicamente 8x16 m (128 m²) en Fase F y Fase G.
+
+FASE F:
+- Precio Q83,200.
+- Piscina y área verde.
+
+FASE G:
+- Precio Q89,600.
+- Área verde.
+
+COMPRA:
+- Reserva Q1,500; forma parte del enganche.
+- Enganche total Q6,000.
+- Financiamiento propio de 2 a 8 años.
+- Plan de 1 año sin intereses: (precio - Q6,000) / 11.
+- Pago al contado: ofrecer primero 3% de descuento; máximo 5% sujeto a la operación.
+- Se permiten abonos a capital conforme a las reglas comerciales cargadas.
+
+SERVICIOS Y PROYECTO:
+- Agua potable.
+- Energía eléctrica.
+- Calles pavimentadas.
+- Drenajes con planta de tratamiento.
+- Garita.
+- Muro perimetral.
+- El proyecto sigue en proceso de urbanización.
+- Aún no se puede construir.
+
+GASTOS ADICIONALES (solo si preguntan):
+- Escrituración Q3,500.
+- Título de agua Q3,500.
+- Mantenimiento Q50 al mes.
+- Agua Q50 por 30,000 litros.
+
+VISITAS:
+- El punto normal de encuentro es directamente en Vista Hermosa.
+- NO enviar Google Maps al inicio.
+- Cuando la cita ya tenga día y hora confirmados, enviar el enlace de Google Maps.
+
+LEGAL:
+- La escritura es registrada.
+- Finca, folio y libro NO están cargados actualmente. Si preguntan cualquiera de esos datos, pausar la IA y avisar a Gabriel; jamás inventarlos.
+""".strip()
+
+
+def _inicializar_estado_vh(estado):
+    estado.setdefault("vh_etapa", None)
+    estado.setdefault("vh_fase", None)
+    estado.setdefault("vh_plan", None)
+    estado.setdefault("vh_plazo", None)
+    estado.setdefault("vh_cotizacion_enviada", False)
+    estado.setdefault("vh_video_amenidades_enviado", False)
+    estado.setdefault("vh_pregunta_pendiente", None)
+    estado.setdefault("vh_visita_ofrecida", False)
+    return estado
+
+
+def estado_vh(numero):
+    return _inicializar_estado_vh(obtener_estado_conversacion(numero))
+
+
+def reiniciar_flujo_vh_para_presentacion(numero):
+    estado = estado_vh(numero)
+    estado["vh_etapa"] = None
+    estado["vh_fase"] = None
+    estado["vh_plan"] = None
+    estado["vh_plazo"] = None
+    estado["vh_cotizacion_enviada"] = False
+    estado["vh_video_amenidades_enviado"] = False
+    estado["vh_pregunta_pendiente"] = None
+    estado["vh_visita_ofrecida"] = False
+    persistir_cliente(numero)
+    return estado
+
+
+def detectar_fase_vh(texto):
+    t = normalizar_texto_topografia(texto)
+    if any(x in t for x in ["las dos", "ambas", "las 2", "cualquiera", "comparar las dos"]):
+        return "ambas"
+    if any(x in t for x in [
+        "fase f", "fasef", "la f", "83200", "83,200", "la mas barata",
+        "la de piscina", "con piscina"
+    ]):
+        return "fase_f"
+    if any(x in t for x in [
+        "fase g", "faseg", "la g", "89600", "89,600", "la segunda",
+        "la de area verde", "solo area verde"
+    ]):
+        return "fase_g"
+    return None
+
+
+def detectar_plan_vh(texto):
+    t = normalizar_texto_topografia(texto)
+    if any(x in t for x in ["las tres", "los tres", "las 3", "todos", "todas", "ver las tres", "comparar las tres"]):
+        return "todos"
+    if any(x in t for x in [
+        "sin intereses", "sin interes", "1 ano", "un ano", "11 cuotas",
+        "semicontado", "semi contado"
+    ]):
+        return "sin_intereses"
+    if any(x in t for x in ["contado", "de contado", "un solo pago", "pago completo"]):
+        return "contado"
+    if any(x in t for x in [
+        "financiamiento", "financiado", "cuotas", "mensualidades", "credito",
+        "2 anos", "3 anos", "4 anos", "5 anos", "6 anos", "7 anos", "8 anos"
+    ]):
+        return "financiamiento"
+    return None
+
+
+def detectar_cta_vista_hermosa(texto):
+    """Las 2 primeras FAQs siguen protocolo; únicamente visita lo rompe."""
+    t = normalizar_texto_topografia(texto)
+    if any(x in t for x in [
+        "quiero mas informacion de vista hermosa",
+        "quiero informacion de vista hermosa",
+        "mas informacion de vista hermosa",
+    ]):
+        return "informacion"
+    if any(x in t for x in [
+        "precios y cuotas de vista hermosa",
+        "precio y cuotas de vista hermosa",
+    ]):
+        return "precios_cuotas"
+    if any(x in t for x in [
+        "puedo agendar una visita al proyecto",
+        "agendar una visita al proyecto",
+        "quiero agendar una visita al proyecto",
+    ]):
+        return "visita"
+    return None
+
+
+def es_inicio_general_vh(texto):
+    t = normalizar_texto_topografia(texto)
+    if detectar_intencion_visita(texto) or es_intencion_reserva_psm(texto):
+        return False
+    if any(x in t for x in [
+        "finca", "folio", "libro", "escritura", "requisitos", "documentos",
+        "mantenimiento", "gastos", "plano", "disponibilidad", "foto", "video",
+        "construir", "abono", "capital"
+    ]):
+        return False
+    if es_solo_saludo(texto):
+        return True
+    return any(x in t for x in [
+        "quiero informacion", "quisiera informacion", "mas informacion", "deseo informacion",
+        "me interesa", "estoy interesado", "vista hermosa", "vi el anuncio", "vengo del anuncio",
+        "precio", "precios", "cuanto cuesta", "cuanto vale", "cuotas"
+    ])
+
+
+def es_solicitud_info_general_vh(texto):
+    t = normalizar_texto_topografia(texto)
+    if detectar_intencion_visita(texto) or es_intencion_reserva_psm(texto):
+        return False
+    return any(x in t for x in [
+        "deseo informacion de vista hermosa", "quiero informacion de vista hermosa",
+        "quisiera informacion de vista hermosa", "informacion de vista hermosa",
+        "mas informacion de vista hermosa", "me interesa vista hermosa"
+    ])
+
+
+def interpretar_decision_vh_ia(numero, texto, estado):
+    texto = str(texto or "").strip()
+    if not texto:
+        return None
+    etapa = str((estado or {}).get("vh_etapa") or "")
+    pendiente = str((estado or {}).get("vh_pregunta_pendiente") or "")
+    if etapa not in {"esperando_fase", "esperando_plan", "esperando_reaccion_propuesta"} and pendiente not in {"fase", "plan_pago", "reaccion_propuesta"}:
+        return None
+    opciones = {
+        "esperando_fase": "fase_f, fase_g, ambas, ninguna",
+        "esperando_plan": "financiamiento, sin_intereses, contado, todos, ninguna",
+        "esperando_reaccion_propuesta": "positivo, comparar, visita, reserva, ninguna",
+    }.get(etapa, "ninguna")
+    prompt = f"""
+Clasifique UNA respuesta de un cliente inmobiliario de Vista Hermosa.
+Estado actual: {etapa or 'sin etapa'}
+Pregunta pendiente: {pendiente or 'ninguna'}
+Fase guardada: {(estado or {}).get('vh_fase') or 'ninguna'}
+Plan guardado: {(estado or {}).get('vh_plan') or 'ninguno'}
+Mensaje del cliente: {texto}
+
+Responda SOLO con una etiqueta: {opciones}
+Reglas:
+- No invente una decisión si el mensaje es una pregunta distinta.
+- "la más económica" / "la de piscina" = fase_f.
+- Si pide comparar las formas de pago = todos.
+- Si quiere pagar poco a poco = financiamiento.
+- Si después de propuesta dice que le gusta, le sirve o le interesa = positivo.
+- Si quiere conocer/ver/ir al proyecto = visita.
+- Si quiere apartar/comprar/reservar = reserva.
+- Ante duda = ninguna.
+"""
+    try:
+        r = client.responses.create(
+            model="gpt-5-mini",
+            instructions="Clasifique intención. Devuelva únicamente una etiqueta permitida.",
+            input=[{"role": "user", "content": prompt}]
+        )
+        etiqueta = (r.output_text or "").strip().lower()
+        permitidas = {"fase_f", "fase_g", "ambas", "financiamiento", "sin_intereses", "contado", "todos", "positivo", "comparar", "visita", "reserva", "ninguna"}
+        return etiqueta if etiqueta in permitidas else None
+    except Exception as exc:
+        print("ERROR INTERPRETANDO DECISION VISTA HERMOSA:", exc)
+        return None
+
+
+def generar_bienvenida_vh(numero, texto_cliente):
+    saludo = saludo_actual_guatemala()
+    return formalizar_trato_usted(
+        f"{saludo}! 👋 Le saluda *Gabriel Polero, asesor de ventas de Multiproyectos DIVE* 😊\n\n"
+        "En *Vista Hermosa* actualmente contamos con *2 fases disponibles* 🏡✨\n"
+        "En ambas fases tenemos terrenos de *8x16 m (128 m²)*.\n\n"
+        "🏊 *Fase F: Q83,200* — con piscina y área verde.\n"
+        "🌳 *Fase G: Q89,600* — con área verde.\n\n"
+        "El proyecto está ubicado sobre la *CA-2 km 188, Retalhuleu* 📍\n\n"
+        "Son *terrenos con todos los servicios* ✅: agua potable, energía eléctrica, calles pavimentadas y drenajes con planta de tratamiento.\n"
+        "Además, Vista Hermosa cuenta con *garita y muro perimetral* 🛡️\n"
+        "El proyecto continúa en proceso de urbanización y todavía no se puede construir.\n\n"
+        "Le comparto los dos planos para que pueda comparar ambas opciones 😊"
+    )
+
+
+def enviar_planos_vh(numero, fase=None):
+    planos = PLANOS_PROYECTOS.get("vista_hermosa", {})
+    claves = [fase] if fase in {"fase_f", "fase_g"} else ["fase_f", "fase_g"]
+    enviados = 0
+    for clave in claves:
+        plano = planos.get(clave)
+        if not plano:
+            continue
+        if enviar_documento_url_whatsapp(numero, plano["url"], plano["archivo"], caption=plano["nombre"]):
+            enviados += 1
+    if enviados:
+        time.sleep(3.0)
+    if fase in {"fase_f", "fase_g"}:
+        mensaje_final = (
+            "🟢 *Verde: disponible*\n"
+            "🔴 *Rojo: vendido*\n\n"
+            "¿Hay alguna ubicación de esta fase que le llame la atención? 😊"
+        )
+    else:
+        mensaje_final = (
+            "🟢 *Verde: disponible*\n"
+            "🔴 *Rojo: vendido*\n\n"
+            "Revise ambas fases con calma 😊. ¿Cuál le interesa más: *Fase F* o *Fase G*?"
+        )
+    enviar_whatsapp(numero, mensaje_final)
+    return enviados > 0
+
+
+def texto_planes_pago_vh(fase):
+    datos = VH_FASES[fase]
+    emoji = "🏊🌳" if fase == "fase_f" else "🌳"
+    return (
+        "Excelente elección 😊\n\n"
+        f"La *{datos['nombre']}* tiene un valor de *{datos['precio_texto']}* y cuenta con {datos['amenidad']} {emoji}\n\n"
+        "Para facilitarle la compra, puede elegir la forma de pago que mejor se adapte a usted:\n\n"
+        "💳 *Financiamiento propio* de 2 a 8 años\n"
+        "✨ *Plan de 1 año sin intereses*\n"
+        "💰 *Pago al contado*\n\n"
+        "¿Cuál de estas opciones le gustaría revisar primero? 😊"
+    )
+
+
+def enviar_video_vh(numero):
+    rutas = VIDEOS_PROYECTOS.get("vista_hermosa", [])
+    for ruta in rutas:
+        if os.path.exists(ruta):
+            return enviar_video_whatsapp(
+                numero,
+                ruta,
+                caption=(
+                    "Le comparto también un video de *Vista Hermosa* 🏡✨ para que pueda conocer mejor el proyecto."
+                )
+            )
+    return False
+
+
+def cuota_sin_intereses_vh(fase):
+    datos = VH_FASES[fase]
+    return round((datos["precio"] - datos["enganche"]) / 11, 2)
+
+
+def precio_contado_vh(fase, descuento=0.03):
+    return round(VH_FASES[fase]["precio"] * (1 - descuento), 2)
+
+
+def _texto_tabla_financiamiento_vh(fase):
+    datos = VH_FASES[fase]
+    tabla = VH_CUOTAS_FINANCIAMIENTO.get(fase, {})
+    lineas = [
+        f"💳 *Financiamiento propio — {datos['nombre']}*",
+        f"🏡 Precio: *{datos['precio_texto']}*",
+        "💰 Enganche: *Q6,000*",
+        "",
+    ]
+    for plazo in range(2, 9):
+        cuota = tabla.get(plazo)
+        if cuota is not None:
+            lineas.append(f"• {plazo} años: *{formatear_quetzales(cuota)}* mensuales")
+    lineas += ["", "Financiamiento propio y directo con la empresa, sin banco."]
+    return "\n".join(lineas)
+
+
+def enviar_financiamiento_vh(numero, fase, plazo=None):
+    datos = VH_FASES[fase]
+    if plazo:
+        cuota = VH_CUOTAS_FINANCIAMIENTO.get(fase, {}).get(plazo)
+        if cuota is not None:
+            enviar_whatsapp(
+                numero,
+                f"Claro 😊 En *{datos['nombre']}*, a *{plazo} años* la cuota es de aproximadamente "
+                f"*{formatear_quetzales(cuota)} mensuales*, con enganche de *Q6,000*."
+            )
+    else:
+        enviar_whatsapp(
+            numero,
+            f"Claro 😊 Le comparto el financiamiento de *{datos['nombre']}* para que pueda comparar las cuotas de *2 a 8 años*."
+        )
+
+    ruta = datos.get("imagen_financiamiento")
+    if ruta and os.path.exists(ruta):
+        enviar_imagen_whatsapp(
+            numero,
+            ruta,
+            caption=(
+                f"Vista Hermosa · {datos['nombre']} · financiamiento propio de 2 a 8 años. "
+                "El plan de 1 año sin intereses se calcula aparte."
+            )
+        )
+    else:
+        enviar_whatsapp(numero, _texto_tabla_financiamiento_vh(fase))
+
+    return enviar_whatsapp(
+        numero,
+        "¿Hay alguna cuota de ese cuadro que se acerque a lo que usted desea pagar mensualmente? 😊"
+    )
+
+
+def enviar_plan_sin_intereses_vh(numero, fase):
+    datos = VH_FASES[fase]
+    saldo = datos["precio"] - datos["enganche"]
+    cuota = cuota_sin_intereses_vh(fase)
+    return enviar_whatsapp(
+        numero,
+        f"Claro 😊 Para *{datos['nombre']}*, el plan de *1 año sin intereses* queda así:\n\n"
+        f"🏡 Precio: *{datos['precio_texto']}*\n"
+        "💰 Enganche: *Q6,000*\n"
+        f"📌 Saldo: *{formatear_quetzales(saldo)}*\n"
+        f"✨ 11 mensualidades de *{formatear_quetzales(cuota)}*\n\n"
+        "No se agregan intereses a ese saldo. ¿Qué le parece esta modalidad? 😊"
+    )
+
+
+def enviar_contado_vh(numero, fase):
+    datos = VH_FASES[fase]
+    precio_3 = precio_contado_vh(fase, 0.03)
+    return enviar_whatsapp(
+        numero,
+        f"Claro 😊 En *{datos['nombre']}* el precio regular es *{datos['precio_texto']}*.\n\n"
+        f"💰 Con el *3% de descuento inicial por pago al contado* quedaría en *{formatear_quetzales(precio_3)}*.\n\n"
+        "Si ya está considerando realizar la compra, puedo revisar si es posible mejorar un poco más esa condición, hasta un máximo autorizado del 5%. "
+        "¿Desea que revisemos esta opción o prefiere comparar otra modalidad?"
+    )
+
+
+def enviar_comparacion_vh(numero, fase):
+    datos = VH_FASES[fase]
+    enviar_whatsapp(numero, f"Claro 😊 Le comparto las *tres alternativas de {datos['nombre']}* para que pueda compararlas con calma.")
+    # Financiamiento: cuadro existente del proyecto.
+    ruta = datos.get("imagen_financiamiento")
+    if ruta and os.path.exists(ruta):
+        enviar_imagen_whatsapp(numero, ruta, caption=f"Vista Hermosa · {datos['nombre']} · financiamiento de 2 a 8 años")
+    else:
+        enviar_whatsapp(numero, _texto_tabla_financiamiento_vh(fase))
+    cuota_0 = cuota_sin_intereses_vh(fase)
+    contado = precio_contado_vh(fase, 0.03)
+    enviar_whatsapp(
+        numero,
+        f"✨ *1 año sin intereses:* enganche Q6,000 + 11 mensualidades de *{formatear_quetzales(cuota_0)}*."
+    )
+    enviar_whatsapp(
+        numero,
+        f"💰 *Pago al contado:* con el 3% de descuento inicial queda en *{formatear_quetzales(contado)}*."
+    )
+    return enviar_whatsapp(numero, "¿Cuál de las tres formas de pago siente que se adapta mejor a usted? 😊")
+
+
+def respuesta_reserva_vh(numero):
+    estado = estado_vh(numero)
+    estado["vh_etapa"] = "reserva"
+    estado["vh_pregunta_pendiente"] = "lote_para_reservar"
+    persistir_cliente(numero)
+    return (
+        "Claro 🙌 En *Vista Hermosa* puede reservar el lote con *Q1,500*. "
+        "Ese monto forma parte del enganche total de Q6,000 y sirve para apartar la ubicación escogida mientras completa el proceso. "
+        "¿Ya vio alguna ubicación que le interese en los planos o desea que le comparta ambas fases?"
+    )
+
+
+def respuesta_ubicacion_vh(numero):
+    datos = UBICACIONES_PROYECTOS["vista_hermosa"]
+    if cita_ya_cerrada(numero):
+        return (
+            f"Vista Hermosa está ubicado en *{datos['texto']}* 📍. Como su visita ya está coordinada, le comparto el enlace para llegar directamente:\n"
+            f"{datos['maps']}\n\n¿Necesita que le indique algo más antes de llegar?"
+        )
+    return (
+        f"Vista Hermosa está ubicado en *{datos['texto']}* 📍. Para las visitas normalmente nos reunimos directamente en el residencial. "
+        "El enlace de Maps se lo envío cuando dejemos confirmados el día y la hora, así llega directamente al punto correcto. "
+        "¿Qué día le quedaría bien conocerlo?"
+    )
+
+
+def pregunta_datos_registrales_vh(texto):
+    t = normalizar_texto_topografia(texto)
+    return any(x in t for x in [
+        "numero de finca", "número de finca", "finca", "folio", "libro registral",
+        "numero de libro", "número de libro", "registro de la propiedad"
+    ])
+
+
+def es_reaccion_video_vh(texto):
+    return es_reaccion_video_psm(texto)
+
+
+def es_reaccion_positiva_vh(texto):
+    return es_reaccion_positiva_propuesta_psm(texto)
+
+
+def _mensaje_es_pregunta_especifica_vh(texto):
+    t = normalizar_texto_topografia(texto)
+    return any(x in t for x in [
+        "mantenimiento", "escritur", "titulo de agua", "agua", "requisitos", "documentos",
+        "abono", "capital", "construir", "urbanizacion", "cuando entregan", "gastos",
+        "donde queda", "ubicacion", "maps", "plano", "disponibilidad", "medida",
+        "garita", "muro", "piscina", "servicios", "banco", "finca", "folio", "libro"
+    ])
+
+
+def manejar_flujo_vista_hermosa_humano(numero, texto, proyecto, message_id):
+    """Mismo recorrido comercial de Palmeras, adaptado a Vista Hermosa."""
+    if proyecto != "vista_hermosa":
+        return False
+
+    estado = estado_vh(numero)
+    t = normalizar_texto_topografia(texto)
+    cta = detectar_cta_vista_hermosa(texto)
+
+    # La FAQ de visita es la única de las tres que salta el protocolo.
+    if cta == "visita":
+        respuesta = respuesta_visita(numero, texto, "vista_hermosa")
+        estado["vh_etapa"] = "visita"
+        estado["vh_pregunta_pendiente"] = "dia_hora_visita"
+        persistir_cliente(numero)
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+        return True
+
+    if cta in {"informacion", "precios_cuotas"}:
+        estado = reiniciar_flujo_vh_para_presentacion(numero)
+        bienvenida = generar_bienvenida_vh(numero, texto)
+        estado["vh_etapa"] = "esperando_fase"
+        estado["vh_pregunta_pendiente"] = "fase"
+        marcar_cliente_presentado(numero)
+        persistir_cliente(numero)
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", bienvenida)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, bienvenida)
+            enviar_planos_vh(numero)
+        return True
+
+    # Dato legal expresamente no cargado: pausa + alerta a Gabriel.
+    if pregunta_datos_registrales_vh(texto):
+        respuesta = (
+            "La escritura de Vista Hermosa es registrada 📄✅. El número exacto de *finca, folio y libro* no lo tengo cargado en este momento y prefiero no inventárselo. "
+            "¿Me permite confirmarle ese dato correctamente?"
+        )
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+            marcar_intervencion_automatica(numero, texto, motivo="dato registral Vista Hermosa no cargado")
+        return True
+
+    # Fecha exacta de finalización: sabemos que sigue en urbanización, pero no hay fecha oficial cargada.
+    if pregunta_plazo_entrega_urbanizacion(texto):
+        respuesta = (
+            "Vista Hermosa sigue en proceso de urbanización y *todavía no se puede construir* 🏗️. "
+            "No tengo una fecha exacta de finalización cargada y prefiero confirmarla antes de darle un dato incorrecto. "
+            "¿Me permite verificarle el avance y plazo actualizado?"
+        )
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+            marcar_intervencion_automatica(numero, texto, motivo="plazo exacto de urbanización Vista Hermosa")
+        return True
+
+    fase = detectar_fase_vh(texto)
+    plan = detectar_plan_vh(texto)
+    plazo = extraer_plazo_cuota(texto)
+    decision_ia = None
+
+    if (
+        not _mensaje_es_pregunta_especifica_vh(texto)
+        and not es_intencion_reserva_psm(texto)
+        and not detectar_intencion_visita(texto)
+        and estado.get("vh_etapa") in {"esperando_fase", "esperando_plan", "esperando_reaccion_propuesta"}
+    ):
+        necesita_ia = (
+            (estado.get("vh_etapa") == "esperando_fase" and fase is None)
+            or (estado.get("vh_etapa") == "esperando_plan" and plan is None and not es_reaccion_video_vh(texto))
+            or (estado.get("vh_etapa") == "esperando_reaccion_propuesta" and plan is None and not es_reaccion_positiva_vh(texto))
+        )
+        if necesita_ia:
+            decision_ia = interpretar_decision_vh_ia(numero, texto, estado)
+
+    if fase is None and decision_ia in {"fase_f", "fase_g", "ambas"}:
+        fase = decision_ia
+    if plan is None and decision_ia in {"financiamiento", "sin_intereses", "contado", "todos"}:
+        plan = decision_ia
+
+    # Pregunta informativa sobre reserva: responder el monto sin asumir que ya comprará.
+    if any(x in t for x in [
+        "cuanto es la reserva", "cuanto para reservar", "con cuanto reservo",
+        "de cuanto es la reserva", "valor de la reserva"
+    ]):
+        respuesta = (
+            "En *Vista Hermosa* puede reservar con *Q1,500* 😊. Ese monto forma parte del enganche total de Q6,000. "
+            "¿Desea que le muestre los planos para escoger la ubicación que más le interese?"
+        )
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+        return True
+
+    # Intención alta: reserva/compra o visita rompe el protocolo.
+    if es_intencion_reserva_psm(texto):
+        respuesta = respuesta_reserva_vh(numero)
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+        return True
+
+    if detectar_intencion_visita(texto):
+        respuesta = respuesta_visita(numero, texto, "vista_hermosa")
+        estado["vh_etapa"] = "visita"
+        estado["vh_pregunta_pendiente"] = "dia_hora_visita"
+        persistir_cliente(numero)
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+        return True
+
+    # Ubicación no manda Maps antes de tener cita cerrada.
+    if pide_ubicacion(texto):
+        respuesta = respuesta_ubicacion_vh(numero)
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+        return True
+
+    # Planos/disponibilidad: siempre F y G si aún no eligió fase.
+    if pide_plano(texto):
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", "Se compartieron los planos actualizados de Vista Hermosa.")
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_planos_vh(numero, estado.get("vh_fase"))
+        return True
+
+    # Inicio general u orgánico de precio/cuotas: mismo protocolo de bienvenida.
+    if not estado.get("vh_etapa") and es_inicio_general_vh(texto):
+        estado = reiniciar_flujo_vh_para_presentacion(numero)
+        bienvenida = generar_bienvenida_vh(numero, texto)
+        estado["vh_etapa"] = "esperando_fase"
+        estado["vh_pregunta_pendiente"] = "fase"
+        marcar_cliente_presentado(numero)
+        persistir_cliente(numero)
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", bienvenida)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, bienvenida)
+            enviar_planos_vh(numero)
+        return True
+
+    if es_solicitud_info_general_vh(texto):
+        estado = reiniciar_flujo_vh_para_presentacion(numero)
+        bienvenida = generar_bienvenida_vh(numero, texto)
+        estado["vh_etapa"] = "esperando_fase"
+        estado["vh_pregunta_pendiente"] = "fase"
+        persistir_cliente(numero)
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", bienvenida)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, bienvenida)
+            enviar_planos_vh(numero)
+        return True
+
+    # Pregunta de pago antes de seleccionar fase: no soltar las dos cotizaciones.
+    pide_pago_general = any(x in t for x in [
+        "precio", "precios", "cuanto cuesta", "cuanto vale", "valor", "costo",
+        "cotizacion", "cuota", "cuotas", "mensualidad", "mensualidades",
+        "financiamiento", "plan de pago", "planes de pago", "sin intereses", "contado"
+    ])
+    if pide_pago_general and not estado.get("vh_fase") and fase not in {"fase_f", "fase_g"}:
+        respuesta = (
+            "Con gusto 😊 Para darle el plan correcto primero elijamos la fase que desea tomar como referencia:\n\n"
+            "🏊 *Fase F: Q83,200* — piscina y área verde.\n"
+            "🌳 *Fase G: Q89,600* — área verde.\n\n"
+            "¿Cuál le interesa más: *Fase F* o *Fase G*?"
+        )
+        estado["vh_etapa"] = "esperando_fase"
+        estado["vh_pregunta_pendiente"] = "fase"
+        persistir_cliente(numero)
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+            enviar_planos_vh(numero)
+        return True
+
+    # Elección de fase.
+    if fase in {"fase_f", "fase_g"} and (
+        estado.get("vh_etapa") in {None, "esperando_fase"}
+        or estado.get("vh_pregunta_pendiente") == "fase"
+        or "precio" in t
+    ):
+        estado["vh_fase"] = fase
+        estado["vh_etapa"] = "esperando_plan"
+        estado["vh_pregunta_pendiente"] = "plan_pago"
+        persistir_cliente(numero)
+        respuesta = texto_planes_pago_vh(fase)
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+            if not estado.get("vh_video_amenidades_enviado") and enviar_video_vh(numero):
+                estado["vh_video_amenidades_enviado"] = True
+                persistir_cliente(numero)
+        return True
+
+    if fase == "ambas" and estado.get("vh_etapa") == "esperando_fase":
+        respuesta = (
+            "Claro 😊 Podemos comparar ambas. *Fase F* está en Q83,200 con piscina y área verde; "
+            "*Fase G* está en Q89,600 con área verde. Ambas son de 8x16. "
+            "¿Cuál desea tomar primero como referencia para revisar las formas de pago?"
+        )
+        estado["vh_pregunta_pendiente"] = "fase"
+        persistir_cliente(numero)
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+        return True
+
+    if estado.get("vh_etapa") == "esperando_plan" and es_reaccion_video_vh(texto):
+        respuesta = (
+            "Me alegra que le haya gustado 😊. Sobre la forma de pago, podemos revisar *financiamiento de 2 a 8 años*, "
+            "*1 año sin intereses* o *pago al contado*. ¿Cuál desea que revisemos primero?"
+        )
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+        return True
+
+    # Reacción a propuesta: no repetir el menú; avanzar a visita si hay interés real.
+    if estado.get("vh_etapa") == "esperando_reaccion_propuesta":
+        if es_reaccion_positiva_vh(texto) or decision_ia == "positivo":
+            estado["vh_etapa"] = "visita"
+            estado["vh_pregunta_pendiente"] = "dia_hora_visita"
+            persistir_cliente(numero)
+            respuesta = (
+                "Me alegra que la opción le interese 😊🏡. Lo ideal ahora es que pueda conocer Vista Hermosa personalmente y ver el avance del proyecto. "
+                "¿Qué día le quedaría bien visitarlo?"
+            )
+            guardar_mensaje(numero, "user", texto)
+            guardar_mensaje(numero, "assistant", respuesta)
+            if procesamiento_sigue_vigente(numero, message_id):
+                enviar_whatsapp(numero, respuesta)
+            return True
+        if decision_ia == "visita":
+            respuesta = respuesta_visita(numero, texto, "vista_hermosa")
+            estado["vh_etapa"] = "visita"
+            estado["vh_pregunta_pendiente"] = "dia_hora_visita"
+            persistir_cliente(numero)
+            guardar_mensaje(numero, "user", texto)
+            guardar_mensaje(numero, "assistant", respuesta)
+            if procesamiento_sigue_vigente(numero, message_id):
+                enviar_whatsapp(numero, respuesta)
+            return True
+        if decision_ia == "reserva":
+            respuesta = respuesta_reserva_vh(numero)
+            guardar_mensaje(numero, "user", texto)
+            guardar_mensaje(numero, "assistant", respuesta)
+            if procesamiento_sigue_vigente(numero, message_id):
+                enviar_whatsapp(numero, respuesta)
+            return True
+        if decision_ia == "comparar":
+            plan = "todos"
+
+    # Elección/cambio de modalidad. La fase se conserva.
+    if estado.get("vh_fase") and plan:
+        fase_actual = estado["vh_fase"]
+        estado["vh_plan"] = plan
+        estado["vh_plazo"] = plazo if plazo and 2 <= plazo <= 8 else None
+        estado["vh_etapa"] = "esperando_reaccion_propuesta"
+        estado["vh_cotizacion_enviada"] = True
+        estado["vh_pregunta_pendiente"] = "reaccion_propuesta"
+        persistir_cliente(numero)
+        guardar_mensaje(numero, "user", texto)
+        if procesamiento_sigue_vigente(numero, message_id):
+            if plan == "financiamiento":
+                enviar_financiamiento_vh(numero, fase_actual, estado.get("vh_plazo"))
+            elif plan == "sin_intereses":
+                enviar_plan_sin_intereses_vh(numero, fase_actual)
+            elif plan == "contado":
+                enviar_contado_vh(numero, fase_actual)
+            elif plan == "todos":
+                enviar_comparacion_vh(numero, fase_actual)
+        return True
+
+    # Si ya eligió fase y pregunta específicamente por un plazo, conservar contexto.
+    if estado.get("vh_fase") and plazo and 2 <= plazo <= 8:
+        estado["vh_plan"] = "financiamiento"
+        estado["vh_plazo"] = plazo
+        estado["vh_etapa"] = "esperando_reaccion_propuesta"
+        estado["vh_cotizacion_enviada"] = True
+        estado["vh_pregunta_pendiente"] = "reaccion_propuesta"
+        persistir_cliente(numero)
+        guardar_mensaje(numero, "user", texto)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_financiamiento_vh(numero, estado["vh_fase"], plazo)
+        return True
+
+    # Pregunta concreta sobre construcción: responder sin inventar fecha.
+    if any(x in t for x in ["ya puedo construir", "se puede construir", "puedo construir", "construir ahorita", "construir ahora"]):
+        respuesta = (
+            "Todavía no 😊 Vista Hermosa continúa en proceso de urbanización. Primero deben quedar habilitadas las obras y servicios necesarios; después podrá construirse. "
+            "¿Desea que le explique qué servicios tendrá el residencial?"
+        )
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+        return True
+
+    # Preguntas puntuales restantes las resuelve el motor general/IA con la ficha ya corregida.
+    if _mensaje_es_pregunta_especifica_vh(texto):
+        persistir_cliente(numero)
+        return False
+
+    return False
+
+
+# ============================================================
 # CONSULTAS MULTIPLES EN UN MISMO BLOQUE
 # ============================================================
 
@@ -10276,7 +11179,7 @@ def manejar_intenciones_multiples(numero, texto, proyecto, message_id):
     # material visual, así que no los repetimos después.
     paquete_completo_enviado = False
     if (
-        proyecto != "palmeras"
+        proyecto not in {"palmeras", "vista_hermosa"}
         and quiere_precio
         and es_consulta_general_de_precio(texto)
         and primera_consulta_comercial
@@ -10491,14 +11394,20 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
         # ya viene identificado como Palmeras y el mensaje es genérico, NO mandamos
         # antes el saludo corto porque duplicaría la presentación.
         proyecto_previo_presentacion = obtener_proyecto_actual(numero_cliente)
+        proyecto_mencionado_presentacion = detectar_proyecto_en_texto(texto_cliente)
+        proyecto_para_presentacion = proyecto_previo_presentacion or proyecto_mencionado_presentacion
         cta_palmeras_presentacion = detectar_cta_palmeras(texto_cliente)
-        if proyecto_previo_presentacion == "palmeras" and (
+        cta_vh_presentacion = detectar_cta_vista_hermosa(texto_cliente)
+        if proyecto_para_presentacion == "palmeras" and (
             es_inicio_general_psm(texto_cliente)
             or cta_palmeras_presentacion in {"informacion", "precios_cuotas", "visita"}
         ):
-            # Las preguntas rápidas de Palmeras tienen su propia ruta.
-            # Evitamos el saludo genérico para no duplicar mensajes antes del protocolo
-            # ni antes de la coordinación directa de visita.
+            presentacion_enviada = False
+        elif proyecto_para_presentacion == "vista_hermosa" and (
+            es_inicio_general_vh(texto_cliente)
+            or cta_vh_presentacion in {"informacion", "precios_cuotas", "visita"}
+        ):
+            # Vista Hermosa también tiene su propia presentación comercial progresiva.
             presentacion_enviada = False
         else:
             presentacion_enviada = enviar_presentacion_si_corresponde(
@@ -10530,6 +11439,16 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
             numero_cliente,
             texto_cliente
         )
+
+        # VISTA HERMOSA: mismo cerebro comercial progresivo de Palmeras,
+        # con sus precios, fases, reserva, garita, muro y reglas propias.
+        if manejar_flujo_vista_hermosa_humano(
+            numero_cliente,
+            texto_cliente,
+            proyecto,
+            message_id
+        ):
+            return
 
         # PALMERAS SAN MIGUEL: conversación comercial progresiva.
         # Va ANTES del coordinador genérico para evitar que una consulta de precio
@@ -10619,6 +11538,14 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
                         persistir_cliente(numero_cliente)
                         enviar_whatsapp(numero_cliente, bienvenida)
                         enviar_planos_psm_sin_topografia(numero_cliente)
+                    elif elegido == "vista_hermosa":
+                        estado_vh_actual = reiniciar_flujo_vh_para_presentacion(numero_cliente)
+                        bienvenida = generar_bienvenida_vh(numero_cliente, texto_cliente)
+                        estado_vh_actual["vh_etapa"] = "esperando_fase"
+                        estado_vh_actual["vh_pregunta_pendiente"] = "fase"
+                        persistir_cliente(numero_cliente)
+                        enviar_whatsapp(numero_cliente, bienvenida)
+                        enviar_planos_vh(numero_cliente)
                     else:
                         enviar_info_completa_proyecto(numero_cliente, elegido, cierre=True)
                 return
