@@ -1,3 +1,5 @@
+# VERSION_PALMERAS_COTIZACIONES_VISUALES_IA_20261004 - restaura imagenes por modalidad + decisiones sin repetir preguntas
+# VERSION_PALMERAS_IA_DECISIONES_MEDIA_CRM_20261004 - IA interpreta decisiones PSM + audio/foto/video visibles en CRM
 # VERSION_PALMERAS_PLAN_CONTINUA_20261004 - evita que "Financiamiento" repita el menú y avanza a plazo
 # VERSION_PALMERAS_SIN_ALGORITMO_VIEJO_20261004 - flujo PSM nuevo exclusivo, sin paquete completo antiguo
 # VERSION_MULTIINTENCION_MENSAJES_8S_20260924 - agrupa 8s y atiende varias solicitudes del mismo bloque
@@ -4908,6 +4910,7 @@ def crm_registrar_mensaje(numero, direccion, contenido, event_id=None, media_url
             "direccion": direccion,
             "contenido": contenido,
             "hora": crm_hora_actual(),
+            "event_id": event_id,
             "media_url": media_url,
             "media_tipo": media_tipo,
             "canal": crm_canal_contacto(numero)
@@ -4936,6 +4939,29 @@ def crm_registrar_mensaje(numero, direccion, contenido, event_id=None, media_url
             args=(numero, contenido, event_id),
             daemon=True
         ).start()
+
+
+
+def crm_actualizar_contenido_por_evento(numero, event_id, contenido):
+    """Actualiza el texto visible de un mensaje ya registrado (ej. transcripción de audio)."""
+    if not numero or not event_id:
+        return False
+    contenido = str(contenido or "").strip()
+    if not contenido:
+        return False
+
+    actualizado = False
+    with lock_crm:
+        lista = crm_mensajes.get(numero, [])
+        for item in reversed(lista):
+            if str(item.get("event_id") or "") == str(event_id):
+                item["contenido"] = contenido
+                actualizado = True
+                break
+
+    if actualizado:
+        persistir_cliente(numero)
+    return actualizado
 
 
 # ============================================================
@@ -5078,7 +5104,7 @@ def enviar_messenger_adjunto_url(contacto, tipo, url_archivo, caption=""):
                 "out",
                 etiqueta,
                 media_url=url_archivo,
-                media_tipo=media_tipo if media_tipo in {"image", "video", "document"} else None
+                media_tipo=media_tipo if media_tipo in {"image", "video", "audio", "document"} else None
             )
             return True
         return False
@@ -5167,7 +5193,7 @@ def guardar_media_facebook_crm(contacto, evento):
     tipo_meta = str(adjunto.get("type") or "").lower()
     url_media = str(((adjunto.get("payload") or {}).get("url")) or "").strip()
 
-    if not url_media or tipo_meta not in {"image", "video", "file"}:
+    if not url_media or tipo_meta not in {"image", "video", "audio", "file"}:
         return None, None
 
     try:
@@ -5182,6 +5208,8 @@ def guardar_media_facebook_crm(contacto, evento):
                 mime = "image/jpeg"
             elif tipo_meta == "video":
                 mime = "video/mp4"
+            elif tipo_meta == "audio":
+                mime = "audio/mpeg"
             else:
                 mime = "application/octet-stream"
 
@@ -5190,6 +5218,8 @@ def guardar_media_facebook_crm(contacto, evento):
             media_tipo = "image"
         elif mime.startswith("video/"):
             media_tipo = "video"
+        elif mime.startswith("audio/"):
+            media_tipo = "audio"
         elif mime == "application/pdf":
             media_tipo = "document"
 
@@ -5202,6 +5232,111 @@ def guardar_media_facebook_crm(contacto, evento):
     except Exception as exc:
         print("MESSENGER MEDIA CRM ERROR:", exc)
         return None, None
+
+
+
+def procesar_adjunto_facebook_en_segundo_plano(contacto, evento, event_id):
+    """Hace que Messenger también pueda comprender fotos, videos y notas de voz."""
+    try:
+        if crm_esta_manual(contacto):
+            print("MESSENGER MEDIA: conversación en MANUAL; IA pausada.")
+            return
+
+        mensaje = (evento or {}).get("message") or {}
+        adjuntos = mensaje.get("attachments") or []
+        if not adjuntos:
+            return
+
+        adjunto = adjuntos[0] or {}
+        tipo = str(adjunto.get("type") or "").lower()
+        url_media = str(((adjunto.get("payload") or {}).get("url")) or "").strip()
+        if not url_media:
+            return
+
+        try:
+            r = requests.get(url_media, timeout=60)
+        except Exception as exc:
+            print("MESSENGER MEDIA IA DOWNLOAD ERROR:", exc)
+            return
+
+        if not (200 <= r.status_code < 300) or not r.content:
+            print("MESSENGER MEDIA IA DOWNLOAD:", r.status_code)
+            return
+
+        mime = (r.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if not mime:
+            mime = {
+                "image": "image/jpeg",
+                "video": "video/mp4",
+                "audio": "audio/mpeg",
+            }.get(tipo, "application/octet-stream")
+
+        # Igual que WhatsApp, se presenta solo si corresponde.
+        enviar_presentacion_si_corresponde(contacto, event_id)
+
+        if tipo == "image":
+            respuesta = analizar_imagen_cliente(
+                contacto,
+                r.content,
+                mime_type=mime or "image/jpeg",
+                caption=""
+            )
+            if respuesta:
+                enviar_whatsapp(contacto, respuesta)
+            return
+
+        if tipo == "video":
+            respuesta = analizar_video_cliente(contacto, r.content, caption="")
+            if respuesta:
+                enviar_whatsapp(contacto, respuesta)
+            return
+
+        if tipo == "audio":
+            texto = transcribir_audio_cliente(r.content, mime_type=mime or "audio/mpeg")
+            if not texto:
+                enviar_whatsapp(
+                    contacto,
+                    "Recibí su audio 🎙️😊, pero no pude transcribirlo en este momento. "
+                    "Puede intentar enviarlo nuevamente."
+                )
+                return
+
+            crm_actualizar_contenido_por_evento(
+                contacto,
+                event_id,
+                f"🎙️ Audio recibido por Facebook\n📝 {texto}"
+            )
+
+            # Reinyectamos la transcripción al MISMO motor comercial que usa WhatsApp.
+            audio_id = f"{event_id}:transcripcion"
+            iniciar_procesamiento(contacto, audio_id)
+            payload = {
+                "object": "whatsapp_business_account",
+                "entry": [{
+                    "changes": [{
+                        "value": {
+                            "messages": [{
+                                "from": contacto,
+                                "id": audio_id,
+                                "type": "text",
+                                "text": {"body": texto}
+                            }]
+                        }
+                    }]
+                }]
+            }
+            procesar_mensaje_en_segundo_plano(payload, audio_id)
+            return
+
+        if tipo == "file":
+            enviar_whatsapp(
+                contacto,
+                "Recibí el documento 📄😊. Si desea que revise algo específico, "
+                "puede enviarme una captura de la parte que quiere consultar."
+            )
+
+    except Exception as exc:
+        print("ERROR PROCESANDO MEDIA MESSENGER:", exc)
 
 
 @app.route("/webhook-facebook", methods=["GET"])
@@ -5309,9 +5444,14 @@ def recibir_webhook_facebook():
                     # para este contacto. Si llegan más mensajes mientras el bot
                     # responde, quedarán como una segunda tanda.
                 else:
-                    # Los adjuntos ya quedan visibles en CRM. No intentamos tratarlos como
-                    # media de WhatsApp porque Messenger entrega otra estructura.
-                    print("MESSENGER ADJUNTO EN CRM:", contacto, contenido[:120])
+                    # Los adjuntos quedan visibles en CRM y, si la conversación está en IA,
+                    # también se analizan: fotos/videos con visión y audios con transcripción.
+                    Thread(
+                        target=procesar_adjunto_facebook_en_segundo_plano,
+                        args=(contacto, evento, dedupe_id),
+                        daemon=True
+                    ).start()
+                    print("MESSENGER ADJUNTO EN CRM + IA:", contacto, contenido[:120])
 
                 print("MESSENGER EN CRM:", contacto, contenido[:120])
 
@@ -5360,18 +5500,33 @@ def inicializar_media_db():
             return False
 
 
-def guardar_imagen_crm(numero, mensaje):
-    """Descarga una foto de Meta y la conserva en PostgreSQL para verla en el CRM."""
-    if (mensaje or {}).get("type") != "image":
-        return None
-    media = (mensaje or {}).get("image") or {}
+def guardar_media_whatsapp_crm(numero, mensaje):
+    """
+    Conserva en PostgreSQL imágenes, audios, videos y documentos recibidos
+    por WhatsApp para poder abrirlos/reproducirlos después desde el CRM.
+    """
+    mensaje = mensaje or {}
+    tipo = str(mensaje.get("type") or "").lower()
+    if tipo not in {"image", "audio", "video", "document"}:
+        return None, None
+
+    media = mensaje.get(tipo) or {}
     media_id = str(media.get("id") or "").strip()
     if not media_id or not inicializar_media_db():
-        return None
+        return None, None
+
     archivo, mime = obtener_media_whatsapp(media_id)
     if not archivo:
-        return None
-    mime = mime or "image/jpeg"
+        return None, None
+
+    mime_defaults = {
+        "image": "image/jpeg",
+        "audio": "audio/ogg",
+        "video": "video/mp4",
+        "document": "application/octet-stream",
+    }
+    mime = mime or mime_defaults.get(tipo, "application/octet-stream")
+
     try:
         conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
         try:
@@ -5384,10 +5539,16 @@ def guardar_imagen_crm(numero, mensaje):
             conn.commit()
         finally:
             conn.close()
-        return f"/crm/media/{media_id}"
+        return f"/crm/media/{media_id}", tipo
     except Exception as exc:
         print("MEDIA DB SAVE ERROR:", exc)
-        return None
+        return None, None
+
+
+def guardar_imagen_crm(numero, mensaje):
+    """Compatibilidad con código anterior: conserva una imagen y devuelve solo su URL."""
+    media_url, media_tipo = guardar_media_whatsapp_crm(numero, mensaje)
+    return media_url if media_tipo == "image" else None
 
 
 @app.route("/crm/media/<media_key>", methods=["GET"])
@@ -5845,6 +6006,11 @@ NO digas:
 - "Como inteligencia artificial"
 
 Habla de manera natural desde el WhatsApp comercial de Gabriel Polero.
+
+ALCANCE DEL BOT:
+- Este WhatsApp/Messenger atiende ÚNICAMENTE el negocio inmobiliario de Gabriel: proyectos, lotes, precios, pagos, documentos, visitas, reservas y temas relacionados.
+- Si el cliente pregunta algo claramente ajeno al negocio, responda brevemente y rediríjalo a los proyectos inmobiliarios. No sostenga conversaciones largas fuera de ese ámbito.
+- Puede conversar con naturalidad, resolver objeciones y entender mensajes informales, pero jamás invente información comercial.
 
 No afirmes que Gabriel está escribiendo manualmente en ese momento.
 Simplemente conversa en primera persona.
@@ -8525,6 +8691,20 @@ PSM_FASES = {
     },
 }
 
+PSM_PLANES_IMAGEN = {
+    "fase_1": {
+        "financiamiento": "media/cotizaciones/palmeras_nuevo/fase1_financiamiento.png",
+        "sin_intereses": "media/cotizaciones/palmeras_nuevo/fase1_semicontado.png",
+        "contado": "media/cotizaciones/palmeras_nuevo/fase1_contado.png",
+    },
+    "fase_2": {
+        "financiamiento": "media/cotizaciones/palmeras_nuevo/fase2_financiamiento.png",
+        "sin_intereses": "media/cotizaciones/palmeras_nuevo/fase2_semicontado.png",
+        "contado": "media/cotizaciones/palmeras_nuevo/fase2_contado.png",
+    },
+}
+
+
 PSM_CUOTAS_FINANCIAMIENTO = {
     "fase_1": {
         2: 3026.26, 3: 2181.31, 4: 1766.17, 5: 1521.20,
@@ -8632,6 +8812,97 @@ def detectar_plan_psm(texto):
         return "financiamiento"
     return None
 
+
+
+
+def interpretar_decision_psm_ia(numero, texto, estado):
+    """
+    Interpreta respuestas humanas cortas cuando un cliente no usa las palabras
+    exactas del menú. NO reemplaza los detectores seguros; solo ayuda cuando
+    existe una decisión pendiente de Palmeras.
+
+    Ejemplos que puede entender:
+    - "la más barata" -> Fase 1
+    - "la que tiene piscina" -> Fase 1
+    - "quiero la que me deje menor cuota" -> financiamiento
+    - "muéstreme las opciones" -> todos
+    - "unos cinco" cuando se esperaba plazo -> 5 años
+    - "esa me sirve" después de propuesta -> reacción positiva
+    """
+    texto = str(texto or "").strip()
+    if not texto:
+        return None
+
+    etapa = str((estado or {}).get("psm_etapa") or "")
+    pendiente = str((estado or {}).get("psm_pregunta_pendiente") or "")
+
+    if etapa not in {
+        "esperando_fase", "esperando_plan", "esperando_plazo",
+        "propuesta_enviada", "esperando_reaccion_propuesta"
+    } and pendiente not in {
+        "fase", "plan_pago", "plazo_financiamiento", "reaccion_propuesta"
+    }:
+        return None
+
+    opciones = {
+        "esperando_fase": "fase_1, fase_2, ambas, ninguna",
+        "esperando_plan": "financiamiento, sin_intereses, contado, todos, ninguna",
+        "esperando_plazo": "plazo_2, plazo_3, plazo_4, plazo_5, plazo_6, plazo_7, plazo_8, ninguna",
+        "propuesta_enviada": "positivo, comparar, visita, reserva, ninguna",
+        "esperando_reaccion_propuesta": "positivo, comparar, visita, reserva, ninguna",
+    }.get(etapa, "ninguna")
+
+    prompt = f"""
+Clasifique UNA respuesta de un cliente inmobiliario de Palmeras San Miguel.
+
+Estado actual: {etapa or 'sin etapa'}
+Pregunta pendiente: {pendiente or 'ninguna'}
+Fase guardada: {(estado or {}).get('psm_fase') or 'ninguna'}
+Plan guardado: {(estado or {}).get('psm_plan') or 'ninguno'}
+Mensaje del cliente: {texto}
+
+Responda SOLO con una de estas etiquetas:
+{opciones}
+
+Reglas:
+- No invente una decisión si el mensaje realmente es una pregunta distinta.
+- "la más económica", "la de menor precio" durante selección de fase = fase_1.
+- "la de piscina" = fase_1; "la otra", si ya se compararon las dos y habla del área verde = fase_2.
+- Si pide ver/comparar las tres formas de pago = todos.
+- Si busca pagos mensuales cómodos o pagar poco a poco = financiamiento.
+- Si dice un número 2..8 mientras se espera plazo, clasifique plazo_N aunque no escriba "años".
+- Si después de una propuesta dice que le gusta, le sirve, le interesa o está de acuerdo = positivo.
+- Si quiere conocer/ver/ir al proyecto = visita.
+- Si quiere apartar/comprar/reservar = reserva.
+- Ante duda, responda ninguna.
+"""
+    try:
+        r = client.responses.create(
+            model="gpt-5-mini",
+            instructions="Clasifique la intención. Devuelva únicamente una etiqueta permitida, sin explicación.",
+            input=[{"role": "user", "content": prompt}]
+        )
+        etiqueta = (r.output_text or "").strip().lower()
+        permitidas = {
+            "fase_1", "fase_2", "ambas",
+            "financiamiento", "sin_intereses", "contado", "todos",
+            "plazo_2", "plazo_3", "plazo_4", "plazo_5", "plazo_6", "plazo_7", "plazo_8",
+            "positivo", "comparar", "visita", "reserva", "ninguna"
+        }
+        return etiqueta if etiqueta in permitidas else None
+    except Exception as exc:
+        print("ERROR INTERPRETANDO DECISION PSM:", exc)
+        return None
+
+
+def es_reaccion_positiva_propuesta_psm(texto):
+    t = normalizar_texto_topografia(texto)
+    frases = [
+        "me interesa", "me sirve", "me gusta", "me parece bien", "esta bien",
+        "me conviene", "esa opcion", "esa me gusta", "esa me sirve", "quiero esa",
+        "si me interesa", "si esta bien", "perfecto", "excelente", "me parece"
+    ]
+    return len(t.split()) <= 18 and any(x in t for x in frases)
 
 def es_reaccion_video_psm(texto):
     t = normalizar_texto_topografia(texto)
@@ -8862,20 +9133,84 @@ def precio_contado_psm(fase, descuento=0.03):
     return round(PSM_FASES[fase]["precio"] * (1 - descuento), 2)
 
 
-def enviar_financiamiento_psm(numero, fase, plazo):
-    cuota = PSM_CUOTAS_FINANCIAMIENTO.get(fase, {}).get(plazo)
-    if cuota is None:
+def enviar_imagen_plan_psm(numero, fase, plan):
+    """Envía la imagen visual del plan elegido. Mantiene un fallback seguro."""
+    rutas = PSM_PLANES_IMAGEN.get(fase, {})
+    ruta = rutas.get(plan)
+
+    # Compatibilidad: si todavía no está la carpeta palmeras_nuevo en el deploy,
+    # el financiamiento puede usar la cotización histórica de la fase.
+    if (not ruta or not os.path.exists(ruta)) and plan == "financiamiento":
+        ruta_fallback = PSM_FASES.get(fase, {}).get("imagen_cotizacion")
+        if ruta_fallback and os.path.exists(ruta_fallback):
+            ruta = ruta_fallback
+
+    if not ruta or not os.path.exists(ruta):
+        print("PSM IMAGEN DE PLAN NO ENCONTRADA:", fase, plan, ruta)
         return False
-    datos = PSM_FASES[fase]
-    enviar_whatsapp(
+
+    nombres = {
+        "financiamiento": "Financiamiento propio de 2 a 8 años",
+        "sin_intereses": "Plan de 1 año sin intereses",
+        "contado": "Pago al contado",
+    }
+    return enviar_imagen_whatsapp(
         numero,
-        f"En {datos['nombre']}, el lote 8x16 tiene precio de {datos['precio_texto']} y enganche de Q6,000. "
-        f"A {plazo} años la cuota es de {formatear_quetzales(cuota)} al mes con financiamiento propio 💳🏡."
+        ruta,
+        caption=f"Palmeras San Miguel · {nombres.get(plan, plan)}"
     )
-    # La imagen histórica incluye una fila de 1 año que no corresponde al plan
-    # actual sin intereses. Para evitar confusión, aquí enviamos únicamente la
-    # cuota exacta del plazo elegido. Más adelante se pueden cargar imágenes
-    # nuevas ya corregidas para este flujo.
+
+
+def _texto_tabla_financiamiento_psm(fase):
+    """Fallback textual completo si por alguna razón la imagen no existe en Render."""
+    datos = PSM_FASES[fase]
+    tabla = PSM_CUOTAS_FINANCIAMIENTO.get(fase, {})
+    lineas = [
+        f"💳 *Financiamiento propio — {datos['nombre']}*",
+        f"🏡 Precio: *{datos['precio_texto']}*",
+        "💰 Enganche: *Q6,000*",
+        "",
+    ]
+    for plazo in range(2, 9):
+        cuota = tabla.get(plazo)
+        if cuota is not None:
+            lineas.append(f"• {plazo} años: *{formatear_quetzales(cuota)}* mensuales")
+    lineas.append("")
+    lineas.append("Financiamiento propio y directo con la empresa, sin banco.")
+    return "\n".join(lineas)
+
+
+def enviar_financiamiento_psm(numero, fase, plazo=None):
+    """
+    Si el cliente elige financiamiento, muestra de una vez el CUADRO COMPLETO
+    de 2 a 8 años. Si además mencionó un plazo, primero responde esa cuota y
+    luego deja visible el mismo cuadro para comparar los demás plazos.
+    """
+    datos = PSM_FASES[fase]
+
+    if plazo:
+        cuota = PSM_CUOTAS_FINANCIAMIENTO.get(fase, {}).get(plazo)
+        if cuota is None:
+            return False
+        enviar_whatsapp(
+            numero,
+            f"Claro 😊 En *{datos['nombre']}*, a *{plazo} años* la cuota es de "
+            f"*{formatear_quetzales(cuota)} mensuales*, con enganche de *Q6,000*.\n\n"
+            "Le comparto también el cuadro completo para que pueda comparar los demás plazos."
+        )
+    else:
+        enviar_whatsapp(
+            numero,
+            f"Claro 😊 Le comparto el financiamiento de *{datos['nombre']}* para que pueda "
+            "comparar todas las cuotas de *2 a 8 años* en un solo cuadro.\n\n"
+            f"🏡 Precio: *{datos['precio_texto']}*\n"
+            "💰 Enganche: *Q6,000*\n"
+            "💳 Financiamiento propio y directo con la empresa."
+        )
+
+    enviado = enviar_imagen_plan_psm(numero, fase, "financiamiento")
+    if not enviado:
+        return enviar_whatsapp(numero, _texto_tabla_financiamiento_psm(fase))
     return True
 
 
@@ -8885,13 +9220,15 @@ def enviar_plan_sin_intereses_psm(numero, fase):
     saldo = datos["precio"] - datos["enganche"]
     enviar_whatsapp(
         numero,
-        f"En {datos['nombre']}, el plan de 1 año sin intereses queda así 😊:\n\n"
-        f"• Precio: {datos['precio_texto']}\n"
-        "• Enganche: Q6,000\n"
-        f"• Saldo: {formatear_quetzales(saldo)}\n"
-        f"• 11 mensualidades de {formatear_quetzales(cuota)}\n\n"
+        f"Claro 😊 Para *{datos['nombre']}*, el plan de *1 año sin intereses* queda así:\n\n"
+        f"🏡 Precio: *{datos['precio_texto']}*\n"
+        "💰 Enganche: *Q6,000*\n"
+        f"📌 Saldo: *{formatear_quetzales(saldo)}*\n"
+        f"✨ 11 mensualidades de *{formatear_quetzales(cuota)}*\n\n"
         "No se agregan intereses a ese saldo."
     )
+    enviar_imagen_plan_psm(numero, fase, "sin_intereses")
+    return True
 
 
 def enviar_contado_psm(numero, fase):
@@ -8899,23 +9236,50 @@ def enviar_contado_psm(numero, fase):
     precio_3 = precio_contado_psm(fase, 0.03)
     enviar_whatsapp(
         numero,
-        f"En {datos['nombre']}, el precio regular es {datos['precio_texto']}. "
-        f"Por pago al contado puedo ofrecerle inicialmente un 3% de descuento, quedando en {formatear_quetzales(precio_3)} 💰. "
+        f"Claro 😊 En *{datos['nombre']}* el precio regular es *{datos['precio_texto']}*.\n\n"
+        f"💰 Con el *3% de descuento inicial por pago al contado* quedaría en "
+        f"*{formatear_quetzales(precio_3)}*.\n\n"
         "Si ya está considerando realizar la compra, puedo revisar si es posible mejorar un poco más esa condición."
     )
+    enviar_imagen_plan_psm(numero, fase, "contado")
+    return True
 
 
 def enviar_comparacion_planes_psm(numero, fase):
+    """Envía las TRES imágenes del plan elegido, como hacía el flujo visual anterior."""
     datos = PSM_FASES[fase]
-    cuota_0 = cuota_sin_intereses_psm(fase)
-    contado = precio_contado_psm(fase, 0.03)
     enviar_whatsapp(
         numero,
-        f"Claro 😊 Para {datos['nombre']} ({datos['precio_texto']}) puede comparar así:\n\n"
-        "💳 Financiamiento propio: de 2 a 8 años; si me indica el plazo le doy la cuota exacta.\n"
-        f"✨ 1 año sin intereses: 11 cuotas de {formatear_quetzales(cuota_0)} después del enganche.\n"
-        f"💰 Contado: con 3% inicial de descuento queda en {formatear_quetzales(contado)}.\n\n"
-        "¿Cuál de estas opciones le gustaría revisar con más detalle?"
+        f"Claro 😊 Le comparto las *tres alternativas de {datos['nombre']}* para que pueda compararlas con calma."
+    )
+
+    resultados = {
+        "financiamiento": enviar_imagen_plan_psm(numero, fase, "financiamiento"),
+        "sin_intereses": enviar_imagen_plan_psm(numero, fase, "sin_intereses"),
+        "contado": enviar_imagen_plan_psm(numero, fase, "contado"),
+    }
+
+    # Si alguna imagen no está disponible en el deploy, no dejamos al cliente sin respuesta.
+    if not resultados["financiamiento"]:
+        enviar_whatsapp(numero, _texto_tabla_financiamiento_psm(fase))
+    if not resultados["sin_intereses"]:
+        cuota_0 = cuota_sin_intereses_psm(fase)
+        enviar_whatsapp(
+            numero,
+            f"✨ *1 año sin intereses:* enganche Q6,000 + 11 mensualidades de "
+            f"*{formatear_quetzales(cuota_0)}*."
+        )
+    if not resultados["contado"]:
+        contado = precio_contado_psm(fase, 0.03)
+        enviar_whatsapp(
+            numero,
+            f"💰 *Pago al contado:* con el 3% de descuento inicial queda en "
+            f"*{formatear_quetzales(contado)}*."
+        )
+
+    return enviar_whatsapp(
+        numero,
+        "¿Cuál siente que se adapta mejor a lo que usted busca? 😊"
     )
 
 
@@ -8924,6 +9288,7 @@ def invitar_visita_despues_propuesta_psm(numero):
     if estado.get("psm_visita_ofrecida") or cita_ya_cerrada(numero):
         return
     estado["psm_visita_ofrecida"] = True
+    estado["psm_etapa"] = "esperando_visita"
     estado["psm_pregunta_pendiente"] = "visita"
     persistir_cliente(numero)
     enviar_whatsapp(
@@ -8976,6 +9341,48 @@ def manejar_flujo_palmeras_humano(numero, texto, proyecto, message_id):
     # Cualquier respuesta real del cliente invalida el recordatorio de 10 minutos.
     invalidar_recordatorio_psm(numero)
     t = normalizar_texto_topografia(texto)
+
+    # Detectores rápidos + una capa de IA para respuestas humanas que no siguen
+    # exactamente las palabras del menú. La IA interpreta la DECISIÓN; las cifras
+    # y acciones siguen saliendo únicamente de los datos oficiales del código.
+    fase_en_mensaje = detectar_fase_psm(texto)
+    plan_mencionado = detectar_plan_psm(texto)
+    plazo_mencionado = extraer_plazo_cuota(texto)
+    decision_ia = None
+
+    if (
+        not _mensaje_es_pregunta_especifica_psm(texto)
+        and not es_intencion_reserva_psm(texto)
+        and not detectar_intencion_visita(texto)
+        and (
+            estado.get("psm_etapa") in {
+                "esperando_fase", "esperando_plan", "esperando_plazo",
+                "propuesta_enviada", "esperando_reaccion_propuesta"
+            }
+            or estado.get("psm_pregunta_pendiente") in {
+                "fase", "plan_pago", "plazo_financiamiento", "reaccion_propuesta"
+            }
+        )
+    ):
+        necesita_ia = (
+            (estado.get("psm_etapa") == "esperando_fase" and fase_en_mensaje is None)
+            or (estado.get("psm_etapa") == "esperando_plan" and plan_mencionado is None and not es_reaccion_video_psm(texto))
+            or (estado.get("psm_etapa") == "esperando_plazo" and plazo_mencionado is None)
+            or (estado.get("psm_etapa") in {"propuesta_enviada", "esperando_reaccion_propuesta"}
+                and plan_mencionado is None and not es_reaccion_positiva_propuesta_psm(texto))
+        )
+        if necesita_ia:
+            decision_ia = interpretar_decision_psm_ia(numero, texto, estado)
+
+    if fase_en_mensaje is None and decision_ia in {"fase_1", "fase_2", "ambas"}:
+        fase_en_mensaje = decision_ia
+    if plan_mencionado is None and decision_ia in {"financiamiento", "sin_intereses", "contado", "todos"}:
+        plan_mencionado = decision_ia
+    if plazo_mencionado is None and isinstance(decision_ia, str) and decision_ia.startswith("plazo_"):
+        try:
+            plazo_mencionado = int(decision_ia.split("_", 1)[1])
+        except Exception:
+            plazo_mencionado = None
 
     # Multi-intención común: precio + ubicación. Respondemos ambas sin disparar el paquete completo.
     pide_precio_multi = any(x in t for x in [
@@ -9097,7 +9504,6 @@ def manejar_flujo_palmeras_humano(numero, texto, proyecto, message_id):
     # (por ejemplo: "Financiamiento", "contado" o "1 año sin intereses"),
     # NO debemos interceptarla aquí: debe continuar al bloque de selección de plan
     # que está más abajo para avanzar correctamente en el algoritmo.
-    plan_mencionado = detectar_plan_psm(texto)
     if (
         pide_pago_general
         and estado.get("psm_fase")
@@ -9122,8 +9528,6 @@ def manejar_flujo_palmeras_humano(numero, texto, proyecto, message_id):
     pide_precio = any(x in t for x in [
         "precio", "precios", "cuanto cuesta", "cuanto vale", "cuanto cuestan", "valor", "costo"
     ])
-    fase_en_mensaje = detectar_fase_psm(texto)
-
     if pide_precio and not estado.get("psm_fase") and fase_en_mensaje not in ("fase_1", "fase_2"):
         respuesta = (
             "Claro 😊 Actualmente los lotes son de 8x16 (128 m²):\n\n"
@@ -9190,6 +9594,46 @@ def manejar_flujo_palmeras_humano(numero, texto, proyecto, message_id):
             programar_recordatorio_plan_psm(numero)
         return True
 
+    # Después de una propuesta concreta, dejamos que el cliente decida.
+    # Si demuestra interés, recién entonces avanzamos hacia visita; si pregunta
+    # otra cosa, el flujo general/IA la responde sin perder el estado.
+    if estado.get("psm_etapa") in {"propuesta_enviada", "esperando_reaccion_propuesta"}:
+        if es_reaccion_positiva_propuesta_psm(texto) or decision_ia == "positivo":
+            guardar_mensaje(numero, "user", texto)
+            guardar_mensaje(numero, "assistant", "Cliente mostró interés en la propuesta; se avanzó a coordinar visita.")
+            if procesamiento_sigue_vigente(numero, message_id):
+                invitar_visita_despues_propuesta_psm(numero)
+            return True
+        if decision_ia == "comparar":
+            fase = estado.get("psm_fase")
+            if fase:
+                estado["psm_etapa"] = "esperando_reaccion_propuesta"
+                estado["psm_plan"] = "todos"
+                estado["psm_cotizacion_enviada"] = True
+                estado["psm_pregunta_pendiente"] = "reaccion_propuesta"
+                persistir_cliente(numero)
+                guardar_mensaje(numero, "user", texto)
+                if procesamiento_sigue_vigente(numero, message_id):
+                    enviar_comparacion_planes_psm(numero, fase)
+                return True
+        if decision_ia == "visita":
+            respuesta = respuesta_visita(numero, texto, "palmeras")
+            estado["psm_etapa"] = "visita"
+            estado["psm_pregunta_pendiente"] = "dia_hora_visita"
+            persistir_cliente(numero)
+            guardar_mensaje(numero, "user", texto)
+            guardar_mensaje(numero, "assistant", respuesta)
+            if procesamiento_sigue_vigente(numero, message_id):
+                enviar_whatsapp(numero, respuesta)
+            return True
+        if decision_ia == "reserva":
+            respuesta = respuesta_reserva_psm(numero)
+            guardar_mensaje(numero, "user", texto)
+            guardar_mensaje(numero, "assistant", respuesta)
+            if procesamiento_sigue_vigente(numero, message_id):
+                enviar_whatsapp(numero, respuesta)
+            return True
+
     # Elección de modalidad de pago.
     # Reutilizamos la detección anterior para que una respuesta como "Financiamiento"
     # avance a pedir el plazo en vez de volver a mostrar las tres modalidades.
@@ -9199,74 +9643,72 @@ def manejar_flujo_palmeras_humano(numero, texto, proyecto, message_id):
         estado["psm_plan"] = plan
 
         if plan == "financiamiento":
-            plazo = extraer_plazo_cuota(texto)
+            plazo = plazo_mencionado or extraer_plazo_cuota(texto)
             if plazo and 2 <= plazo <= 8:
                 estado["psm_plazo"] = plazo
-                estado["psm_etapa"] = "propuesta_enviada"
-                estado["psm_cotizacion_enviada"] = True
-                estado["psm_pregunta_pendiente"] = None
-                persistir_cliente(numero)
-                guardar_mensaje(numero, "user", texto)
-                if procesamiento_sigue_vigente(numero, message_id):
-                    enviar_financiamiento_psm(numero, fase, plazo)
-                    invitar_visita_despues_propuesta_psm(numero)
-                return True
+            else:
+                estado["psm_plazo"] = None
 
-            estado["psm_etapa"] = "esperando_plazo"
-            estado["psm_pregunta_pendiente"] = "plazo_financiamiento"
+            # Al elegir financiamiento NO volvemos a preguntar un plazo.
+            # Mostramos inmediatamente el cuadro completo de 2 a 8 años, tal como
+            # funcionaba el flujo visual anterior. Si el cliente ya indicó un plazo,
+            # además se resalta esa cuota antes de mostrar el cuadro.
+            estado["psm_etapa"] = "esperando_reaccion_propuesta"
+            estado["psm_cotizacion_enviada"] = True
+            estado["psm_pregunta_pendiente"] = "reaccion_propuesta"
             persistir_cliente(numero)
-            respuesta = "Perfecto 😊 ¿A cuántos años le gustaría revisar el financiamiento? Puede ser de 2 a 8 años."
             guardar_mensaje(numero, "user", texto)
-            guardar_mensaje(numero, "assistant", respuesta)
             if procesamiento_sigue_vigente(numero, message_id):
-                enviar_whatsapp(numero, respuesta)
+                enviar_financiamiento_psm(numero, fase, plazo if plazo and 2 <= plazo <= 8 else None)
             return True
 
         if plan == "sin_intereses":
-            estado["psm_etapa"] = "propuesta_enviada"
+            estado["psm_etapa"] = "esperando_reaccion_propuesta"
             estado["psm_cotizacion_enviada"] = True
-            estado["psm_pregunta_pendiente"] = None
+            estado["psm_pregunta_pendiente"] = "reaccion_propuesta"
             persistir_cliente(numero)
             guardar_mensaje(numero, "user", texto)
             if procesamiento_sigue_vigente(numero, message_id):
                 enviar_plan_sin_intereses_psm(numero, fase)
-                invitar_visita_despues_propuesta_psm(numero)
             return True
 
         if plan == "contado":
-            estado["psm_etapa"] = "propuesta_enviada"
+            estado["psm_etapa"] = "esperando_reaccion_propuesta"
             estado["psm_cotizacion_enviada"] = True
-            estado["psm_pregunta_pendiente"] = None
+            estado["psm_pregunta_pendiente"] = "reaccion_propuesta"
             persistir_cliente(numero)
             guardar_mensaje(numero, "user", texto)
             if procesamiento_sigue_vigente(numero, message_id):
                 enviar_contado_psm(numero, fase)
-                invitar_visita_despues_propuesta_psm(numero)
             return True
 
         if plan == "todos":
-            estado["psm_etapa"] = "esperando_plan"
-            estado["psm_pregunta_pendiente"] = "plan_pago"
+            # Ya resolvimos la petición mostrando las tres alternativas. No regresamos
+            # al mismo menú ni dejamos como pendiente la misma pregunta.
+            estado["psm_etapa"] = "esperando_reaccion_propuesta"
+            estado["psm_plan"] = "todos"
+            estado["psm_cotizacion_enviada"] = True
+            estado["psm_pregunta_pendiente"] = "reaccion_propuesta"
             persistir_cliente(numero)
             guardar_mensaje(numero, "user", texto)
             if procesamiento_sigue_vigente(numero, message_id):
                 enviar_comparacion_planes_psm(numero, fase)
-                programar_recordatorio_plan_psm(numero)
             return True
 
-    # Esperando únicamente el plazo del financiamiento.
+    # Compatibilidad con contactos que quedaron guardados en la antigua etapa
+    # "esperando_plazo". Si contestan con un plazo, damos la cuota y el cuadro;
+    # si contestan otra cosa, no repetimos la pregunta: el resto del motor/IA la atiende.
     if estado.get("psm_etapa") == "esperando_plazo" and estado.get("psm_fase"):
-        plazo = extraer_plazo_cuota(texto)
+        plazo = plazo_mencionado or extraer_plazo_cuota(texto)
         if plazo and 2 <= plazo <= 8:
             estado["psm_plazo"] = plazo
-            estado["psm_etapa"] = "propuesta_enviada"
+            estado["psm_etapa"] = "esperando_reaccion_propuesta"
             estado["psm_cotizacion_enviada"] = True
-            estado["psm_pregunta_pendiente"] = None
+            estado["psm_pregunta_pendiente"] = "reaccion_propuesta"
             persistir_cliente(numero)
             guardar_mensaje(numero, "user", texto)
             if procesamiento_sigue_vigente(numero, message_id):
                 enviar_financiamiento_psm(numero, estado["psm_fase"], plazo)
-                invitar_visita_despues_propuesta_psm(numero)
             return True
 
     # Pregunta directa por fraccionar enganche: facilidad REACTIVA, nunca de primera.
@@ -9568,6 +10010,11 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
 
             print("\nAUDIO TRANSCRITO:")
             print(texto_cliente)
+            crm_actualizar_contenido_por_evento(
+                numero_cliente,
+                message_id,
+                f"🎙️ Audio recibido\n📝 {texto_cliente}"
+            )
 
         elif tipo_mensaje != "text":
             # Fotos y videos se analizan; otros archivos reciben respuesta controlada.
@@ -10448,9 +10895,11 @@ def recibir_webhook():
                 # para poder verla luego dentro del CRM.
                 media_url_crm = None
                 media_tipo_crm = None
-                if mensaje.get("type") == "image":
-                    media_url_crm = guardar_imagen_crm(numero_cliente, mensaje)
-                    media_tipo_crm = "image" if media_url_crm else None
+                if mensaje.get("type") in {"image", "audio", "video", "document"}:
+                    media_url_crm, media_tipo_crm = guardar_media_whatsapp_crm(
+                        numero_cliente,
+                        mensaje
+                    )
 
                 crm_registrar_mensaje(
                     numero_cliente,
@@ -11637,8 +12086,12 @@ CRM_HTML = r"""
                                 </a>
                             {% elif m.media_tipo == 'video' and m.media_url %}
                                 <video controls preload="metadata" style="display:block;max-width:100%;width:min(420px,70vw);max-height:420px;border-radius:9px;margin-bottom:7px;">
-                                    <source src="{{ m.media_url }}" type="video/mp4">
+                                    <source src="{{ m.media_url }}">
                                 </video>
+                            {% elif m.media_tipo == 'audio' and m.media_url %}
+                                <audio controls preload="metadata" style="display:block;width:min(420px,70vw);max-width:100%;margin-bottom:7px;">
+                                    <source src="{{ m.media_url }}">
+                                </audio>
                             {% elif m.media_tipo == 'document' and m.media_url %}
                                 <a href="{{ m.media_url }}" target="_blank" rel="noopener" style="display:inline-block;margin-bottom:7px;font-weight:700;">📄 Abrir PDF</a><br>
                             {% endif %}
@@ -12003,8 +12456,13 @@ CRM_HTML = r"""
                         ` : ""}
                         ${m.media_tipo === "video" && m.media_url ? `
                             <video controls preload="metadata" style="display:block;max-width:100%;width:min(420px,70vw);max-height:420px;border-radius:9px;margin-bottom:7px;">
-                                <source src="${escapeHtml(m.media_url)}" type="video/mp4">
+                                <source src="${escapeHtml(m.media_url)}">
                             </video>
+                        ` : ""}
+                        ${m.media_tipo === "audio" && m.media_url ? `
+                            <audio controls preload="metadata" style="display:block;width:min(420px,70vw);max-width:100%;margin-bottom:7px;">
+                                <source src="${escapeHtml(m.media_url)}">
+                            </audio>
                         ` : ""}
                         ${m.media_tipo === "document" && m.media_url ? `
                             <a href="${escapeHtml(m.media_url)}" target="_blank" rel="noopener" style="display:inline-block;margin-bottom:7px;font-weight:700;">📄 Abrir PDF</a><br>
