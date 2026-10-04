@@ -8821,12 +8821,16 @@ def enviar_planos_psm_sin_topografia(numero, fase=None):
 
 def texto_planes_pago_psm(fase):
     datos = PSM_FASES[fase]
+    emoji_amenidad = "🏊🌳" if fase == "fase_1" else "🌳"
     return (
-        f"Perfecto 😊 Tomamos como referencia {datos['nombre']}. Para comprar tenemos tres modalidades:\n\n"
-        "💳 Financiamiento propio de 2 a 8 años.\n"
-        "✨ Plan de 1 año sin intereses.\n"
-        "💰 Pago al contado en un solo pago.\n\n"
-        "¿Cuál modalidad le gustaría revisar primero, o prefiere que le muestre las tres?"
+        "Excelente elección 😊\n\n"
+        f"La *{datos['nombre']}* tiene un valor de *{datos['precio_texto']}* y cuenta con "
+        f"{datos['amenidad']} {emoji_amenidad}\n\n"
+        "Para facilitarle la compra, puede elegir la forma de pago que mejor se adapte a usted:\n\n"
+        "💳 *Financiamiento propio* de 2 a 8 años\n"
+        "✨ *Plan de 1 año sin intereses*\n"
+        "💰 *Pago al contado*\n\n"
+        "¿Cuál de estas opciones le gustaría revisar primero? 😊"
     )
 
 
@@ -8837,8 +8841,10 @@ def enviar_video_referencia_amenidades_psm(numero):
                 numero,
                 ruta,
                 caption=(
-                    "Le comparto un pequeño video de amenidades realizadas en otros proyectos de la empresa 🏡✨, "
-                    "para que pueda darse una idea del tipo de espacios que desarrollamos."
+                    "Le comparto también este pequeño video 🏡✨ para que pueda darse una idea "
+                    "del tipo de espacios y amenidades que desarrollamos.\n\n"
+                    "Son amenidades realizadas en otros proyectos de la empresa y se las comparto "
+                    "únicamente como referencia 😊"
                 )
             )
             return True
