@@ -1410,13 +1410,137 @@ ANUNCIOS_META_PROYECTO = {
     "120248674277790634": "buenaventura",
     "120248674320740634": "buenaventura",
 
+    # Palmeras San Miguel - campaña actual octubre 2026
+    "120248881483050634": "palmeras",
+    "120248881801240634": "palmeras",
+    "120248881794280634": "palmeras",
+    "120248881782640634": "palmeras",
+
+    # Buenaventura Cuyo - campaña actual octubre 2026
+    "120248881852280634": "buenaventura",
+    "120248881877820634": "buenaventura",
+    "120248881883910634": "buenaventura",
+    "120248881897020634": "buenaventura",
+
     # Vista Hermosa
     "120248129777940634": "vista_hermosa",  # AD VID - 01 - VTH
     "120248129694970634": "vista_hermosa",  # AD IMG - 01 - VTH
     "120248129773580634": "vista_hermosa",  # AD IMG - 02 - VTH
 }
 
-PROYECTO_CAMPANA_ACTIVA = "buenaventura"
+# Nombre legible de cada anuncio. Puede ampliarse sin tocar la lógica del bot.
+# Cuando no conocemos todavía el nombre creativo, el CRM muestra proyecto + ID exacto.
+ANUNCIOS_META_NOMBRE = {
+    "120248129659680634": "Buenaventura · Video 01",
+    "120248129290310634": "Buenaventura · Imagen 01",
+    "120248129777940634": "Vista Hermosa · Video 01",
+    "120248129694970634": "Vista Hermosa · Imagen 01",
+    "120248129773580634": "Vista Hermosa · Imagen 02",
+    "120248881483050634": "Palmeras San Miguel · AD 01",
+    "120248881801240634": "Palmeras San Miguel · AD 02",
+    "120248881794280634": "Palmeras San Miguel · AD 03",
+    "120248881782640634": "Palmeras San Miguel · AD 04",
+    "120248881852280634": "Buenaventura Cuyo · AD 01",
+    "120248881877820634": "Buenaventura Cuyo · AD 02",
+    "120248881883910634": "Buenaventura Cuyo · AD 03",
+    "120248881897020634": "Buenaventura Cuyo · AD 04",
+}
+
+
+def _nombre_proyecto_anuncio(proyecto):
+    return {
+        "palmeras": "Palmeras San Miguel",
+        "vista_hermosa": "Vista Hermosa",
+        "buenaventura": "Buenaventura Cuyo",
+    }.get(proyecto, proyecto or "Anuncio Meta")
+
+
+def nombre_anuncio_meta(anuncio_id):
+    anuncio_id = str(anuncio_id or "").strip()
+    if not anuncio_id:
+        return ""
+    if anuncio_id in ANUNCIOS_META_NOMBRE:
+        return ANUNCIOS_META_NOMBRE[anuncio_id]
+    proyecto = ANUNCIOS_META_PROYECTO.get(anuncio_id)
+    if proyecto:
+        return f"{_nombre_proyecto_anuncio(proyecto)} · AD {anuncio_id}"
+    return f"AD {anuncio_id} · SIN MAPEAR"
+
+
+def extraer_datos_referencia_anuncio(mensaje):
+    """Extrae el origen publicitario que Meta adjunta al primer mensaje del lead.
+
+    Funciona tanto con Click-to-WhatsApp como con referral de Messenger y conserva
+    campos útiles aunque Meta cambie ligeramente la estructura del payload.
+    """
+    mensaje = mensaje or {}
+    referral = mensaje.get("referral") or {}
+    ads_context = referral.get("ads_context_data") or {}
+    anuncio_id = str(
+        referral.get("source_id")
+        or referral.get("ad_id")
+        or ads_context.get("ad_id")
+        or ads_context.get("source_id")
+        or ""
+    ).strip()
+    return {
+        "id": anuncio_id,
+        "nombre": nombre_anuncio_meta(anuncio_id),
+        "proyecto": ANUNCIOS_META_PROYECTO.get(anuncio_id),
+        "headline": str(referral.get("headline") or ads_context.get("headline") or "").strip(),
+        "body": str(referral.get("body") or ads_context.get("body") or "").strip(),
+        "source_url": str(referral.get("source_url") or ads_context.get("source_url") or "").strip(),
+        "source_type": str(referral.get("source_type") or ads_context.get("source_type") or "").strip(),
+        "media_type": str(referral.get("media_type") or ads_context.get("media_type") or "").strip(),
+        "ctwa_clid": str(referral.get("ctwa_clid") or ads_context.get("ctwa_clid") or "").strip(),
+        "tiene_referral": bool(referral),
+    }
+
+
+def guardar_origen_anuncio(numero, mensaje):
+    """Guarda atribución FIRST-TOUCH y último anuncio visto en la memoria persistente."""
+    datos = extraer_datos_referencia_anuncio(mensaje)
+    if not datos.get("tiene_referral"):
+        return datos
+    estado = obtener_estado_conversacion(numero)
+
+    # Primera atribución: no se pisa si el mismo cliente vuelve días después por otro anuncio.
+    if not estado.get("crm_anuncio_id") and datos.get("id"):
+        estado["crm_anuncio_id"] = datos.get("id")
+        estado["crm_anuncio_nombre"] = datos.get("nombre")
+        estado["crm_anuncio_proyecto"] = datos.get("proyecto") or ""
+        estado["crm_anuncio_headline"] = datos.get("headline")
+        estado["crm_anuncio_body"] = datos.get("body")
+        estado["crm_anuncio_source_url"] = datos.get("source_url")
+        estado["crm_anuncio_ctwa_clid"] = datos.get("ctwa_clid")
+
+    # También guardamos el último anuncio por si el lead regresa desde otra creatividad.
+    if datos.get("id"):
+        estado["crm_ultimo_anuncio_id"] = datos.get("id")
+        estado["crm_ultimo_anuncio_nombre"] = datos.get("nombre")
+
+    persistir_cliente(numero)
+    return datos
+
+
+def crm_info_anuncio(contacto):
+    try:
+        estado = obtener_estado_conversacion(contacto)
+    except Exception:
+        return {"id": "", "nombre": "", "headline": "", "mapeado": True}
+    anuncio_id = str(estado.get("crm_anuncio_id") or "").strip()
+    nombre = str(estado.get("crm_anuncio_nombre") or nombre_anuncio_meta(anuncio_id) or "").strip()
+    return {
+        "id": anuncio_id,
+        "nombre": nombre,
+        "headline": str(estado.get("crm_anuncio_headline") or "").strip(),
+        "source_url": str(estado.get("crm_anuncio_source_url") or "").strip(),
+        "mapeado": bool(anuncio_id and anuncio_id in ANUNCIOS_META_PROYECTO) if anuncio_id else True,
+    }
+
+# Ya no usamos un proyecto global de fallback: desde ahora pueden estar pautando
+# Palmeras, Vista Hermosa y Buenaventura al mismo tiempo.
+PROYECTO_CAMPANA_ACTIVA = None
 
 
 def _mensaje_generico_de_anuncio(texto):
@@ -1440,66 +1564,48 @@ def _mensaje_generico_de_anuncio(texto):
 
 
 def proyecto_desde_referencia_anuncio(mensaje):
-    """
-    Detecta el proyecto desde anuncios de Meta.
+    """Detecta el proyecto SOLO cuando el ID del anuncio está mapeado.
 
-    Para la campaña actual, todos los anuncios activos corresponden a Buenaventura Cuyotenango.
-    Si Meta entrega un referral de anuncio pero cambia/omite el ID esperado, usamos Buenaventura
-    como respaldo para no perder el contexto comercial.
+    Esto evita asignar por error un lead de Palmeras/Vista a Buenaventura cuando
+    varias campañas están pautando al mismo tiempo.
     """
     mensaje = mensaje or {}
     referral = mensaje.get("referral") or {}
-
     if referral:
         try:
             print("REFERRAL META RECIBIDO:", json.dumps(referral, ensure_ascii=False))
         except Exception:
             print("REFERRAL META RECIBIDO:", referral)
 
-    ads_context = referral.get("ads_context_data") or {}
-    anuncio_id = str(
-        referral.get("source_id")
-        or referral.get("ad_id")
-        or ads_context.get("ad_id")
-        or ads_context.get("source_id")
-        or ""
-    ).strip()
-
+    datos = extraer_datos_referencia_anuncio(mensaje)
+    anuncio_id = datos.get("id") or ""
     if anuncio_id:
         proyecto = ANUNCIOS_META_PROYECTO.get(anuncio_id)
         if proyecto:
             print(f"ANUNCIO META DETECTADO: {anuncio_id} -> {proyecto}")
             return proyecto
-        # Todos los anuncios de la campaña activa actual corresponden a Buenaventura.
-        if referral:
-            print(f"ANUNCIO META ID NO MAPEADO ({anuncio_id}); FALLBACK ACTUAL -> buenaventura")
-            return PROYECTO_CAMPANA_ACTIVA
-
-    # Si existe referral pero Meta no incluyó source_id/ad_id, igualmente sabemos
-    # que la campaña activa actual es Buenaventura Cuyotenango.
-    if referral:
-        print("ANUNCIO META CON REFERRAL SIN ID; FALLBACK ACTUAL -> buenaventura")
-        return PROYECTO_CAMPANA_ACTIVA
-
+        print(f"ANUNCIO META ID NO MAPEADO: {anuncio_id}. Se guarda en CRM sin inventar proyecto.")
+    elif referral:
+        print("ANUNCIO META CON REFERRAL SIN ID: se conserva el referral sin forzar proyecto.")
     return None
 
 
 def fijar_proyecto_desde_anuncio(numero, mensaje):
+    # Siempre guardamos el ID/referral primero, incluso si todavía no está mapeado.
+    guardar_origen_anuncio(numero, mensaje)
     proyecto = proyecto_desde_referencia_anuncio(mensaje)
 
-    # Respaldo adicional: Meta permite que el usuario quite los datos de referencia.
-    # Como EN ESTE MOMENTO la campaña activa es Buenaventura, si llega
-    # una conversación todavía sin proyecto y el texto es el típico CTA corto del anuncio
-    # (por ejemplo "Ubicación" o "Información"), la fijamos como Buenaventura.
     if not proyecto:
         existente = obtener_proyecto_actual(numero)
         if existente:
             return existente
+
+        # Único fallback seguro: que el propio texto mencione claramente el proyecto.
         if (mensaje or {}).get("type") == "text":
             texto = ((mensaje or {}).get("text") or {}).get("body", "")
-            if _mensaje_generico_de_anuncio(texto):
-                proyecto = PROYECTO_CAMPANA_ACTIVA
-                print(f"FALLBACK MENSAJE DE CAMPANA: {numero} -> buenaventura | texto={texto!r}")
+            proyecto = detectar_proyecto_en_texto(texto)
+            if proyecto:
+                print(f"PROYECTO DETECTADO EN CTA/TEXTO: {numero} -> {proyecto} | texto={texto!r}")
 
     if not proyecto:
         return None
@@ -14097,7 +14203,7 @@ CRM_HTML = r"""
                 <a class="chat-link {% if seleccionado == c.numero %}active{% endif %}"
                    data-number="{{ c.numero }}"
                    data-channel="{{ c.canal }}"
-                   data-label="{{ (c.nombre_manual ~ ' ' ~ c.identificador) if c.nombre_manual else c.identificador }}"
+                   data-label="{{ ((c.nombre_manual ~ ' ' ~ c.identificador) if c.nombre_manual else c.identificador) ~ ' ' ~ c.anuncio_nombre ~ ' ' ~ c.anuncio_id }}"
                    data-stage="{{ c.etapa }}"
                    href="{{ url_for('crm', numero=c.numero) }}">
                     <div>
@@ -14116,6 +14222,9 @@ CRM_HTML = r"""
                     {% if c.nombre_manual %}<div class="small">{{ c.identificador }}</div>{% endif %}
                     <div class="preview">{{ c.preview }}</div>
                     <div class="small">{{ c.proyecto }}</div>
+                    {% if c.anuncio_id %}
+                        <div class="small" style="color:{% if c.anuncio_mapeado %}#2563eb{% else %}#b45309{% endif %};font-weight:700;">📢 {{ c.anuncio_nombre }}</div>
+                    {% endif %}
                     <span class="stage-badge">{{ c.etapa }}</span>
                     {% if c.proxima_accion %}
                         <div class="next-mini">⏰ {{ c.proxima_accion }}{% if c.proxima_accion_fecha %} · {{ c.proxima_accion_fecha|replace('T',' ') }}{% endif %}</div>
@@ -14137,6 +14246,12 @@ CRM_HTML = r"""
                         {{ nombre_manual_seleccionado if nombre_manual_seleccionado else identificador_seleccionado }}
                     </h2>
                     <p>{% if nombre_manual_seleccionado %}{{ identificador_seleccionado }} · {% endif %}{{ proyecto_seleccionado }}</p>
+                    {% if anuncio_seleccionado.id %}
+                        <p style="margin-top:4px;color:{% if anuncio_seleccionado.mapeado %}#2563eb{% else %}#b45309{% endif %};font-weight:700;">
+                            📢 {{ anuncio_seleccionado.nombre }}
+                            {% if anuncio_seleccionado.headline %}<span style="font-weight:400;color:#667085;"> · {{ anuncio_seleccionado.headline }}</span>{% endif %}
+                        </p>
+                    {% endif %}
                 </div>
 
                 <div class="head-actions">
@@ -14649,7 +14764,7 @@ CRM_HTML = r"""
                 a.className = "chat-link" + (seleccionado === c.numero ? " active" : "");
                 a.dataset.number = c.numero || "";
                 a.dataset.channel = c.canal || "";
-                a.dataset.label = ((c.nombre_manual || "") + " " + (c.identificador || "")).trim();
+                a.dataset.label = ((c.nombre_manual || "") + " " + (c.identificador || "") + " " + (c.anuncio_nombre || "") + " " + (c.anuncio_id || "")).trim();
                 a.dataset.stage = c.etapa || "Nuevo lead";
                 a.href = "/crm?numero=" + encodeURIComponent(c.numero);
                 const prox = c.proxima_accion
@@ -14669,6 +14784,7 @@ CRM_HTML = r"""
                     ${c.nombre_manual ? `<div class="small">${escapeHtml(c.identificador || c.numero)}</div>` : ""}
                     <div class="preview">${escapeHtml(c.preview)}</div>
                     <div class="small">${escapeHtml(c.proyecto)}</div>
+                    ${c.anuncio_id ? `<div class="small" style="color:${c.anuncio_mapeado ? "#2563eb" : "#b45309"};font-weight:700;">📢 ${escapeHtml(c.anuncio_nombre || c.anuncio_id)}</div>` : ""}
                     <span class="stage-badge">${escapeHtml(c.etapa || "Nuevo lead")}</span>
                     ${prox}
                 `;
@@ -14977,6 +15093,9 @@ def crm():
                 "preview": ultimo[:70],
                 "manual": numero in crm_modo_manual,
                 "proyecto": crm_nombre_proyecto(numero),
+                "anuncio_id": crm_info_anuncio(numero).get("id", ""),
+                "anuncio_nombre": crm_info_anuncio(numero).get("nombre", ""),
+                "anuncio_mapeado": crm_info_anuncio(numero).get("mapeado", True),
                 "etapa": meta["etapa"],
                 "proxima_accion": meta["proxima_accion"],
                 "proxima_accion_fecha": meta["proxima_accion_fecha"],
@@ -15002,6 +15121,7 @@ def crm():
         canal_seleccionado=crm_canal_contacto(seleccionado) if seleccionado else "",
         identificador_seleccionado=crm_identificador_visible(seleccionado) if seleccionado else "",
         nombre_manual_seleccionado=crm_nombre_manual(seleccionado) if seleccionado else "",
+        anuncio_seleccionado=crm_info_anuncio(seleccionado) if seleccionado else {"id": "", "nombre": "", "headline": "", "mapeado": True},
         requiere_intervencion_seleccionado=es_intervencion_activa(seleccionado) if seleccionado else False,
         intervencion_pregunta_seleccionado=(obtener_estado_conversacion(seleccionado).get("intervencion_pregunta") if seleccionado else ""),
         etapas=CRM_ETAPAS,
@@ -15037,6 +15157,9 @@ def crm_data():
                 "preview": ultimo[:70],
                 "manual": numero in crm_modo_manual,
                 "proyecto": crm_nombre_proyecto(numero),
+                "anuncio_id": crm_info_anuncio(numero).get("id", ""),
+                "anuncio_nombre": crm_info_anuncio(numero).get("nombre", ""),
+                "anuncio_mapeado": crm_info_anuncio(numero).get("mapeado", True),
                 "etapa": meta["etapa"],
                 "proxima_accion": meta["proxima_accion"],
                 "proxima_accion_fecha": meta["proxima_accion_fecha"],
@@ -15062,7 +15185,9 @@ def crm_data():
                         "canal": crm_canal_contacto(numero),
                         "contenido": m.get("contenido", ""),
                         "hora": m.get("hora", ""),
-                        "proyecto": crm_nombre_proyecto(numero)
+                        "proyecto": crm_nombre_proyecto(numero),
+                        "anuncio_id": crm_info_anuncio(numero).get("id", ""),
+                        "anuncio_nombre": crm_info_anuncio(numero).get("nombre", "")
                     })
 
         eventos_entrantes.sort(key=lambda x: x.get("id", 0))
