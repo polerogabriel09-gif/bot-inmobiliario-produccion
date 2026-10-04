@@ -1,3 +1,4 @@
+# VERSION_CTA_PALMERAS_3_PREGUNTAS_20261004 - info y precios siguen protocolo; visita lo rompe
 # VERSION_PALMERAS_COTIZACIONES_VISUALES_IA_20261004 - restaura imagenes por modalidad + decisiones sin repetir preguntas
 # VERSION_PALMERAS_IA_DECISIONES_MEDIA_CRM_20261004 - IA interpreta decisiones PSM + audio/foto/video visibles en CRM
 # VERSION_PALMERAS_PLAN_CONTINUA_20261004 - evita que "Financiamiento" repita el menú y avanza a plazo
@@ -8960,6 +8961,39 @@ def es_inicio_general_psm(texto):
     return any(x in t for x in frases)
 
 
+def detectar_cta_palmeras(texto):
+    """
+    Detecta las 3 preguntas rápidas actuales del anuncio de Palmeras.
+
+    Comportamiento:
+    - informacion -> entra al protocolo inicial completo.
+    - precios_cuotas -> entra al MISMO protocolo inicial completo.
+    - visita -> rompe el protocolo y va directo a coordinar visita.
+    """
+    t = normalizar_texto_topografia(texto)
+
+    if any(x in t for x in [
+        "quiero mas informacion de palmeras san miguel",
+        "quiero mas informacion de palmeras",
+    ]):
+        return "informacion"
+
+    if any(x in t for x in [
+        "precios y cuotas de palmeras san miguel",
+        "precios y cuotas de palmeras",
+    ]):
+        return "precios_cuotas"
+
+    if any(x in t for x in [
+        "puedo agendar una visita al proyecto",
+        "agendar una visita al proyecto",
+        "quiero agendar una visita al proyecto",
+    ]):
+        return "visita"
+
+    return None
+
+
 def es_solicitud_info_general_psm(texto):
     """
     Detecta entradas explícitas de anuncio / consulta general de Palmeras.
@@ -9341,6 +9375,42 @@ def manejar_flujo_palmeras_humano(numero, texto, proyecto, message_id):
     # Cualquier respuesta real del cliente invalida el recordatorio de 10 minutos.
     invalidar_recordatorio_psm(numero)
     t = normalizar_texto_topografia(texto)
+
+    # ========================================================
+    # PREGUNTAS RÁPIDAS ACTUALES DEL ANUNCIO DE PALMERAS
+    # ========================================================
+    # 1) Información -> protocolo inicial completo.
+    # 2) Precios y cuotas -> MISMO protocolo inicial completo.
+    # 3) Agendar visita -> rompe el protocolo y coordina visita directamente.
+    cta_palmeras = detectar_cta_palmeras(texto)
+
+    if cta_palmeras == "visita":
+        respuesta = respuesta_visita(numero, texto, "palmeras")
+        estado["psm_etapa"] = "visita"
+        estado["psm_pregunta_pendiente"] = "dia_hora_visita"
+        persistir_cliente(numero)
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+        return True
+
+    if cta_palmeras in {"informacion", "precios_cuotas"}:
+        # Ambas preguntas comienzan exactamente por el mismo protocolo.
+        # Reiniciamos SOLO el estado comercial de Palmeras para evitar que un
+        # estado viejo mande al cliente a mitad de la conversación.
+        estado = reiniciar_flujo_psm_para_presentacion(numero)
+        bienvenida = generar_bienvenida_psm(numero, texto)
+        estado["psm_etapa"] = "esperando_fase"
+        estado["psm_pregunta_pendiente"] = "fase"
+        marcar_cliente_presentado(numero)
+        persistir_cliente(numero)
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", bienvenida)
+        if procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, bienvenida)
+            enviar_planos_psm_sin_topografia(numero)
+        return True
 
     # Detectores rápidos + una capa de IA para respuestas humanas que no siguen
     # exactamente las palabras del menú. La IA interpreta la DECISIÓN; las cifras
@@ -10052,7 +10122,14 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
         # ya viene identificado como Palmeras y el mensaje es genérico, NO mandamos
         # antes el saludo corto porque duplicaría la presentación.
         proyecto_previo_presentacion = obtener_proyecto_actual(numero_cliente)
-        if proyecto_previo_presentacion == "palmeras" and es_inicio_general_psm(texto_cliente):
+        cta_palmeras_presentacion = detectar_cta_palmeras(texto_cliente)
+        if proyecto_previo_presentacion == "palmeras" and (
+            es_inicio_general_psm(texto_cliente)
+            or cta_palmeras_presentacion in {"informacion", "precios_cuotas", "visita"}
+        ):
+            # Las preguntas rápidas de Palmeras tienen su propia ruta.
+            # Evitamos el saludo genérico para no duplicar mensajes antes del protocolo
+            # ni antes de la coordinación directa de visita.
             presentacion_enviada = False
         else:
             presentacion_enviada = enviar_presentacion_si_corresponde(
