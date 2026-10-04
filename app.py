@@ -8742,72 +8742,48 @@ def reiniciar_flujo_psm_para_presentacion(numero):
 
 
 def saludo_actual_guatemala():
+    """Devuelve un saludo natural según la hora real de Guatemala."""
     try:
         hora = datetime.now(ZoneInfo("America/Guatemala")).hour
     except Exception:
+        # Fallback neutro si por alguna razón no se puede resolver la zona horaria.
         hora = 12
-    if hora < 12:
+
+    # 05:00 a 11:59 -> Buenos días
+    if 5 <= hora < 12:
         return "Buenos días"
-    if hora < 19:
+
+    # 12:00 a 18:59 -> Buenas tardes
+    if 12 <= hora < 19:
         return "Buenas tardes"
+
+    # 19:00 a 04:59 -> Buenas noches
     return "Buenas noches"
 
 
 def generar_bienvenida_psm(numero, texto_cliente):
+    """
+    Bienvenida controlada de Palmeras San Miguel.
+
+    Se mantiene intencionalmente en texto fijo para conservar el estilo comercial
+    aprobado y evitar que la IA vuelva a generar mensajes rígidos, repetitivos o
+    con frases en mayúsculas. La conversación posterior sigue usando la lógica/IA
+    normal del bot.
+    """
     saludo = saludo_actual_guatemala()
-    instrucciones = f"""
-Redacte UN mensaje de bienvenida de WhatsApp como Gabriel Polero, asesor de ventas.
-Trate SIEMPRE al cliente de USTED. Nunca use tú, te, ti ni vos.
-Suene natural, humano, cercano y profesional, no como un menú ni como un anuncio copiado.
-
-FORMATO OBLIGATORIO PARA QUE SEA FÁCIL DE LEER EN WHATSAPP:
-- Ordene la información en bloques cortos con espacios entre ellos.
-- Use *negrita de WhatsApp* con un solo asterisco para RESALTAR los datos importantes.
-- Resalte obligatoriamente: *Palmeras San Miguel*, *8x16 (128 m²)*, *Fase 1*, *Q67,200*, *Fase 2*, *Q70,400*, *terrenos con todos los servicios* y *escritura registrada*.
-- Puede usar emojis moderados como 📍🏡🏊🌳✅📄, pero no sature el mensaje.
-- NO escriba párrafos largos.
-- NO use la frase "servicios contemplados".
-
-Debe incluir de manera natural TODOS estos datos, sin inventar otros:
-- Saludo apropiado: {saludo}.
-- Presentarse una sola vez como Gabriel Polero, asesor de ventas.
-- Proyecto: Palmeras San Miguel, Zona 5 de Retalhuleu, camino a La Verde.
-- Actualmente únicamente hay lotes de 8x16 (128 m²).
-- Fase 1: Q67,200; piscina y área verde.
-- Fase 2: Q70,400; área verde.
-- Ambas fases están en proceso de urbanización.
-- Diga expresamente que son TERRENOS CON TODOS LOS SERVICIOS y enumere: agua potable, energía eléctrica, calles pavimentadas y drenajes con planta de tratamiento.
-- Los lotes tienen escritura registrada y se desmembran legalmente.
-- Indique que a continuación se compartirán LOS DOS PLANOS para comparar las fases.
-- Termine con UNA sola pregunta: cuál fase le parece más atractiva, Fase 1 o Fase 2.
-
-NO explique todavía cuotas, plazos de pago, contado, gastos adicionales ni requisitos.
-NO diga que tiene garita o muro perimetral.
-NO mencione lotes 8x18, esquina ni bulevar como opciones disponibles.
-"""
-    try:
-        r = client.responses.create(
-            model="gpt-5-mini",
-            instructions=instrucciones,
-            input=[{"role": "user", "content": texto_cliente or "Quiero información"}]
-        )
-        texto = (r.output_text or "").strip()
-        if texto:
-            return formalizar_trato_usted(texto)
-    except Exception as exc:
-        print("ERROR BIENVENIDA IA PSM:", exc)
 
     return formalizar_trato_usted(
-        f"{saludo} 👋 Le saluda Gabriel Polero, asesor de ventas.\n\n"
-        "Con gusto le comparto información de *Palmeras San Miguel* 🏡, ubicado en *Zona 5 de Retalhuleu, camino a La Verde*. 📍\n\n"
-        "Actualmente tenemos únicamente lotes de *8x16 (128 m²)* en dos fases:\n\n"
-        "🏊 *Fase 1 — Q67,200*\nPiscina y área verde.\n\n"
-        "🌳 *Fase 2 — Q70,400*\nÁrea verde.\n\n"
-        "Ambas fases están en proceso de urbanización.\n\n"
-        "✅ Son *terrenos con todos los servicios*: agua potable, energía eléctrica, calles pavimentadas y drenajes con planta de tratamiento.\n"
-        "📄 Los lotes cuentan con *escritura registrada* y se desmembran legalmente.\n\n"
-        "A continuación le comparto *los dos planos* para que pueda comparar las fases.\n\n"
-        "¿Cuál fase le parece más atractiva: *Fase 1* o *Fase 2*? 😊"
+        f"{saludo}! 👋 Le saluda *Gabriel Polero, asesor de ventas de Multiproyectos DIVE* 😊\n\n"
+        "En *Palmeras San Miguel* actualmente contamos con *2 fases disponibles* 🏡✨\n"
+        "En ambas fases tenemos terrenos de *8x16 m (128 m²)*.\n\n"
+        "🏊 *Fase 1: Q67,200* — con piscina y área verde.\n"
+        "🌳 *Fase 2: Q70,400* — con área verde.\n\n"
+        "El proyecto está ubicado en *Zona 5 de Retalhuleu, camino a La Verde* 📍\n\n"
+        "Además, son *terrenos con todos los servicios* ✅: agua potable, energía eléctrica, "
+        "calles pavimentadas y drenajes con planta de tratamiento.\n"
+        "También cuentan con *escritura registrada* 📄\n\n"
+        "Le comparto los planos para que pueda comparar ambas opciones.\n\n"
+        "¿Cuál de las dos fases le parece más atractiva? 😊"
     )
 
 
