@@ -1422,6 +1422,15 @@ ANUNCIOS_META_PROYECTO = {
     "120248881883910634": "buenaventura",
     "120248881897020634": "buenaventura",
 
+    # Vista Hermosa - campaña actual octubre 2026
+    "120248972515330634": "vista_hermosa",
+    "120248972558970634": "vista_hermosa",
+
+    # Palmeras San Miguel - campaña actual octubre 2026 (segunda tanda)
+    "120248972601790634": "palmeras",
+    "120248972566520634": "palmeras",
+    "120248972597740634": "palmeras",
+
     # Vista Hermosa
     "120248129777940634": "vista_hermosa",  # AD VID - 01 - VTH
     "120248129694970634": "vista_hermosa",  # AD IMG - 01 - VTH
@@ -1444,6 +1453,11 @@ ANUNCIOS_META_NOMBRE = {
     "120248881877820634": "Buenaventura Cuyo · AD 02",
     "120248881883910634": "Buenaventura Cuyo · AD 03",
     "120248881897020634": "Buenaventura Cuyo · AD 04",
+    "120248972515330634": "Ciudad Vista Hermosa · AD 01",
+    "120248972558970634": "Ciudad Vista Hermosa · AD 02",
+    "120248972601790634": "Palmeras San Miguel · AD 05",
+    "120248972566520634": "Palmeras San Miguel · AD 06",
+    "120248972597740634": "Palmeras San Miguel · AD 07",
 }
 
 
@@ -4942,7 +4956,7 @@ def preparar_vapid_private_key():
     return key
 
 
-def enviar_push_crm(numero, contenido, event_id=None):
+def enviar_push_crm(numero, contenido, event_id=None, titulo=None):
     global ultimo_error_push, ultimo_resultado_push
 
     ultimo_error_push = None
@@ -4964,7 +4978,7 @@ def enviar_push_crm(numero, contenido, event_id=None):
     push_id = str(event_id or time.time_ns())
 
     payload = json.dumps({
-        "title": "🏡 Nuevo mensaje de cliente",
+        "title": titulo or "🏡 Nuevo mensaje de cliente",
         "body": f"+{numero}{proyecto_txt}\n{str(contenido)[:180]}",
         "url": f"/crm?numero={numero}",
         # Cada mensaje de WhatsApp usa su propio tag.
@@ -5047,7 +5061,7 @@ def crm_hora_actual():
 
 
 
-def enviar_ntfy_crm(numero, contenido, event_id=None):
+def enviar_ntfy_crm(numero, contenido, event_id=None, titulo=None):
     """
     Envía UNA notificación ntfy por CADA mensaje entrante de WhatsApp.
     No depende de que Chrome, el CRM o una pestaña estén abiertos.
@@ -5074,7 +5088,7 @@ def enviar_ntfy_crm(numero, contenido, event_id=None):
             f"{NTFY_SERVER}/{NTFY_TOPIC}",
             data=contenido_txt.encode("utf-8"),
             headers={
-                "Title": f"Nuevo mensaje - CRM Gabriel",
+                "Title": titulo or "Nuevo mensaje - CRM Gabriel",
                 "Priority": "high",
                 "Tags": "house,phone",
                 "Click": click_url,
@@ -5099,6 +5113,64 @@ def enviar_ntfy_crm(numero, contenido, event_id=None):
         return False
 
 
+def enviar_alerta_nuevo_lead(numero, contenido, event_id=None):
+    """Alerta redundante para el PRIMER mensaje de un lead nuevo.
+
+    Usa Web Push + ntfy y, si CRM_INTERVENCION_NUMERO está configurado,
+    envía también una alerta por WhatsApp al número interno de Gabriel.
+    Así la llegada de un lead no depende de un solo canal de notificación.
+    """
+    numero = str(numero or "").strip()
+    contenido = str(contenido or "Nuevo mensaje").strip()
+    proyecto = crm_nombre_proyecto(numero)
+    anuncio = crm_info_anuncio(numero)
+    anuncio_txt = anuncio.get("nombre") or anuncio.get("id") or ""
+
+    cuerpo = f"{contenido[:220]}"
+    if proyecto and proyecto != "Sin proyecto":
+        cuerpo = f"{proyecto} · {cuerpo}"
+    if anuncio_txt:
+        cuerpo += f"\n📢 {anuncio_txt}"
+
+    try:
+        enviar_push_crm(
+            numero,
+            cuerpo,
+            event_id=event_id,
+            titulo="🔥 Nuevo lead inmobiliario"
+        )
+    except Exception as exc:
+        print("NUEVO LEAD PUSH ERROR:", exc)
+
+    try:
+        enviar_ntfy_crm(
+            numero,
+            cuerpo,
+            event_id=event_id,
+            titulo="🔥 Nuevo lead - CRM Gabriel"
+        )
+    except Exception as exc:
+        print("NUEVO LEAD NTFY ERROR:", exc)
+
+    # Respaldo adicional: si el móvil perdió la suscripción Push, Gabriel
+    # puede seguir recibiendo la llegada del lead por WhatsApp.
+    try:
+        destino = str(CRM_INTERVENCION_NUMERO or "").strip()
+        if destino and destino != numero and not crm_es_facebook(numero):
+            identificador = crm_identificador_visible(numero)
+            alerta = (
+                "🔥 *NUEVO LEAD*\n\n"
+                f"Cliente: {identificador}\n"
+                f"Proyecto: {proyecto or 'Sin identificar'}\n"
+                + (f"Anuncio: {anuncio_txt}\n" if anuncio_txt else "")
+                + f"\nMensaje:\n{contenido[:500]}\n\n"
+                "Revíselo en el CRM para darle seguimiento."
+            )
+            enviar_whatsapp(destino, alerta, formalizar=False)
+    except Exception as exc:
+        print("NUEVO LEAD WHATSAPP ALERTA ERROR:", exc)
+
+
 def crm_registrar_mensaje(numero, direccion, contenido, event_id=None, media_url=None, media_tipo=None):
     global crm_evento_contador
 
@@ -5109,10 +5181,17 @@ def crm_registrar_mensaje(numero, direccion, contenido, event_id=None, media_url
     if not contenido:
         return
 
+    es_nuevo_lead = False
+
     with lock_crm:
         crm_evento_contador += 1
 
         lista = crm_mensajes.setdefault(numero, [])
+        # Consideramos nuevo lead únicamente si todavía no existe ningún mensaje
+        # entrante de ese contacto en el historial cargado del CRM.
+        es_nuevo_lead = direccion == "in" and not any(
+            item.get("direccion") == "in" for item in lista
+        )
         lista.append({
             "id": crm_evento_contador,
             "numero": numero,
@@ -5133,21 +5212,27 @@ def crm_registrar_mensaje(numero, direccion, contenido, event_id=None, media_url
 
     persistir_cliente(numero)
 
-    # Solo los mensajes ENTRANTES del cliente generan push.
+    # Solo los mensajes ENTRANTES del cliente generan alertas.
     if direccion == "in":
-        # Web Push anterior (lo dejamos activo por ahora).
-        Thread(
-            target=enviar_push_crm,
-            args=(numero, contenido, event_id),
-            daemon=True
-        ).start()
-
-        # NTFY: notificación nativa en Android por CADA mensaje.
-        Thread(
-            target=enviar_ntfy_crm,
-            args=(numero, contenido, event_id),
-            daemon=True
-        ).start()
+        if es_nuevo_lead:
+            # El primer mensaje usa una alerta redundante: Push + ntfy + WhatsApp interno.
+            Thread(
+                target=enviar_alerta_nuevo_lead,
+                args=(numero, contenido, event_id),
+                daemon=True
+            ).start()
+        else:
+            # Mensajes posteriores conservan Push + ntfy sin bombardear el WhatsApp interno.
+            Thread(
+                target=enviar_push_crm,
+                args=(numero, contenido, event_id),
+                daemon=True
+            ).start()
+            Thread(
+                target=enviar_ntfy_crm,
+                args=(numero, contenido, event_id),
+                daemon=True
+            ).start()
 
 
 
@@ -14176,6 +14261,11 @@ CRM_HTML = r"""
                     style="background:#065f46;color:white;border:1px solid #047857;border-radius:8px;padding:7px 10px;cursor:pointer;">
                 🧪 Probar móvil
             </button>
+            <button id="btn-estado-alertas"
+                    type="button"
+                    style="background:#7c3aed;color:white;border:1px solid #8b5cf6;border-radius:8px;padding:7px 10px;cursor:pointer;">
+                🔎 Estado alertas
+            </button>
             <a href="{{ url_for('crm_resumen_seguimiento') }}" style="background:#1d4ed8;border-color:#2563eb;">📞 Resumen leads</a>
             <a href="{{ url_for('crm') }}">Actualizar</a>
         </div>
@@ -14300,6 +14390,7 @@ CRM_HTML = r"""
                 <div class="quick-tools-title">⚡ MENSAJES Y ENVÍOS RÁPIDOS · usan el proyecto activo: {{ proyecto_seleccionado }}</div>
                 <div class="quick-grid">
                     <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='palmeras-completa') }}"><button class="quick-chip" type="submit" title="Fija Palmeras San Miguel como proyecto activo y envía toda la información">🌴 Info Palmeras</button></form>
+                    <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='vista-completa') }}"><button class="quick-chip" type="submit" title="Fija Ciudad Vista Hermosa como proyecto activo y envía toda la información">🏘️ Info Vista Hermosa</button></form>
                     <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='info-completa') }}"><button class="quick-chip" type="submit" {% if not proyecto_clave_seleccionado %}disabled title="Primero debe existir un proyecto activo"{% endif %}>🏡 Info completa</button></form>
                     <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='cotizaciones') }}"><button class="quick-chip" type="submit" {% if not proyecto_clave_seleccionado %}disabled{% endif %}>💰 Cotizaciones</button></form>
                     <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='ubicacion') }}"><button class="quick-chip" type="submit" {% if not proyecto_clave_seleccionado %}disabled{% endif %}>📍 Ubicación</button></form>
@@ -14615,6 +14706,30 @@ CRM_HTML = r"""
                 } finally {
                     btnProbarPush.disabled = false;
                     btnProbarPush.textContent = "🧪 Probar móvil";
+                }
+            });
+        }
+
+        const btnEstadoAlertas = document.getElementById("btn-estado-alertas");
+        if (btnEstadoAlertas) {
+            btnEstadoAlertas.addEventListener("click", async () => {
+                try {
+                    const [pushResp, ntfyResp] = await Promise.all([
+                        fetch("/crm/push/trace", {cache: "no-store"}),
+                        fetch("/crm/ntfy/status", {cache: "no-store"})
+                    ]);
+                    const push = await pushResp.json();
+                    const ntfy = await ntfyResp.json();
+                    alert(
+                        "🔔 ESTADO DE ALERTAS\n\n" +
+                        "Móviles Push registrados: " + Number(push.devices || 0) + "\n" +
+                        "Último resultado Push: " + (push.last_result || "Sin envío registrado") + "\n" +
+                        "Último error Push: " + (push.last_error || "Ninguno") + "\n" +
+                        "NTFY: " + (ntfy.topic_configured ? "Configurado ✅" : "No configurado ⚠️") + "\n\n" +
+                        "Si Push muestra 0 móviles, pulse Activar notificaciones y luego Probar móvil."
+                    );
+                } catch (err) {
+                    alert("No pude consultar el estado de alertas: " + err.message);
                 }
             });
         }
@@ -15232,6 +15347,14 @@ def _crm_worker_accion_rapida(numero, accion):
             proyecto_activo[numero] = proyecto
             persistir_cliente(numero)
             enviar_info_completa_proyecto(numero, proyecto, cierre=True)
+        elif accion == "vista-completa":
+            # Botón independiente del proyecto activo: siempre trabaja con Ciudad Vista Hermosa.
+            proyecto = "vista_hermosa"
+            estado = obtener_estado_conversacion(numero)
+            estado["proyecto_actual"] = proyecto
+            proyecto_activo[numero] = proyecto
+            persistir_cliente(numero)
+            enviar_info_completa_proyecto(numero, proyecto, cierre=True)
         elif accion == "info-completa":
             if proyecto:
                 enviar_info_completa_proyecto(numero, proyecto, cierre=True)
@@ -15283,16 +15406,17 @@ def crm_accion_rapida(numero, accion):
         return crm_pedir_login()
 
     permitidas = {
-        "palmeras-completa", "info-completa", "cotizaciones", "ubicacion", "plano", "fotos",
+        "palmeras-completa", "vista-completa", "info-completa", "cotizaciones", "ubicacion", "plano", "fotos",
         "videos", "requisitos", "gastos", "visita", "seguimiento"
     }
     if accion not in permitidas:
         return Response("Acción no válida", status=400)
 
-    if accion == "palmeras-completa":
+    if accion in {"palmeras-completa", "vista-completa"}:
+        proyecto_forzado = "palmeras" if accion == "palmeras-completa" else "vista_hermosa"
         estado = obtener_estado_conversacion(numero)
-        estado["proyecto_actual"] = "palmeras"
-        proyecto_activo[numero] = "palmeras"
+        estado["proyecto_actual"] = proyecto_forzado
+        proyecto_activo[numero] = proyecto_forzado
         persistir_cliente(numero)
 
     cancelar_seguimiento(numero)
