@@ -2346,6 +2346,13 @@ def limpiar_confirmacion_disponibilidad(numero):
 
 PLANOS_BASE_URL = "https://polerogabriel09-gif.github.io/planos-inmobiliaria/assets/planos"
 
+# Palmeras usa los planos actualizados incluidos en este mismo deploy.
+# Se publican desde /messenger-media/planos para que Meta/WhatsApp pueda descargarlos.
+_PLANOS_APP_BASE_URL = str(CRM_PUBLIC_URL or "").rstrip("/")
+if _PLANOS_APP_BASE_URL.endswith("/crm"):
+    _PLANOS_APP_BASE_URL = _PLANOS_APP_BASE_URL[:-4]
+PLANOS_PALMERAS_BASE_URL = f"{_PLANOS_APP_BASE_URL}/messenger-media/planos"
+
 PLANOS_PROYECTOS = {
     "buenaventura": {
         "general": {
@@ -2356,12 +2363,12 @@ PLANOS_PROYECTOS = {
     },
     "palmeras": {
         "fase_1": {
-            "url": f"{PLANOS_BASE_URL}/palmeras-fase-1.pdf",
+            "url": f"{PLANOS_PALMERAS_BASE_URL}/palmeras-fase-1.pdf",
             "archivo": "Plano_Palmeras_San_Miguel_Fase_1.pdf",
             "nombre": "Palmeras San Miguel - Fase 1"
         },
         "fase_2": {
-            "url": f"{PLANOS_BASE_URL}/palmeras-fase-2.pdf",
+            "url": f"{PLANOS_PALMERAS_BASE_URL}/palmeras-fase-2.pdf",
             "archivo": "Plano_Palmeras_San_Miguel_Fase_2.pdf",
             "nombre": "Palmeras San Miguel - Fase 2"
         }
