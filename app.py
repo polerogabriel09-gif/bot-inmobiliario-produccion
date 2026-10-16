@@ -1431,6 +1431,9 @@ ANUNCIOS_META_PROYECTO = {
     "120248972566520634": "palmeras",
     "120248972597740634": "palmeras",
 
+    # Palmeras San Miguel - anuncio nuevo octubre 2026
+    "12024908005089063": "palmeras",
+
     # Vista Hermosa
     "120248129777940634": "vista_hermosa",  # AD VID - 01 - VTH
     "120248129694970634": "vista_hermosa",  # AD IMG - 01 - VTH
@@ -1458,7 +1461,63 @@ ANUNCIOS_META_NOMBRE = {
     "120248972601790634": "Palmeras San Miguel · AD 05",
     "120248972566520634": "Palmeras San Miguel · AD 06",
     "120248972597740634": "Palmeras San Miguel · AD 07",
+    "12024908005089063": "Palmeras San Miguel · AD 08",
 }
+
+# Anuncio Palmeras con dos respuestas rápidas aprobadas.
+# Si Meta entrega un mensaje inicial distinto desde este anuncio, avisamos a Gabriel
+# para que pueda revisar el lead sin detener la conversación automática.
+PALMERAS_AD_PROTOCOLO_ID = "12024908005089063"
+PALMERAS_AD_PROTOCOLO_MENSAJES = {
+    "estoy interesado en comprar un terreno que opciones tiene disponibles",
+    "me interesa palmeras san miguel y quisiera coordinar una visita",
+}
+
+
+def _normalizar_cta_meta(texto):
+    t = normalizar_texto_topografia(str(texto or ""))
+    t = re.sub(r"[^a-z0-9ñ\s]", " ", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def revisar_cta_especial_palmeras(numero, mensaje, event_id=None):
+    """
+    Revisa SOLO el mensaje que llega con referral del anuncio especial de Palmeras.
+
+    - Las dos respuestas rápidas aprobadas continúan normalmente.
+    - Cualquier otro texto/tipo de mensaje dispara una alerta a Gabriel.
+    - No pausa la IA: el bot sigue atendiendo al cliente con su flujo normal.
+    - Se marca una sola vez por cliente/anuncio para evitar alertas repetidas.
+    """
+    mensaje = mensaje or {}
+    datos = extraer_datos_referencia_anuncio(mensaje)
+    anuncio_id = str(datos.get("id") or "").strip()
+    if anuncio_id != PALMERAS_AD_PROTOCOLO_ID:
+        return False
+
+    estado = obtener_estado_conversacion(numero)
+    bandera = f"crm_cta_revisado_{PALMERAS_AD_PROTOCOLO_ID}"
+    if estado.get(bandera):
+        return False
+
+    estado[bandera] = True
+    persistir_cliente(numero)
+
+    tipo = str(mensaje.get("type") or "").strip().lower()
+    if tipo == "text":
+        texto = str((mensaje.get("text") or {}).get("body") or "").strip()
+        if _normalizar_cta_meta(texto) in PALMERAS_AD_PROTOCOLO_MENSAJES:
+            return False
+        detalle = texto or "(mensaje de texto vacío)"
+    else:
+        detalle = f"[{tipo or 'mensaje'}] El cliente entró por el anuncio y no usó una de las dos respuestas rápidas."
+
+    Thread(
+        target=enviar_alerta_cta_no_estandar_palmeras,
+        args=(numero, detalle, event_id),
+        daemon=True
+    ).start()
+    return True
 
 
 def _nombre_proyecto_anuncio(proyecto):
@@ -5169,6 +5228,52 @@ def enviar_alerta_nuevo_lead(numero, contenido, event_id=None):
             enviar_whatsapp(destino, alerta, formalizar=False)
     except Exception as exc:
         print("NUEVO LEAD WHATSAPP ALERTA ERROR:", exc)
+
+
+def enviar_alerta_cta_no_estandar_palmeras(numero, contenido, event_id=None):
+    """Alerta especial cuando el lead del AD 08 de Palmeras escribe algo distinto a los 2 CTA."""
+    numero = str(numero or "").strip()
+    contenido = str(contenido or "Mensaje distinto").strip()
+    anuncio_nombre = nombre_anuncio_meta(PALMERAS_AD_PROTOCOLO_ID)
+    cuerpo = (
+        f"Palmeras San Miguel · {anuncio_nombre}\n"
+        f"Mensaje diferente: {contenido[:350]}"
+    )
+
+    try:
+        enviar_push_crm(
+            numero,
+            cuerpo,
+            event_id=event_id,
+            titulo="⚠️ Lead Palmeras escribió otro mensaje"
+        )
+    except Exception as exc:
+        print("CTA PALMERAS PUSH ERROR:", exc)
+
+    try:
+        enviar_ntfy_crm(
+            numero,
+            cuerpo,
+            event_id=event_id,
+            titulo="⚠️ Mensaje distinto - Palmeras"
+        )
+    except Exception as exc:
+        print("CTA PALMERAS NTFY ERROR:", exc)
+
+    try:
+        destino = str(CRM_INTERVENCION_NUMERO or "").strip()
+        if destino and destino != numero and not crm_es_facebook(numero):
+            identificador = crm_identificador_visible(numero)
+            alerta = (
+                "⚠️ *MENSAJE DIFERENTE - ANUNCIO PALMERAS*\n\n"
+                f"Cliente: {identificador}\n"
+                f"Anuncio: {anuncio_nombre}\n\n"
+                f"Mensaje:\n{contenido[:600]}\n\n"
+                "El bot seguirá atendiendo normalmente, pero revise el CRM si desea intervenir."
+            )
+            enviar_whatsapp(destino, alerta, formalizar=False)
+    except Exception as exc:
+        print("CTA PALMERAS WHATSAPP ALERTA ERROR:", exc)
 
 
 def crm_registrar_mensaje(numero, direccion, contenido, event_id=None, media_url=None, media_tipo=None):
@@ -9653,6 +9758,7 @@ def detectar_cta_palmeras(texto):
     if any(x in t for x in [
         "quiero mas informacion de palmeras san miguel",
         "quiero mas informacion de palmeras",
+        "estoy interesado en comprar un terreno que opciones tiene disponibles",
     ]):
         return "informacion"
 
@@ -9666,6 +9772,7 @@ def detectar_cta_palmeras(texto):
         "puedo agendar una visita al proyecto",
         "agendar una visita al proyecto",
         "quiero agendar una visita al proyecto",
+        "me interesa palmeras san miguel y quisiera coordinar una visita",
     ]):
         return "visita"
 
@@ -13210,6 +13317,14 @@ def recibir_webhook():
                 # aunque la conversación esté en modo MANUAL y la IA esté pausada.
                 fijar_proyecto_desde_anuncio(numero_cliente, mensaje)
 
+                # Anuncio especial de Palmeras: si el primer mensaje NO es uno de
+                # los dos CTA aprobados, avisamos a Gabriel sin detener la IA.
+                revisar_cta_especial_palmeras(
+                    numero_cliente,
+                    mensaje,
+                    event_id=message_id
+                )
+
                 # 1) Guardar en CRM y disparar UNA notificación propia.
                 # Si es una foto, también la conservamos de forma persistente
                 # para poder verla luego dentro del CRM.
@@ -14390,6 +14505,7 @@ CRM_HTML = r"""
                 <div class="quick-tools-title">⚡ MENSAJES Y ENVÍOS RÁPIDOS · usan el proyecto activo: {{ proyecto_seleccionado }}</div>
                 <div class="quick-grid">
                     <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='palmeras-completa') }}"><button class="quick-chip" type="submit" title="Fija Palmeras San Miguel como proyecto activo y envía toda la información">🌴 Info Palmeras</button></form>
+                    <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='palmeras-protocolo') }}"><button class="quick-chip" type="submit" title="Envía la presentación aprobada de Palmeras, los dos planos y deja al cliente esperando elección de fase">🌴 Protocolo Palmeras</button></form>
                     <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='vista-completa') }}"><button class="quick-chip" type="submit" title="Fija Ciudad Vista Hermosa como proyecto activo y envía toda la información">🏘️ Info Vista Hermosa</button></form>
                     <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='info-completa') }}"><button class="quick-chip" type="submit" {% if not proyecto_clave_seleccionado %}disabled title="Primero debe existir un proyecto activo"{% endif %}>🏡 Info completa</button></form>
                     <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='cotizaciones') }}"><button class="quick-chip" type="submit" {% if not proyecto_clave_seleccionado %}disabled{% endif %}>💰 Cotizaciones</button></form>
@@ -15339,7 +15455,25 @@ def crm_guardar_gestion(numero):
 def _crm_worker_accion_rapida(numero, accion):
     proyecto = proyecto_activo.get(numero)
     try:
-        if accion == "palmeras-completa":
+        if accion == "palmeras-protocolo":
+            # Envía EXACTAMENTE el protocolo comercial aprobado de Palmeras:
+            # bienvenida -> Plano Fase 1 -> Plano Fase 2 -> leyenda, y queda esperando fase.
+            proyecto = "palmeras"
+            estado = obtener_estado_conversacion(numero)
+            estado["proyecto_actual"] = proyecto
+            proyecto_activo[numero] = proyecto
+            persistir_cliente(numero)
+
+            estado = reiniciar_flujo_psm_para_presentacion(numero)
+            bienvenida = generar_bienvenida_psm(numero, "CRM Protocolo Palmeras")
+            estado["psm_etapa"] = "esperando_fase"
+            estado["psm_pregunta_pendiente"] = "fase"
+            marcar_cliente_presentado(numero)
+            persistir_cliente(numero)
+            guardar_mensaje(numero, "assistant", bienvenida)
+            enviar_whatsapp(numero, bienvenida)
+            enviar_planos_psm_sin_topografia(numero)
+        elif accion == "palmeras-completa":
             # Botón independiente del proyecto activo: siempre trabaja con Palmeras San Miguel.
             proyecto = "palmeras"
             estado = obtener_estado_conversacion(numero)
@@ -15406,14 +15540,14 @@ def crm_accion_rapida(numero, accion):
         return crm_pedir_login()
 
     permitidas = {
-        "palmeras-completa", "vista-completa", "info-completa", "cotizaciones", "ubicacion", "plano", "fotos",
+        "palmeras-protocolo", "palmeras-completa", "vista-completa", "info-completa", "cotizaciones", "ubicacion", "plano", "fotos",
         "videos", "requisitos", "gastos", "visita", "seguimiento"
     }
     if accion not in permitidas:
         return Response("Acción no válida", status=400)
 
-    if accion in {"palmeras-completa", "vista-completa"}:
-        proyecto_forzado = "palmeras" if accion == "palmeras-completa" else "vista_hermosa"
+    if accion in {"palmeras-protocolo", "palmeras-completa", "vista-completa"}:
+        proyecto_forzado = "palmeras" if accion in {"palmeras-protocolo", "palmeras-completa"} else "vista_hermosa"
         estado = obtener_estado_conversacion(numero)
         estado["proyecto_actual"] = proyecto_forzado
         proyecto_activo[numero] = proyecto_forzado
