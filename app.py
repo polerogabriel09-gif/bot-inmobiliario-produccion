@@ -2364,11 +2364,13 @@ PLANOS_PROYECTOS = {
     "palmeras": {
         "fase_1": {
             "url": f"{PLANOS_PALMERAS_BASE_URL}/palmeras-fase-1.pdf",
+            "local": os.path.join(os.path.dirname(os.path.abspath(__file__)), "media", "planos", "palmeras-fase-1.pdf"),
             "archivo": "Plano_Palmeras_San_Miguel_Fase_1.pdf",
             "nombre": "Palmeras San Miguel - Fase 1"
         },
         "fase_2": {
             "url": f"{PLANOS_PALMERAS_BASE_URL}/palmeras-fase-2.pdf",
+            "local": os.path.join(os.path.dirname(os.path.abspath(__file__)), "media", "planos", "palmeras-fase-2.pdf"),
             "archivo": "Plano_Palmeras_San_Miguel_Fase_2.pdf",
             "nombre": "Palmeras San Miguel - Fase 2"
         }
@@ -8415,6 +8417,89 @@ def enviar_whatsapp(numero, texto, formalizar=True):
 
 
 # ============================================================
+# ENVIAR DOCUMENTOS / PLANOS POR WHATSAPP
+# ============================================================
+
+def subir_documento_local_a_meta(ruta_documento):
+    """Sube un PDF local a WhatsApp Cloud API y devuelve el media_id."""
+    if not ruta_documento or not os.path.exists(ruta_documento):
+        print("DOCUMENTO LOCAL NO ENCONTRADO:", ruta_documento)
+        return None
+
+    url = f"https://graph.facebook.com/v26.0/{PHONE_NUMBER_ID}/media"
+    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
+    data = {"messaging_product": "whatsapp", "type": "application/pdf"}
+
+    try:
+        with open(ruta_documento, "rb") as archivo:
+            files = {
+                "file": (
+                    os.path.basename(ruta_documento),
+                    archivo,
+                    "application/pdf"
+                )
+            }
+            respuesta = requests.post(
+                url, headers=headers, data=data, files=files, timeout=120
+            )
+
+        print("SUBIR PDF STATUS:", respuesta.status_code)
+        print("SUBIR PDF RESPONSE:", respuesta.text)
+        if 200 <= respuesta.status_code < 300:
+            return respuesta.json().get("id")
+    except Exception as exc:
+        print("ERROR SUBIENDO PDF LOCAL:", exc)
+    return None
+
+
+def enviar_documento_local_whatsapp(numero, ruta_documento, nombre_archivo, caption=""):
+    """
+    Envía un PDF local subiéndolo primero a Meta.
+    Esta vía evita depender de que Meta pueda descargar una URL pública externa.
+    """
+    caption = formalizar_trato_usted(caption)
+
+    if crm_es_facebook(numero):
+        url_publica = url_publica_media_messenger(ruta_documento)
+        if not url_publica:
+            print("MESSENGER: no se pudo crear URL pública para", ruta_documento)
+            return False
+        return enviar_messenger_adjunto_url(
+            numero, "file", url_publica, caption=caption or nombre_archivo
+        )
+
+    media_id = subir_documento_local_a_meta(ruta_documento)
+    if not media_id:
+        return False
+
+    url = f"https://graph.facebook.com/v26.0/{PHONE_NUMBER_ID}/messages"
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    documento = {"id": media_id, "filename": nombre_archivo}
+    if caption:
+        documento["caption"] = caption[:1024]
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": numero,
+        "type": "document",
+        "document": documento
+    }
+
+    try:
+        respuesta = requests.post(url, headers=headers, json=payload, timeout=60)
+        print("ENVIAR PDF LOCAL STATUS:", respuesta.status_code)
+        print("ENVIAR PDF LOCAL RESPONSE:", respuesta.text)
+        return 200 <= respuesta.status_code < 300
+    except Exception as exc:
+        print("ERROR ENVIANDO PDF LOCAL:", exc)
+        return False
+
+
+# ============================================================
 # ENVIAR DOCUMENTOS PUBLICOS POR URL (PLANOS)
 # ============================================================
 
@@ -8432,6 +8517,23 @@ def enviar_documento_url_whatsapp(numero, url_documento, nombre_archivo, caption
             url_documento,
             caption=caption or nombre_archivo
         )
+
+    # Para los planos nuevos de Palmeras preferimos subir el PDF local directamente
+    # a Meta. Así evitamos fallos silenciosos cuando WhatsApp no logra descargar
+    # el archivo desde una URL pública de Render.
+    try:
+        nombre_url = str(url_documento or "").split("?", 1)[0].rstrip("/").split("/")[-1]
+        if nombre_url in {"palmeras-fase-1.pdf", "palmeras-fase-2.pdf"}:
+            ruta_local = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), "media", "planos", nombre_url
+            )
+            if os.path.exists(ruta_local):
+                return enviar_documento_local_whatsapp(
+                    numero, ruta_local, nombre_archivo, caption=caption
+                )
+            print("PLANOS PALMERAS: no existe archivo local, se intenta por URL:", ruta_local)
+    except Exception as exc:
+        print("PLANOS PALMERAS: error resolviendo PDF local:", exc)
 
     separador = "&" if "?" in url_documento else "?"
     version = datetime.now(ZoneInfo("America/Guatemala")).strftime("%Y%m%d%H%M%S")
@@ -8470,7 +8572,19 @@ def enviar_documento_url_whatsapp(numero, url_documento, nombre_archivo, caption
 
 
 def enviar_planos_solicitados(numero, proyecto, texto_cliente):
-    """Envía el/los planos correspondientes y SIEMPRE termina con la leyenda de colores."""
+    """Envía el/los planos correspondientes y termina con la leyenda apropiada."""
+    proyecto_norm = normalizar_texto_topografia(str(proyecto or ""))
+    es_palmeras = proyecto == "palmeras" or "palmeras" in proyecto_norm or "san miguel" in proyecto_norm
+    if es_palmeras:
+        t = normalizar_texto_topografia(texto_cliente)
+        fase = None
+        if "fase 1" in t or "fase1" in t:
+            fase = "fase_1"
+        elif "fase 2" in t or "fase2" in t:
+            fase = "fase_2"
+        # Palmeras usa SIEMPRE el flujo ordenado aprobado y nunca topografía.
+        return enviar_planos_psm_sin_topografia(numero, fase, con_intro=True)
+
     planos = seleccionar_planos(proyecto, texto_cliente)
 
     if not planos:
@@ -9938,28 +10052,70 @@ def generar_bienvenida_psm(numero, texto_cliente):
     )
 
 
-def enviar_planos_psm_sin_topografia(numero, fase=None):
+def enviar_planos_psm_sin_topografia(numero, fase=None, con_intro=False):
+    """
+    Envía los planos de Palmeras en un orden visual controlado:
+      1) introducción opcional
+      2) PDF Fase 1
+      3) PDF Fase 2
+      4) leyenda verde/rojo
+
+    Nunca envía el mensaje antiguo de topografía.
+    Las pausas son intencionales: Meta puede aceptar un PDF antes de terminar
+    de procesarlo y, sin una pequeña espera, WhatsApp puede mostrar los textos
+    fuera de orden respecto a los documentos.
+    """
     planos = PLANOS_PROYECTOS.get("palmeras", {})
-    claves = []
     if fase in ("fase_1", "fase_2"):
         claves = [fase]
     else:
         claves = ["fase_1", "fase_2"]
 
+    if con_intro:
+        if fase == "fase_1":
+            enviar_whatsapp(numero, "¡Claro! 😊 Le comparto el plano actualizado de *Palmeras San Miguel - Fase 1*.")
+        elif fase == "fase_2":
+            enviar_whatsapp(numero, "¡Claro! 😊 Le comparto el plano actualizado de *Palmeras San Miguel - Fase 2*.")
+        else:
+            enviar_whatsapp(numero, "¡Claro! 😊 Le comparto los planos actualizados de *Palmeras San Miguel*.")
+        time.sleep(1.5)
+    else:
+        # Cuando viene del protocolo, la bienvenida ya fue enviada justo antes.
+        # Dejamos un pequeño margen para que esa bienvenida aparezca primero.
+        time.sleep(1.5)
+
     enviados = 0
-    for clave in claves:
+    for indice, clave in enumerate(claves):
         plano = planos.get(clave)
         if not plano:
             continue
-        if enviar_documento_url_whatsapp(
-            numero, plano["url"], plano["archivo"], caption=plano["nombre"]
-        ):
+
+        ruta_local = plano.get("local")
+        if ruta_local and os.path.exists(ruta_local):
+            ok = enviar_documento_local_whatsapp(
+                numero,
+                ruta_local,
+                plano["archivo"],
+                caption=plano["nombre"]
+            )
+        else:
+            ok = enviar_documento_url_whatsapp(
+                numero,
+                plano["url"],
+                plano["archivo"],
+                caption=plano["nombre"]
+            )
+
+        if ok:
             enviados += 1
+            # Esperar antes del siguiente elemento para conservar el orden visible.
+            # Entre PDFs damos más margen porque WhatsApp necesita procesar la vista previa.
+            if indice < len(claves) - 1:
+                time.sleep(3.0)
 
     if enviados:
-        # Los documentos pueden tardar un poco más en renderizarse en WhatsApp que un texto.
-        # Esperamos después de enviar AMBOS planos para que el mensaje de colores aparezca debajo.
-        time.sleep(3.0)
+        # Dejar que el último PDF aparezca antes del texto final.
+        time.sleep(4.0 if len(claves) > 1 else 3.0)
         enviar_whatsapp(
             numero,
             "🟢 *Verde: disponible*\n"
@@ -9967,6 +10123,7 @@ def enviar_planos_psm_sin_topografia(numero, fase=None):
             "Si alguna ubicación le llama la atención, indíqueme cuál y con gusto la revisamos 😊. "
             "Además, *todos los lotes tienen calle al frente*."
         )
+
     return enviados > 0
 
 
@@ -13138,7 +13295,7 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
             guardar_mensaje(
                 numero_cliente,
                 "assistant",
-                f"Se enviaron los planos de {nombre_proyecto_plano(proyecto)}, la leyenda de colores y la pregunta sobre topografía."
+                f"Se enviaron los planos de {nombre_proyecto_plano(proyecto)} y su leyenda de disponibilidad."
             )
             if procesamiento_sigue_vigente(numero_cliente, message_id):
                 enviar_planos_solicitados(numero_cliente, proyecto, "disponibilidad")
@@ -13184,7 +13341,7 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
             guardar_mensaje(
                 numero_cliente,
                 "assistant",
-                f"Se enviaron los planos de {nombre_proyecto_plano(proyecto)}, la leyenda de colores y la pregunta sobre topografía."
+                f"Se enviaron los planos de {nombre_proyecto_plano(proyecto)} y su leyenda de disponibilidad."
             )
 
             if procesamiento_sigue_vigente(numero_cliente, message_id):
