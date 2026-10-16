@@ -1,3 +1,4 @@
+# VERSION_SEGUIMIENTO_PERSISTENTE_CARPETAS_CRM_20261016 - 10m+1/3/5/7 reanudable + carpetas manuales CRM
 # VERSION_INTERVENCION_1357_NOMBRES_CRM_20261004 - seguimientos 10m+1/3/5/7, pausa IA por duda y nombre manual CRM
 # VERSION_CTA_PALMERAS_3_PREGUNTAS_20261004 - info y precios siguen protocolo; visita lo rompe
 # VERSION_PALMERAS_COTIZACIONES_VISUALES_IA_20261004 - restaura imagenes por modalidad + decisiones sin repetir preguntas
@@ -1464,61 +1465,6 @@ ANUNCIOS_META_NOMBRE = {
     "12024908005089063": "Palmeras San Miguel · AD 08",
 }
 
-# Anuncio Palmeras con dos respuestas rápidas aprobadas.
-# Si Meta entrega un mensaje inicial distinto desde este anuncio, avisamos a Gabriel
-# para que pueda revisar el lead sin detener la conversación automática.
-PALMERAS_AD_PROTOCOLO_ID = "12024908005089063"
-PALMERAS_AD_PROTOCOLO_MENSAJES = {
-    "estoy interesado en comprar un terreno que opciones tiene disponibles",
-    "me interesa palmeras san miguel y quisiera coordinar una visita",
-}
-
-
-def _normalizar_cta_meta(texto):
-    t = normalizar_texto_topografia(str(texto or ""))
-    t = re.sub(r"[^a-z0-9ñ\s]", " ", t)
-    return re.sub(r"\s+", " ", t).strip()
-
-
-def revisar_cta_especial_palmeras(numero, mensaje, event_id=None):
-    """
-    Revisa SOLO el mensaje que llega con referral del anuncio especial de Palmeras.
-
-    - Las dos respuestas rápidas aprobadas continúan normalmente.
-    - Cualquier otro texto/tipo de mensaje dispara una alerta a Gabriel.
-    - No pausa la IA: el bot sigue atendiendo al cliente con su flujo normal.
-    - Se marca una sola vez por cliente/anuncio para evitar alertas repetidas.
-    """
-    mensaje = mensaje or {}
-    datos = extraer_datos_referencia_anuncio(mensaje)
-    anuncio_id = str(datos.get("id") or "").strip()
-    if anuncio_id != PALMERAS_AD_PROTOCOLO_ID:
-        return False
-
-    estado = obtener_estado_conversacion(numero)
-    bandera = f"crm_cta_revisado_{PALMERAS_AD_PROTOCOLO_ID}"
-    if estado.get(bandera):
-        return False
-
-    estado[bandera] = True
-    persistir_cliente(numero)
-
-    tipo = str(mensaje.get("type") or "").strip().lower()
-    if tipo == "text":
-        texto = str((mensaje.get("text") or {}).get("body") or "").strip()
-        if _normalizar_cta_meta(texto) in PALMERAS_AD_PROTOCOLO_MENSAJES:
-            return False
-        detalle = texto or "(mensaje de texto vacío)"
-    else:
-        detalle = f"[{tipo or 'mensaje'}] El cliente entró por el anuncio y no usó una de las dos respuestas rápidas."
-
-    Thread(
-        target=enviar_alerta_cta_no_estandar_palmeras,
-        args=(numero, detalle, event_id),
-        daemon=True
-    ).start()
-    return True
-
 
 def _nombre_proyecto_anuncio(proyecto):
     return {
@@ -1875,7 +1821,11 @@ def obtener_estado_conversacion(numero):
             "esperando_respuesta_gabriel": False,
             "intervencion_pregunta": None,
             # Alias/nombre editable manualmente desde el CRM.
-            "crm_nombre_manual": ""
+            "crm_nombre_manual": "",
+            # Seguimiento persistente. Permite reanudar 1/3/5/7 tras reinicios/deploys.
+            "seguimiento_activo": False,
+            "seguimiento_inicio_ts": None,
+            "seguimiento_ultimo_hito": ""
         }
 
     return estado_conversacion[numero]
@@ -4691,6 +4641,9 @@ def _aplicar_snapshot(numero, snap):
     estado.setdefault("esperando_respuesta_gabriel", False)
     estado.setdefault("intervencion_pregunta", None)
     estado.setdefault("crm_nombre_manual", "")
+    estado.setdefault("seguimiento_activo", False)
+    estado.setdefault("seguimiento_inicio_ts", None)
+    estado.setdefault("seguimiento_ultimo_hito", "")
     estado_conversacion[numero] = estado
 
     if snap.get("ultima_intencion") is not None:
@@ -5228,52 +5181,6 @@ def enviar_alerta_nuevo_lead(numero, contenido, event_id=None):
             enviar_whatsapp(destino, alerta, formalizar=False)
     except Exception as exc:
         print("NUEVO LEAD WHATSAPP ALERTA ERROR:", exc)
-
-
-def enviar_alerta_cta_no_estandar_palmeras(numero, contenido, event_id=None):
-    """Alerta especial cuando el lead del AD 08 de Palmeras escribe algo distinto a los 2 CTA."""
-    numero = str(numero or "").strip()
-    contenido = str(contenido or "Mensaje distinto").strip()
-    anuncio_nombre = nombre_anuncio_meta(PALMERAS_AD_PROTOCOLO_ID)
-    cuerpo = (
-        f"Palmeras San Miguel · {anuncio_nombre}\n"
-        f"Mensaje diferente: {contenido[:350]}"
-    )
-
-    try:
-        enviar_push_crm(
-            numero,
-            cuerpo,
-            event_id=event_id,
-            titulo="⚠️ Lead Palmeras escribió otro mensaje"
-        )
-    except Exception as exc:
-        print("CTA PALMERAS PUSH ERROR:", exc)
-
-    try:
-        enviar_ntfy_crm(
-            numero,
-            cuerpo,
-            event_id=event_id,
-            titulo="⚠️ Mensaje distinto - Palmeras"
-        )
-    except Exception as exc:
-        print("CTA PALMERAS NTFY ERROR:", exc)
-
-    try:
-        destino = str(CRM_INTERVENCION_NUMERO or "").strip()
-        if destino and destino != numero and not crm_es_facebook(numero):
-            identificador = crm_identificador_visible(numero)
-            alerta = (
-                "⚠️ *MENSAJE DIFERENTE - ANUNCIO PALMERAS*\n\n"
-                f"Cliente: {identificador}\n"
-                f"Anuncio: {anuncio_nombre}\n\n"
-                f"Mensaje:\n{contenido[:600]}\n\n"
-                "El bot seguirá atendiendo normalmente, pero revise el CRM si desea intervenir."
-            )
-            enviar_whatsapp(destino, alerta, formalizar=False)
-    except Exception as exc:
-        print("CTA PALMERAS WHATSAPP ALERTA ERROR:", exc)
 
 
 def crm_registrar_mensaje(numero, direccion, contenido, event_id=None, media_url=None, media_tipo=None):
@@ -6104,9 +6011,11 @@ def inicializar_crm_lead_meta_db():
                             etapa TEXT NOT NULL DEFAULT 'Nuevo lead',
                             proxima_accion TEXT NOT NULL DEFAULT '',
                             proxima_accion_fecha TEXT NOT NULL DEFAULT '',
+                            carpeta TEXT NOT NULL DEFAULT '',
                             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                         )
                     """)
+                    cur.execute("ALTER TABLE crm_lead_meta ADD COLUMN IF NOT EXISTS carpeta TEXT NOT NULL DEFAULT ''")
                 conn.commit()
                 _crm_lead_meta_db_inicializada = True
                 print("CRM LEADS DB: tabla lista")
@@ -6131,7 +6040,7 @@ def cargar_crm_lead_meta():
         try:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT numero, etapa, proxima_accion, proxima_accion_fecha
+                    SELECT numero, etapa, proxima_accion, proxima_accion_fecha, carpeta
                     FROM crm_lead_meta
                 """)
                 filas = cur.fetchall()
@@ -6139,11 +6048,12 @@ def cargar_crm_lead_meta():
             conn.close()
 
         with lock_crm_lead_meta:
-            for numero, etapa, accion, fecha in filas:
+            for numero, etapa, accion, fecha, carpeta in filas:
                 crm_lead_meta[str(numero)] = {
                     "etapa": etapa if etapa in CRM_ETAPAS else "Nuevo lead",
                     "proxima_accion": accion or "",
                     "proxima_accion_fecha": fecha or "",
+                    "carpeta": carpeta or "",
                 }
             _crm_lead_meta_cargada = True
     except Exception as exc:
@@ -6159,6 +6069,7 @@ def crm_obtener_meta(numero):
             "etapa": "Nuevo lead",
             "proxima_accion": "",
             "proxima_accion_fecha": "",
+            "carpeta": "",
         }
     with lock_crm_lead_meta:
         meta = crm_lead_meta.get(numero) or {}
@@ -6166,10 +6077,11 @@ def crm_obtener_meta(numero):
             "etapa": meta.get("etapa") if meta.get("etapa") in CRM_ETAPAS else "Nuevo lead",
             "proxima_accion": str(meta.get("proxima_accion") or ""),
             "proxima_accion_fecha": str(meta.get("proxima_accion_fecha") or ""),
+            "carpeta": str(meta.get("carpeta") or ""),
         }
 
 
-def crm_guardar_meta(numero, etapa, proxima_accion, proxima_accion_fecha):
+def crm_guardar_meta(numero, etapa, proxima_accion, proxima_accion_fecha, carpeta=None):
     numero = str(numero or "").strip()
     if not numero:
         return False
@@ -6177,12 +6089,16 @@ def crm_guardar_meta(numero, etapa, proxima_accion, proxima_accion_fecha):
     etapa = etapa if etapa in CRM_ETAPAS else "Nuevo lead"
     proxima_accion = str(proxima_accion or "").strip()[:180]
     proxima_accion_fecha = str(proxima_accion_fecha or "").strip()[:40]
+    if carpeta is None:
+        carpeta = crm_obtener_meta(numero).get("carpeta", "")
+    carpeta = str(carpeta or "").strip()[:80]
 
     with lock_crm_lead_meta:
         crm_lead_meta[numero] = {
             "etapa": etapa,
             "proxima_accion": proxima_accion,
             "proxima_accion_fecha": proxima_accion_fecha,
+            "carpeta": carpeta,
         }
 
     if not inicializar_crm_lead_meta_db():
@@ -6194,14 +6110,15 @@ def crm_guardar_meta(numero, etapa, proxima_accion, proxima_accion_fecha):
             with conn.cursor() as cur:
                 cur.execute("""
                     INSERT INTO crm_lead_meta (
-                        numero, etapa, proxima_accion, proxima_accion_fecha, updated_at
-                    ) VALUES (%s, %s, %s, %s, NOW())
+                        numero, etapa, proxima_accion, proxima_accion_fecha, carpeta, updated_at
+                    ) VALUES (%s, %s, %s, %s, %s, NOW())
                     ON CONFLICT (numero) DO UPDATE SET
                         etapa = EXCLUDED.etapa,
                         proxima_accion = EXCLUDED.proxima_accion,
                         proxima_accion_fecha = EXCLUDED.proxima_accion_fecha,
+                        carpeta = EXCLUDED.carpeta,
                         updated_at = NOW()
-                """, (numero, etapa, proxima_accion, proxima_accion_fecha))
+                """, (numero, etapa, proxima_accion, proxima_accion_fecha, carpeta))
             conn.commit()
         finally:
             conn.close()
@@ -9061,26 +8978,45 @@ def enviar_cotizacion_del_proyecto(numero, proyecto, medida=None):
 # de forma segura y quedan registrados en los logs de Render.
 
 SEGUIMIENTO_10_MIN = 10 * 60
-SEGUIMIENTO_DIA1 = 23 * 60 * 60  # 23h para permanecer dentro de la ventana de 24h.
-SEGUIMIENTO_DIA3_ESPERA = 2 * 24 * 60 * 60
-SEGUIMIENTO_DIA5_ESPERA = 2 * 24 * 60 * 60
-SEGUIMIENTO_DIA7_ESPERA = 2 * 24 * 60 * 60
+# Día 1 se hace a las 23h para no arriesgar cerrar la ventana libre de 24h de WhatsApp.
+SEGUIMIENTO_DIA1 = 23 * 60 * 60
+SEGUIMIENTO_DIA3 = 3 * 24 * 60 * 60
+SEGUIMIENTO_DIA5 = 5 * 24 * 60 * 60
+SEGUIMIENTO_DIA7 = 7 * 24 * 60 * 60
+
+SEGUIMIENTO_HITOS = [
+    ("10m", SEGUIMIENTO_10_MIN),
+    ("dia1", SEGUIMIENTO_DIA1),
+    ("dia3", SEGUIMIENTO_DIA3),
+    ("dia5", SEGUIMIENTO_DIA5),
+    ("dia7", SEGUIMIENTO_DIA7),
+]
 
 WA_TEMPLATE_LANGUAGE = os.getenv("WA_TEMPLATE_LANGUAGE", "es").strip() or "es"
-WA_TEMPLATE_SEGUIMIENTO_DIA3 = os.getenv("WA_TEMPLATE_SEGUIMIENTO_DIA3", "").strip()
-WA_TEMPLATE_SEGUIMIENTO_DIA5 = os.getenv("WA_TEMPLATE_SEGUIMIENTO_DIA5", "").strip()
-WA_TEMPLATE_SEGUIMIENTO_DIA7 = os.getenv("WA_TEMPLATE_SEGUIMIENTO_DIA7", "").strip()
+# Puede usar una sola plantilla genérica para Día 3/5/7 o una distinta para cada día.
+WA_TEMPLATE_SEGUIMIENTO_GENERAL = os.getenv("WA_TEMPLATE_SEGUIMIENTO_GENERAL", "").strip()
+WA_TEMPLATE_SEGUIMIENTO_DIA3 = os.getenv("WA_TEMPLATE_SEGUIMIENTO_DIA3", "").strip() or WA_TEMPLATE_SEGUIMIENTO_GENERAL
+WA_TEMPLATE_SEGUIMIENTO_DIA5 = os.getenv("WA_TEMPLATE_SEGUIMIENTO_DIA5", "").strip() or WA_TEMPLATE_SEGUIMIENTO_GENERAL
+WA_TEMPLATE_SEGUIMIENTO_DIA7 = os.getenv("WA_TEMPLATE_SEGUIMIENTO_DIA7", "").strip() or WA_TEMPLATE_SEGUIMIENTO_GENERAL
 
 seguimiento_version = {}
 lock_seguimiento = Lock()
 
 
 def cancelar_seguimiento(numero):
-    """Invalida cualquier seguimiento pendiente de ese cliente."""
+    """Invalida cualquier seguimiento pendiente y lo marca cancelado también en PostgreSQL."""
     if not numero:
         return
     with lock_seguimiento:
         seguimiento_version[numero] = seguimiento_version.get(numero, 0) + 1
+    try:
+        estado = obtener_estado_conversacion(numero)
+        estado["seguimiento_activo"] = False
+        estado["seguimiento_inicio_ts"] = None
+        estado["seguimiento_ultimo_hito"] = ""
+        persistir_cliente(numero)
+    except Exception as exc:
+        print("SEGUIMIENTO CANCELAR/PERSISTIR ERROR:", numero, exc)
 
 
 def _seguimiento_debe_detenerse(numero, version):
@@ -9207,73 +9143,192 @@ def _enviar_seguimiento_libre(numero, texto):
     return ok
 
 
+def _seguimiento_template_hito(hito):
+    return {
+        "dia3": WA_TEMPLATE_SEGUIMIENTO_DIA3,
+        "dia5": WA_TEMPLATE_SEGUIMIENTO_DIA5,
+        "dia7": WA_TEMPLATE_SEGUIMIENTO_DIA7,
+    }.get(hito, "")
+
+
+def _seguimiento_marcar_hito(numero, hito, activo=True):
+    estado = obtener_estado_conversacion(numero)
+    estado["seguimiento_ultimo_hito"] = hito
+    estado["seguimiento_activo"] = bool(activo)
+    if not activo:
+        estado["seguimiento_inicio_ts"] = None
+    persistir_cliente(numero)
+
+
+def _alertar_fallo_seguimiento(numero, hito, detalle):
+    """Si Meta impide un 3/5/7, Gabriel se entera en vez de perder el seguimiento en silencio."""
+    texto = (
+        f"⚠️ Seguimiento {hito} no enviado\n"
+        f"Cliente: {crm_etiqueta_cliente(numero)}\n"
+        f"Proyecto: {crm_nombre_proyecto(numero)}\n"
+        f"Motivo: {detalle}"
+    )
+    try:
+        enviar_push_crm(numero, texto, titulo="⚠️ Seguimiento pendiente")
+    except Exception:
+        pass
+    try:
+        enviar_ntfy_crm(numero, texto, titulo="⚠️ Seguimiento pendiente")
+    except Exception:
+        pass
+    try:
+        destino = str(CRM_INTERVENCION_NUMERO or "").strip()
+        if destino and destino != str(numero) and not crm_es_facebook(numero):
+            enviar_whatsapp(destino, texto, formalizar=False)
+    except Exception:
+        pass
+
+
+def _enviar_hito_seguimiento(numero, hito):
+    if hito == "10m":
+        return _enviar_seguimiento_libre(numero, _mensaje_seguimiento_contextual(numero, "10m"))
+    if hito == "dia1":
+        return _enviar_seguimiento_libre(numero, _mensaje_seguimiento_contextual(numero, "dia1"))
+
+    template = _seguimiento_template_hito(hito)
+    if not template:
+        _alertar_fallo_seguimiento(
+            numero,
+            hito,
+            "Falta configurar una plantilla aprobada en WA_TEMPLATE_SEGUIMIENTO_GENERAL o la variable específica del día."
+        )
+        return False
+
+    ok = enviar_template_whatsapp(numero, template)
+    if not ok:
+        _alertar_fallo_seguimiento(numero, hito, f"Meta rechazó o no pudo enviar la plantilla {template!r}.")
+    return ok
+
+
+def _indice_hito(ultimo):
+    nombres = [x[0] for x in SEGUIMIENTO_HITOS]
+    try:
+        return nombres.index(ultimo)
+    except ValueError:
+        return -1
+
+
+def _worker_seguimiento_persistente(numero, version, inicio_ts):
+    """Ejecuta 10m + 1/3/5/7. Si Render reinicia, el estado persistido permite retomarlo."""
+    while True:
+        if _seguimiento_debe_detenerse(numero, version):
+            return
+
+        estado = obtener_estado_conversacion(numero)
+        if not estado.get("seguimiento_activo"):
+            return
+
+        try:
+            inicio = float(estado.get("seguimiento_inicio_ts") or inicio_ts or time.time())
+        except Exception:
+            inicio = time.time()
+            estado["seguimiento_inicio_ts"] = inicio
+            persistir_cliente(numero)
+
+        ultimo = str(estado.get("seguimiento_ultimo_hito") or "")
+        idx_ultimo = _indice_hito(ultimo)
+        ahora = time.time()
+
+        # Si hubo un deploy y hay varios hitos vencidos, mandamos solo el más reciente
+        # para no soltar 2 o 3 seguimientos juntos al cliente.
+        vencidos = [
+            (i, hito, segundos)
+            for i, (hito, segundos) in enumerate(SEGUIMIENTO_HITOS)
+            if i > idx_ultimo and ahora >= inicio + segundos
+        ]
+        if vencidos:
+            i, hito, _ = vencidos[-1]
+            _enviar_hito_seguimiento(numero, hito)
+            es_ultimo = (hito == "dia7")
+            _seguimiento_marcar_hito(numero, hito, activo=not es_ultimo)
+            if es_ultimo:
+                with lock_seguimiento:
+                    if seguimiento_version.get(numero) == version:
+                        seguimiento_version[numero] = version + 1
+                return
+            continue
+
+        proximo_indice = idx_ultimo + 1
+        if proximo_indice >= len(SEGUIMIENTO_HITOS):
+            _seguimiento_marcar_hito(numero, ultimo or "dia7", activo=False)
+            return
+
+        _, segundos = SEGUIMIENTO_HITOS[proximo_indice]
+        espera = max(1, (inicio + segundos) - ahora)
+        time.sleep(espera)
+
+
 def programar_seguimiento_inactividad(numero):
     """
-    Cadencia global tras quedar el CLIENTE pendiente de responder:
+    Cadencia global si el cliente queda sin responder:
     - 10 minutos: recordatorio contextual.
-    - Día 1: seguimiento contextual dentro de 24h.
-    - Día 3 / 5 / 7: plantilla aprobada por Meta, si está configurada.
+    - Día 1: seguimiento contextual (~23h para seguir dentro de la ventana libre).
+    - Día 3 / 5 / 7: plantilla aprobada por Meta.
 
-    Cualquier mensaje nuevo del cliente cancela la secuencia anterior.
-    También se detiene si Gabriel toma control manual, hay visita cerrada,
-    reserva/venta/perdido o el bot está esperando intervención humana.
+    Cada mensaje nuevo del cliente cancela la secuencia anterior y, cuando el bot
+    vuelve a dejar una pregunta pendiente, se crea una secuencia nueva desde cero.
+    El inicio y último hito se guardan en PostgreSQL para sobrevivir deploys/reinicios.
     """
     if not numero:
         return
 
-    # No iniciar seguimientos si ya estamos esperando a Gabriel.
     estado = obtener_estado_conversacion(numero)
     if estado.get("requiere_intervencion_ia") or estado.get("esperando_respuesta_gabriel"):
         return
+    if crm_esta_manual(numero) or cita_ya_cerrada(numero):
+        return
+
+    meta = crm_obtener_meta(numero)
+    if meta.get("etapa") in {"Venta", "Reserva", "Perdido"}:
+        return
+
+    inicio = time.time()
+    estado["seguimiento_activo"] = True
+    estado["seguimiento_inicio_ts"] = inicio
+    estado["seguimiento_ultimo_hito"] = ""
+    persistir_cliente(numero)
 
     with lock_seguimiento:
         version = seguimiento_version.get(numero, 0) + 1
         seguimiento_version[numero] = version
 
-    def esperar_y_enviar():
-        time.sleep(SEGUIMIENTO_10_MIN)
-        if _seguimiento_debe_detenerse(numero, version):
-            return
-        _enviar_seguimiento_libre(numero, _mensaje_seguimiento_contextual(numero, "10m"))
+    Thread(
+        target=_worker_seguimiento_persistente,
+        args=(numero, version, inicio),
+        daemon=True
+    ).start()
 
-        # Total aproximado: 23h desde que se programó.
-        time.sleep(max(0, SEGUIMIENTO_DIA1 - SEGUIMIENTO_10_MIN))
-        if _seguimiento_debe_detenerse(numero, version):
-            return
-        _enviar_seguimiento_libre(numero, _mensaje_seguimiento_contextual(numero, "dia1"))
 
-        # Día 3: requiere plantilla aprobada.
-        time.sleep(SEGUIMIENTO_DIA3_ESPERA)
-        if _seguimiento_debe_detenerse(numero, version):
-            return
-        if WA_TEMPLATE_SEGUIMIENTO_DIA3:
-            enviar_template_whatsapp(numero, WA_TEMPLATE_SEGUIMIENTO_DIA3)
-        else:
-            print("SEGUIMIENTO DIA 3 OMITIDO: falta WA_TEMPLATE_SEGUIMIENTO_DIA3")
-
-        # Día 5.
-        time.sleep(SEGUIMIENTO_DIA5_ESPERA)
-        if _seguimiento_debe_detenerse(numero, version):
-            return
-        if WA_TEMPLATE_SEGUIMIENTO_DIA5:
-            enviar_template_whatsapp(numero, WA_TEMPLATE_SEGUIMIENTO_DIA5)
-        else:
-            print("SEGUIMIENTO DIA 5 OMITIDO: falta WA_TEMPLATE_SEGUIMIENTO_DIA5")
-
-        # Día 7.
-        time.sleep(SEGUIMIENTO_DIA7_ESPERA)
-        if _seguimiento_debe_detenerse(numero, version):
-            return
-        if WA_TEMPLATE_SEGUIMIENTO_DIA7:
-            enviar_template_whatsapp(numero, WA_TEMPLATE_SEGUIMIENTO_DIA7)
-        else:
-            print("SEGUIMIENTO DIA 7 OMITIDO: falta WA_TEMPLATE_SEGUIMIENTO_DIA7")
-
+def restaurar_seguimientos_pendientes():
+    """Retoma seguimientos que estaban activos antes de un reinicio/deploy de Render."""
+    restaurados = 0
+    for numero, estado in list(estado_conversacion.items()):
+        if not isinstance(estado, dict) or not estado.get("seguimiento_activo"):
+            continue
+        inicio = estado.get("seguimiento_inicio_ts")
+        if not inicio:
+            continue
+        if crm_esta_manual(numero) or cita_ya_cerrada(numero):
+            continue
+        meta = crm_obtener_meta(numero)
+        if meta.get("etapa") in {"Venta", "Reserva", "Perdido"}:
+            continue
         with lock_seguimiento:
-            if seguimiento_version.get(numero) == version:
-                seguimiento_version[numero] = version + 1
-
-    Thread(target=esperar_y_enviar, daemon=True).start()
+            version = seguimiento_version.get(numero, 0) + 1
+            seguimiento_version[numero] = version
+        Thread(
+            target=_worker_seguimiento_persistente,
+            args=(numero, version, inicio),
+            daemon=True
+        ).start()
+        restaurados += 1
+    print("SEGUIMIENTOS RESTAURADOS:", restaurados)
+    return restaurados
 
 
 # ============================================================
@@ -9758,7 +9813,6 @@ def detectar_cta_palmeras(texto):
     if any(x in t for x in [
         "quiero mas informacion de palmeras san miguel",
         "quiero mas informacion de palmeras",
-        "estoy interesado en comprar un terreno que opciones tiene disponibles",
     ]):
         return "informacion"
 
@@ -9772,7 +9826,6 @@ def detectar_cta_palmeras(texto):
         "puedo agendar una visita al proyecto",
         "agendar una visita al proyecto",
         "quiero agendar una visita al proyecto",
-        "me interesa palmeras san miguel y quisiera coordinar una visita",
     ]):
         return "visita"
 
@@ -12294,6 +12347,235 @@ def manejar_intenciones_multiples(numero, texto, proyecto, message_id):
 
 
 # ============================================================
+# ALERTA DE MENSAJE NO ESTANDAR - AD PALMERAS CONTROLADO
+# ============================================================
+
+AD_PALMERAS_CTA_CONTROLADO = "12024908005089063"
+
+
+def _normalizar_cta_anuncio(texto):
+    t = normalizar_texto_topografia(str(texto or ""))
+    t = re.sub(r"[^a-z0-9ñ\s]", " ", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def _es_cta_aprobado_ad_palmeras(texto):
+    t = _normalizar_cta_anuncio(texto)
+    aprobados = {
+        _normalizar_cta_anuncio("Estoy interesado en comprar un terreno. ¿Qué opciones tiene disponibles?"),
+        _normalizar_cta_anuncio("Me interesa Palmeras San Miguel y quisiera coordinar una visita."),
+    }
+    return t in aprobados
+
+
+def alertar_mensaje_no_estandar_ad_palmeras(numero, mensaje, texto_cliente):
+    """Avisa a Gabriel si el PRIMER mensaje del AD controlado no es uno de los dos CTA aprobados.
+
+    No pausa la IA: el bot sigue atendiendo normalmente. La alerta sirve para que Gabriel
+    vea que el usuario escribió algo distinto a los botones previstos del anuncio.
+    """
+    try:
+        datos = extraer_datos_referencia_anuncio(mensaje)
+        anuncio_id = str(datos.get("id") or "").strip()
+        if anuncio_id != AD_PALMERAS_CTA_CONTROLADO:
+            return False
+        if _es_cta_aprobado_ad_palmeras(texto_cliente):
+            return False
+
+        identificador = crm_identificador_visible(numero)
+        cuerpo = (
+            "⚠️ MENSAJE DIFERENTE - ANUNCIO PALMERAS\n\n"
+            f"Cliente: {identificador}\n"
+            f"Anuncio: {nombre_anuncio_meta(anuncio_id)}\n\n"
+            f"Mensaje:\n{str(texto_cliente or '')[:700]}"
+        )
+
+        def avisar():
+            try:
+                enviar_push_crm(numero, cuerpo, titulo="⚠️ Mensaje diferente - Palmeras")
+            except Exception as exc:
+                print("AD PALMERAS ALERTA PUSH ERROR:", exc)
+            try:
+                enviar_ntfy_crm(numero, cuerpo, titulo="⚠️ Mensaje diferente - Palmeras")
+            except Exception as exc:
+                print("AD PALMERAS ALERTA NTFY ERROR:", exc)
+            try:
+                destino = str(CRM_INTERVENCION_NUMERO or "").strip()
+                if destino and destino != numero and not crm_es_facebook(numero):
+                    enviar_whatsapp(destino, cuerpo, formalizar=False)
+            except Exception as exc:
+                print("AD PALMERAS ALERTA WHATSAPP ERROR:", exc)
+
+        Thread(target=avisar, daemon=True).start()
+        return True
+    except Exception as exc:
+        print("ERROR ALERTA AD PALMERAS:", exc)
+        return False
+
+
+# ============================================================
+# SOLICITUDES DE LLAMADA / CALLBACK
+# ============================================================
+
+def _es_solicitud_llamada(texto):
+    """Detecta cuando el cliente pide que Gabriel le llame por teléfono."""
+    t = normalizar_texto_topografia(str(texto or ""))
+    frases = [
+        "llameme", "llamame", "puede llamarme", "puede llamar", "me puede llamar",
+        "me llama", "quiero que me llame", "quisiera que me llame", "necesito que me llame",
+        "quiero una llamada", "podemos hablar por llamada", "hablamos por llamada",
+        "llamarme", "que me llame"
+    ]
+    return any(f in t for f in frases)
+
+
+def _es_llamada_inmediata(texto):
+    """Un 'llámeme' simple se interpreta como llamada inmediata, salvo que indique futuro."""
+    t = normalizar_texto_topografia(str(texto or ""))
+    futuro = [
+        "manana", "lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo",
+        "mas tarde", "luego", "despues", "en la tarde", "en la noche", "en la manana",
+        "otro dia", "cuando pueda"
+    ]
+    if any(x in t for x in futuro):
+        return False
+    return _es_solicitud_llamada(texto)
+
+
+def _texto_momento_llamada(dia=None, hora=None):
+    dia = str(dia or "").strip()
+    hora = str(hora or "").strip()
+    if dia and hora:
+        return f"{dia.lower()} a las {hora}"
+    if hora:
+        return f"a las {hora}"
+    if dia:
+        return dia.lower()
+    return "ahora"
+
+
+def notificar_solicitud_llamada(numero, texto_cliente, dia=None, hora=None, inmediata=False):
+    """Avisa a Gabriel sin pausar la IA cuando un cliente pide una llamada."""
+    numero = str(numero or "").strip()
+    if not numero:
+        return
+
+    proyecto = crm_nombre_proyecto(numero)
+    identificador = crm_identificador_visible(numero)
+    momento = "AHORA" if inmediata else _texto_momento_llamada(dia, hora).upper()
+    cuerpo = (
+        f"📞 Cliente solicita llamada {momento}\n"
+        f"Cliente: {identificador}\n"
+        f"Proyecto: {proyecto or 'Sin identificar'}\n"
+        f"Mensaje: {str(texto_cliente or '')[:350]}"
+    )
+
+    try:
+        meta = crm_obtener_meta(numero)
+        accion = "📞 Llamar ahora" if inmediata else f"📞 Llamar {_texto_momento_llamada(dia, hora)}"
+        crm_guardar_meta(
+            numero,
+            meta.get("etapa") if meta.get("etapa") in CRM_ETAPAS else "Interesado",
+            accion[:180],
+            meta.get("proxima_accion_fecha") or ""
+        )
+    except Exception as exc:
+        print("CALLBACK CRM META ERROR:", exc)
+
+    def avisar():
+        try:
+            enviar_push_crm(numero, cuerpo, titulo="📞 Cliente solicita llamada")
+        except Exception as exc:
+            print("CALLBACK PUSH ERROR:", exc)
+        try:
+            enviar_ntfy_crm(numero, cuerpo, titulo="📞 Cliente solicita llamada")
+        except Exception as exc:
+            print("CALLBACK NTFY ERROR:", exc)
+        try:
+            destino = str(CRM_INTERVENCION_NUMERO or "").strip()
+            if destino and destino != numero and not crm_es_facebook(numero):
+                enviar_whatsapp(destino, cuerpo, formalizar=False)
+        except Exception as exc:
+            print("CALLBACK WHATSAPP ALERT ERROR:", exc)
+
+    Thread(target=avisar, daemon=True).start()
+
+
+def manejar_solicitud_llamada(numero, texto, message_id=None):
+    """Maneja llamadas con una respuesta breve y sin pedir el número de WhatsApp.
+
+    Reglas:
+    - "Llámeme" / petición inmediata sin fecha ni hora -> "Ahorita le llamo".
+    - Si menciona un día/futuro pero no hora -> pregunta únicamente la hora.
+    - Si menciona hora -> confirma que se le llamará a esa hora.
+    - Si el bot ya estaba esperando la hora, una respuesta como "a las 4" se procesa aquí.
+    """
+    estado = obtener_estado_conversacion(numero)
+    pendiente = bool(estado.get("esperando_hora_llamada"))
+    es_solicitud = _es_solicitud_llamada(texto)
+
+    if not es_solicitud and not pendiente:
+        return False
+
+    dia = extraer_dia_visita(texto)
+    hora = extraer_hora_visita(texto)
+
+    # Si veníamos esperando una hora, conservar el día que ya había indicado.
+    if pendiente and not dia:
+        dia = estado.get("dia_llamada")
+
+    if hora:
+        estado["esperando_hora_llamada"] = False
+        estado["dia_llamada"] = dia
+        estado["hora_llamada"] = hora
+        persistir_cliente(numero)
+
+        if dia:
+            respuesta = f"Perfecto 😊 Le vamos a llamar *{dia.lower()} a las {hora}*."
+        else:
+            respuesta = f"Perfecto 😊 Le vamos a llamar *a las {hora}*."
+
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if message_id is None or procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+        notificar_solicitud_llamada(numero, texto, dia=dia, hora=hora, inmediata=False)
+        return True
+
+    # Si el cliente dice "llámeme" sin indicar que sea más tarde, se asume AHORA.
+    if es_solicitud and _es_llamada_inmediata(texto) and not dia:
+        estado["esperando_hora_llamada"] = False
+        estado["dia_llamada"] = None
+        estado["hora_llamada"] = None
+        persistir_cliente(numero)
+        respuesta = "Claro 😊 Ahorita le llamo."
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if message_id is None or procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+        notificar_solicitud_llamada(numero, texto, inmediata=True)
+        return True
+
+    # Hay intención futura/día pero falta hora exacta.
+    if es_solicitud or pendiente:
+        if dia:
+            estado["dia_llamada"] = dia
+        estado["esperando_hora_llamada"] = True
+        persistir_cliente(numero)
+        if dia:
+            respuesta = f"Claro 😊 ¿A qué hora le gustaría que le llamemos {dia.lower()}?"
+        else:
+            respuesta = "Claro 😊 ¿A qué hora le gustaría que le llamemos?"
+        guardar_mensaje(numero, "user", texto)
+        guardar_mensaje(numero, "assistant", respuesta)
+        if message_id is None or procesamiento_sigue_vigente(numero, message_id):
+            enviar_whatsapp(numero, respuesta)
+        return True
+
+    return False
+
+
+# ============================================================
 # RECIBIR MENSAJES DE WHATSAPP
 # ============================================================
 
@@ -12407,6 +12689,18 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
 
         print("\nMENSAJE DEL CLIENTE:")
         print(texto_cliente)
+
+        # Si este lead nació desde el anuncio Palmeras controlado y escribió algo
+        # distinto a los dos CTA aprobados, avisamos a Gabriel sin detener al bot.
+        alertar_mensaje_no_estandar_ad_palmeras(
+            numero_cliente, mensaje, texto_cliente
+        )
+
+        # SOLICITUD DE LLAMADA CON PRIORIDAD GLOBAL.
+        # No pedimos el número: ya estamos conversando con ese WhatsApp.
+        # Además evita que OpenAI responda con el guion antiguo de "número + horario".
+        if manejar_solicitud_llamada(numero_cliente, texto_cliente, message_id):
+            return
 
         # PRESENTACION INICIAL:
         # Palmeras tiene una bienvenida comercial propia y flexible. Si el proyecto
@@ -13316,14 +13610,6 @@ def recibir_webhook():
                 # mensaje en CRM. Así se muestra "Palmeras San Miguel" de inmediato
                 # aunque la conversación esté en modo MANUAL y la IA esté pausada.
                 fijar_proyecto_desde_anuncio(numero_cliente, mensaje)
-
-                # Anuncio especial de Palmeras: si el primer mensaje NO es uno de
-                # los dos CTA aprobados, avisamos a Gabriel sin detener la IA.
-                revisar_cta_especial_palmeras(
-                    numero_cliente,
-                    mensaje,
-                    event_id=message_id
-                )
 
                 # 1) Guardar en CRM y disparar UNA notificación propia.
                 # Si es una foto, también la conservamos de forma persistente
@@ -14308,6 +14594,10 @@ CRM_HTML = r"""
             display:inline-block; margin-top:6px; padding:3px 7px; border-radius:999px;
             font-size:10px; font-weight:700; background:#eef2ff; color:#4338ca;
         }
+        .folder-badge {
+            display:inline-block; margin-top:6px; margin-left:4px; padding:3px 7px; border-radius:999px;
+            font-size:10px; font-weight:800; background:#f3e8ff; color:#7e22ce;
+        }
         .sidebar-search { display:grid; gap:7px; }
         .sidebar-search select {
             width:100%; padding:9px 10px; border:1px solid #cfd6dd; border-radius:9px;
@@ -14319,7 +14609,7 @@ CRM_HTML = r"""
         }
         .lead-management-title { font-weight:800; font-size:13px; color:#344054; }
         .lead-form {
-            display:grid; grid-template-columns:minmax(150px,1fr) minmax(210px,2fr) minmax(190px,1fr) auto;
+            display:grid; grid-template-columns:minmax(150px,1.2fr) minmax(150px,1fr) minmax(170px,1fr) minmax(190px,1.4fr) minmax(170px,1fr) auto;
             gap:8px; align-items:end;
         }
         .lead-field { display:flex; flex-direction:column; gap:5px; min-width:0; }
@@ -14397,6 +14687,13 @@ CRM_HTML = r"""
                         <option value="{{ etapa }}">{{ etapa }}</option>
                     {% endfor %}
                 </select>
+                <select id="crm-filter-folder" aria-label="Filtrar por carpeta">
+                    <option value="">📁 Todas las carpetas</option>
+                    <option value="__sin_carpeta__">Sin carpeta</option>
+                    {% for carpeta in carpetas %}
+                        <option value="{{ carpeta }}">📁 {{ carpeta }}</option>
+                    {% endfor %}
+                </select>
             </div>
             {% if not clientes %}
                 <div style="padding:20px;color:#667085;">
@@ -14410,6 +14707,7 @@ CRM_HTML = r"""
                    data-channel="{{ c.canal }}"
                    data-label="{{ ((c.nombre_manual ~ ' ' ~ c.identificador) if c.nombre_manual else c.identificador) ~ ' ' ~ c.anuncio_nombre ~ ' ' ~ c.anuncio_id }}"
                    data-stage="{{ c.etapa }}"
+                   data-folder="{{ c.carpeta }}"
                    href="{{ url_for('crm', numero=c.numero) }}">
                     <div>
                         {% if c.canal == 'facebook' %}
@@ -14431,6 +14729,7 @@ CRM_HTML = r"""
                         <div class="small" style="color:{% if c.anuncio_mapeado %}#2563eb{% else %}#b45309{% endif %};font-weight:700;">📢 {{ c.anuncio_nombre }}</div>
                     {% endif %}
                     <span class="stage-badge">{{ c.etapa }}</span>
+                    {% if c.carpeta %}<span class="folder-badge">📁 {{ c.carpeta }}</span>{% endif %}
                     {% if c.proxima_accion %}
                         <div class="next-mini">⏰ {{ c.proxima_accion }}{% if c.proxima_accion_fecha %} · {{ c.proxima_accion_fecha|replace('T',' ') }}{% endif %}</div>
                     {% endif %}
@@ -14482,6 +14781,18 @@ CRM_HTML = r"""
                         <input type="text" name="nombre_contacto" maxlength="100" value="{{ nombre_manual_seleccionado }}" placeholder="Ej. Juan Pérez | Palmeras San Miguel">
                     </div>
                     <div class="lead-field">
+                        <label>Carpeta / lista</label>
+                        <input type="text" name="carpeta" maxlength="80" list="crm-carpetas-sugeridas" value="{{ meta_seleccionada.carpeta }}" placeholder="Ej. Palmeras San Miguel">
+                        <datalist id="crm-carpetas-sugeridas">
+                            <option value="Palmeras San Miguel"></option>
+                            <option value="Buenaventura Cuyo"></option>
+                            <option value="Ciudad Vista Hermosa"></option>
+                            <option value="Seguimiento"></option>
+                            <option value="Ya compraron"></option>
+                            {% for carpeta in carpetas %}<option value="{{ carpeta }}"></option>{% endfor %}
+                        </datalist>
+                    </div>
+                    <div class="lead-field">
                         <label>Etapa del embudo</label>
                         <select name="etapa">
                             {% for etapa in etapas %}
@@ -14505,7 +14816,7 @@ CRM_HTML = r"""
                 <div class="quick-tools-title">⚡ MENSAJES Y ENVÍOS RÁPIDOS · usan el proyecto activo: {{ proyecto_seleccionado }}</div>
                 <div class="quick-grid">
                     <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='palmeras-completa') }}"><button class="quick-chip" type="submit" title="Fija Palmeras San Miguel como proyecto activo y envía toda la información">🌴 Info Palmeras</button></form>
-                    <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='palmeras-protocolo') }}"><button class="quick-chip" type="submit" title="Envía la presentación aprobada de Palmeras, los dos planos y deja al cliente esperando elección de fase">🌴 Protocolo Palmeras</button></form>
+                    <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='protocolo-palmeras') }}"><button class="quick-chip" type="submit" title="Envía la presentación aprobada de Palmeras, ambos planos y deja el flujo esperando fase">🌴 Protocolo Palmeras</button></form>
                     <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='vista-completa') }}"><button class="quick-chip" type="submit" title="Fija Ciudad Vista Hermosa como proyecto activo y envía toda la información">🏘️ Info Vista Hermosa</button></form>
                     <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='info-completa') }}"><button class="quick-chip" type="submit" {% if not proyecto_clave_seleccionado %}disabled title="Primero debe existir un proyecto activo"{% endif %}>🏡 Info completa</button></form>
                     <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='cotizaciones') }}"><button class="quick-chip" type="submit" {% if not proyecto_clave_seleccionado %}disabled{% endif %}>💰 Cotizaciones</button></form>
@@ -14601,9 +14912,11 @@ CRM_HTML = r"""
 
         const crmSearchNumber = document.getElementById("crm-search-number");
         const crmFilterStage = document.getElementById("crm-filter-stage");
+        const crmFilterFolder = document.getElementById("crm-filter-folder");
         function filtrarConversacionesPorNumero() {
             const q = crmSearchNumber ? (crmSearchNumber.value || "").trim().toLowerCase() : "";
             const etapa = crmFilterStage ? (crmFilterStage.value || "") : "";
+            const carpeta = crmFilterFolder ? (crmFilterFolder.value || "") : "";
             document.querySelectorAll("#sidebar .chat-link").forEach(link => {
                 const buscable = [
                     link.dataset.number || "",
@@ -14612,13 +14925,16 @@ CRM_HTML = r"""
                     link.textContent || ""
                 ].join(" ").toLowerCase();
                 const etapaLink = link.dataset.stage || "";
+                const carpetaLink = link.dataset.folder || "";
                 const coincideNumero = !q || buscable.includes(q);
                 const coincideEtapa = !etapa || etapaLink === etapa;
-                link.style.display = (coincideNumero && coincideEtapa) ? "block" : "none";
+                const coincideCarpeta = !carpeta || (carpeta === "__sin_carpeta__" ? !carpetaLink : carpetaLink === carpeta);
+                link.style.display = (coincideNumero && coincideEtapa && coincideCarpeta) ? "block" : "none";
             });
         }
         if (crmSearchNumber) crmSearchNumber.addEventListener("input", filtrarConversacionesPorNumero);
         if (crmFilterStage) crmFilterStage.addEventListener("change", filtrarConversacionesPorNumero);
+        if (crmFilterFolder) crmFilterFolder.addEventListener("change", filtrarConversacionesPorNumero);
 
         let lastSignature = "";
         let ultimoEventoEntrante = null;
@@ -14997,6 +15313,7 @@ CRM_HTML = r"""
                 a.dataset.channel = c.canal || "";
                 a.dataset.label = ((c.nombre_manual || "") + " " + (c.identificador || "") + " " + (c.anuncio_nombre || "") + " " + (c.anuncio_id || "")).trim();
                 a.dataset.stage = c.etapa || "Nuevo lead";
+                a.dataset.folder = c.carpeta || "";
                 a.href = "/crm?numero=" + encodeURIComponent(c.numero);
                 const prox = c.proxima_accion
                     ? `<div class="next-mini">⏰ ${escapeHtml(c.proxima_accion)}${c.proxima_accion_fecha ? " · " + escapeHtml(String(c.proxima_accion_fecha).replace("T", " ")) : ""}</div>`
@@ -15017,6 +15334,7 @@ CRM_HTML = r"""
                     <div class="small">${escapeHtml(c.proyecto)}</div>
                     ${c.anuncio_id ? `<div class="small" style="color:${c.anuncio_mapeado ? "#2563eb" : "#b45309"};font-weight:700;">📢 ${escapeHtml(c.anuncio_nombre || c.anuncio_id)}</div>` : ""}
                     <span class="stage-badge">${escapeHtml(c.etapa || "Nuevo lead")}</span>
+                    ${c.carpeta ? `<span class="folder-badge">📁 ${escapeHtml(c.carpeta)}</span>` : ""}
                     ${prox}
                 `;
                 sidebar.appendChild(a);
@@ -15330,6 +15648,7 @@ def crm():
                 "etapa": meta["etapa"],
                 "proxima_accion": meta["proxima_accion"],
                 "proxima_accion_fecha": meta["proxima_accion_fecha"],
+                "carpeta": meta.get("carpeta", ""),
             })
 
         mensajes_seleccionados = list(
@@ -15340,6 +15659,7 @@ def crm():
 
     meta_seleccionada = crm_obtener_meta(seleccionado) if seleccionado else crm_obtener_meta(None)
     proyecto_clave_seleccionado = proyecto_activo.get(seleccionado) if seleccionado else None
+    carpetas = sorted({str(c.get("carpeta") or "").strip() for c in clientes if str(c.get("carpeta") or "").strip()}, key=str.lower)
 
     return render_template_string(
         CRM_HTML,
@@ -15357,6 +15677,7 @@ def crm():
         intervencion_pregunta_seleccionado=(obtener_estado_conversacion(seleccionado).get("intervencion_pregunta") if seleccionado else ""),
         etapas=CRM_ETAPAS,
         meta_seleccionada=meta_seleccionada,
+        carpetas=carpetas,
     )
 
 
@@ -15394,6 +15715,7 @@ def crm_data():
                 "etapa": meta["etapa"],
                 "proxima_accion": meta["proxima_accion"],
                 "proxima_accion_fecha": meta["proxima_accion_fecha"],
+                "carpeta": meta.get("carpeta", ""),
             })
 
         mensajes = list(
@@ -15440,6 +15762,7 @@ def crm_guardar_gestion(numero):
 
     nombre_contacto = request.form.get("nombre_contacto", "").strip()[:100]
     etapa = request.form.get("etapa", "Nuevo lead").strip()
+    carpeta = request.form.get("carpeta", "").strip()[:80]
     proxima_accion = request.form.get("proxima_accion", "").strip()
     proxima_accion_fecha = request.form.get("proxima_accion_fecha", "").strip()
 
@@ -15448,30 +15771,25 @@ def crm_guardar_gestion(numero):
     estado["crm_nombre_manual"] = nombre_contacto
     persistir_cliente(numero)
 
-    crm_guardar_meta(numero, etapa, proxima_accion, proxima_accion_fecha)
+    crm_guardar_meta(numero, etapa, proxima_accion, proxima_accion_fecha, carpeta=carpeta)
     return redirect(url_for("crm", numero=numero))
 
 
 def _crm_worker_accion_rapida(numero, accion):
     proyecto = proyecto_activo.get(numero)
     try:
-        if accion == "palmeras-protocolo":
-            # Envía EXACTAMENTE el protocolo comercial aprobado de Palmeras:
-            # bienvenida -> Plano Fase 1 -> Plano Fase 2 -> leyenda, y queda esperando fase.
+        if accion == "protocolo-palmeras":
             proyecto = "palmeras"
-            estado = obtener_estado_conversacion(numero)
+            estado = reiniciar_flujo_psm_para_presentacion(numero)
             estado["proyecto_actual"] = proyecto
             proyecto_activo[numero] = proyecto
-            persistir_cliente(numero)
-
-            estado = reiniciar_flujo_psm_para_presentacion(numero)
-            bienvenida = generar_bienvenida_psm(numero, "CRM Protocolo Palmeras")
             estado["psm_etapa"] = "esperando_fase"
             estado["psm_pregunta_pendiente"] = "fase"
             marcar_cliente_presentado(numero)
             persistir_cliente(numero)
-            guardar_mensaje(numero, "assistant", bienvenida)
+            bienvenida = generar_bienvenida_psm(numero, "informacion")
             enviar_whatsapp(numero, bienvenida)
+            guardar_mensaje(numero, "assistant", bienvenida)
             enviar_planos_psm_sin_topografia(numero)
         elif accion == "palmeras-completa":
             # Botón independiente del proyecto activo: siempre trabaja con Palmeras San Miguel.
@@ -15540,14 +15858,14 @@ def crm_accion_rapida(numero, accion):
         return crm_pedir_login()
 
     permitidas = {
-        "palmeras-protocolo", "palmeras-completa", "vista-completa", "info-completa", "cotizaciones", "ubicacion", "plano", "fotos",
+        "protocolo-palmeras", "palmeras-completa", "vista-completa", "info-completa", "cotizaciones", "ubicacion", "plano", "fotos",
         "videos", "requisitos", "gastos", "visita", "seguimiento"
     }
     if accion not in permitidas:
         return Response("Acción no válida", status=400)
 
-    if accion in {"palmeras-protocolo", "palmeras-completa", "vista-completa"}:
-        proyecto_forzado = "palmeras" if accion in {"palmeras-protocolo", "palmeras-completa"} else "vista_hermosa"
+    if accion in {"protocolo-palmeras", "palmeras-completa", "vista-completa"}:
+        proyecto_forzado = "palmeras" if accion in {"protocolo-palmeras", "palmeras-completa"} else "vista_hermosa"
         estado = obtener_estado_conversacion(numero)
         estado["proyecto_actual"] = proyecto_forzado
         proyecto_activo[numero] = proyecto_forzado
@@ -15818,8 +16136,9 @@ def crm_memoria_estado():
 # Cargar memoria al importar el módulo (también funciona con Gunicorn en Render).
 try:
     cargar_memoria_persistente()
+    restaurar_seguimientos_pendientes()
 except Exception as exc:
-    print("MEMORIA DB STARTUP ERROR:", exc)
+    print("MEMORIA/SEGUIMIENTO STARTUP ERROR:", exc)
 
 # ============================================================
 # INICIAR SERVIDOR
