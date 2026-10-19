@@ -17,6 +17,7 @@
 # VERSION_ANUNCIOS_PALMERAS_7_IDS_20260831 - 7 anuncios Palmeras identificados
 # VERSION_ANUNCIOS_PALMERAS_FIX_PROYECTO_20260831
 # VERSION_TRATO_USTED_GENERAL_20260831
+# VERSION_VENDEDOR_LIBRE_SIN_GUIONES_20261019
 # VERSION_VENDEDOR_ADAPTATIVO_20261019
 from flask import Flask, request, Response, redirect, url_for, render_template_string, jsonify, send_from_directory
 from openai import OpenAI
@@ -260,6 +261,11 @@ VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "")
 VAPID_SUBJECT = os.getenv("VAPID_SUBJECT", "mailto:gabriel@example.com")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
+
+# Modo comercial actual: la IA conversa con criterio y los flujos antiguos
+# quedan solo como utilidades internas para acciones concretas (planos, medios,
+# cotizaciones, visitas, etc.). No usar protocolos rígidos de presentación.
+MODO_VENDEDOR_LIBRE = True
 
 
 # ============================================================
@@ -6452,6 +6458,42 @@ def guardar_mensaje(numero_cliente, rol, contenido, formalizar=True):
 # GARANTIZAR CONTINUIDAD EN RESPUESTAS GENERADAS POR IA
 # ============================================================
 
+def reforzar_negritas_comerciales(texto):
+    """Añade énfasis WhatsApp solo cuando una respuesta comercial quedó sin negritas.
+
+    No intenta reescribir el mensaje ni convertirlo en una plantilla. Solo resalta
+    hasta tres datos importantes ya presentes en el texto (proyecto, precio, medida,
+    financiamiento o ubicación) para mejorar lectura en teléfono.
+    """
+    texto = str(texto or "").strip()
+    if not texto or "*" in texto:
+        return texto
+
+    patrones = [
+        r"\b(Buenaventura Cuyotenango|Buenaventura|Palmeras San Miguel|Vista Hermosa)\b",
+        r"Q\s?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?",
+        r"\b(?:8x16|8x18|128\s*m²|144\s*m²)\b",
+        r"\bfinanciamiento propio(?:\s+de\s+\d+\s+a\s+\d+\s+años)?\b",
+        r"\b(?:Zona 5 de Retalhuleu|camino a La Verde|Cuyotenango|km 168|CA-2 km 188)\b",
+    ]
+
+    cambios = 0
+    for patron in patrones:
+        if cambios >= 3:
+            break
+        nuevo, n = re.subn(
+            patron,
+            lambda m: f"*{m.group(0)}*",
+            texto,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+        if n:
+            texto = nuevo
+            cambios += 1
+    return texto
+
+
 def asegurar_pregunta_final_ia(texto):
     """Garantiza que toda respuesta visible generada por IA cierre con una pregunta.
 
@@ -6460,6 +6502,7 @@ def asegurar_pregunta_final_ia(texto):
     devuelve una respuesta sin pregunta final.
     """
     texto = formalizar_trato_usted(str(texto or "").strip())
+    texto = reforzar_negritas_comerciales(texto)
     if not texto:
         return "¿Qué le gustaría conocer sobre nuestros proyectos? 😊"
 
@@ -7966,6 +8009,30 @@ REGLA ABSOLUTA DE CONTINUIDAD:
 - Si el cliente cambió de decisión, adapta la pregunta a su nueva decisión.
 - Si ya existe visita coordinada, no vuelvas a preguntar día u hora; haz una pregunta breve de servicio relacionada con su duda actual.
 
+============================================================
+REGLA FINAL DE ESTILO - PRIORIDAD MÁXIMA
+============================================================
+
+A partir de ahora NO uses protocolos ni guiones prefabricados para presentar un proyecto.
+Las funciones antiguas pueden existir como utilidades técnicas, pero tu respuesta conversacional debe nacer del mensaje actual y del historial.
+
+- Si el cliente dice "quiero información" o "más información", NO descargues una ficha técnica. Da solo 2 o 3 datos de alto valor y una pregunta inteligente.
+- Si el cliente pide un dato concreto, responde ese dato primero.
+- Evita listas largas salvo que el cliente las solicite.
+- Prefiere 1 a 3 párrafos cortos, fáciles de leer en una pantalla de teléfono.
+- Usa SIEMPRE formato de WhatsApp con *negritas* para resaltar de 1 a 3 elementos importantes: precio, medida, enganche, cuota, ubicación, proyecto o beneficio clave.
+- NO pongas toda la respuesta en negrita.
+- NO envíes planos, cotizaciones ni multimedia solo porque el cliente pidió información general; esos recursos se mandan cuando los pida o cuando realmente ayuden al siguiente paso.
+- Nunca termines con un menú de tres o cuatro opciones tipo "precios, requisitos o visita". Elige UNA pregunta natural según la conversación.
+- No repitas presentación, proyecto, precio ni beneficios que ya acabas de mencionar.
+- El objetivo de cada mensaje no es demostrar cuánta información sabes, sino conseguir que el cliente quiera responder el siguiente mensaje.
+
+Ejemplo de estilo correcto:
+Cliente: "Quiero más información de Palmeras"
+Respuesta adecuada: "¡Claro! 😊 En *Palmeras San Miguel* tenemos terrenos de *8x16 m desde Q67,200* en Zona 5 de Retalhuleu. Puede adquirirlos con *financiamiento propio hasta 8 años*. ¿Lo está buscando más para vivienda o como inversión?"
+
+El ejemplo muestra ESTILO y CRITERIO, no una frase obligatoria.
+
 REGLA DE INTERVENCIÓN HUMANA AUTOMÁTICA:
 - Si el cliente hace una pregunta INMOBILIARIA o comercial que no puedes responder con seguridad usando la información oficial y el historial, NO inventes ni adivines.
 - Si la consulta es inusual y necesita criterio/confirmación humana (por ejemplo disponibilidad exacta no confirmada, excepción comercial, trámite no documentado, condición especial o dato que no aparece), coloca EXACTAMENTE esta marca en la primera línea:
@@ -8595,6 +8662,7 @@ def enviar_whatsapp(numero, texto, formalizar=True):
 
     if formalizar:
         texto = formalizar_trato_usted(texto)
+        texto = reforzar_negritas_comerciales(texto)
 
     # MISMA LÓGICA, DISTINTO CANAL: todo el motor sigue llamando a enviar_whatsapp(),
     # pero un contacto fb:<psid> sale por Messenger sin tocar la lógica comercial.
@@ -13109,37 +13177,37 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
             return
 
         # PRESENTACION INICIAL:
-        # Palmeras tiene una bienvenida comercial propia y flexible. Si el proyecto
-        # ya viene identificado como Palmeras y el mensaje es genérico, NO mandamos
-        # antes el saludo corto porque duplicaría la presentación.
-        proyecto_previo_presentacion = obtener_proyecto_actual(numero_cliente)
-        proyecto_mencionado_presentacion = detectar_proyecto_en_texto(texto_cliente)
-        proyecto_para_presentacion = proyecto_previo_presentacion or proyecto_mencionado_presentacion
-        cta_palmeras_presentacion = detectar_cta_palmeras(texto_cliente)
-        cta_vh_presentacion = detectar_cta_vista_hermosa(texto_cliente)
-        cta_bnv_presentacion = detectar_cta_bnv_nuevo(texto_cliente)
-        if proyecto_para_presentacion == "palmeras" and (
-            es_inicio_general_psm(texto_cliente)
-            or cta_palmeras_presentacion in {"informacion", "precios_cuotas", "visita"}
-        ):
-            presentacion_enviada = False
-        elif proyecto_para_presentacion == "vista_hermosa" and (
-            es_inicio_general_vh(texto_cliente)
-            or cta_vh_presentacion in {"informacion", "precios_cuotas", "visita"}
-        ):
-            # Vista Hermosa también tiene su propia presentación comercial progresiva.
-            presentacion_enviada = False
-        elif proyecto_para_presentacion == "buenaventura" and (
-            es_inicio_general_bnv(texto_cliente)
-            or cta_bnv_presentacion in {"inicio", "visita", "ubicacion"}
-        ):
-            # Buenaventura usa su propia presentación y calificación por uso.
+        # En MODO_VENDEDOR_LIBRE no enviamos una bienvenida prefabricada antes de
+        # comprender el mensaje. La IA construye una respuesta breve y contextual.
+        if MODO_VENDEDOR_LIBRE:
             presentacion_enviada = False
         else:
-            presentacion_enviada = enviar_presentacion_si_corresponde(
-                numero_cliente,
-                message_id
-            )
+            proyecto_previo_presentacion = obtener_proyecto_actual(numero_cliente)
+            proyecto_mencionado_presentacion = detectar_proyecto_en_texto(texto_cliente)
+            proyecto_para_presentacion = proyecto_previo_presentacion or proyecto_mencionado_presentacion
+            cta_palmeras_presentacion = detectar_cta_palmeras(texto_cliente)
+            cta_vh_presentacion = detectar_cta_vista_hermosa(texto_cliente)
+            cta_bnv_presentacion = detectar_cta_bnv_nuevo(texto_cliente)
+            if proyecto_para_presentacion == "palmeras" and (
+                es_inicio_general_psm(texto_cliente)
+                or cta_palmeras_presentacion in {"informacion", "precios_cuotas", "visita"}
+            ):
+                presentacion_enviada = False
+            elif proyecto_para_presentacion == "vista_hermosa" and (
+                es_inicio_general_vh(texto_cliente)
+                or cta_vh_presentacion in {"informacion", "precios_cuotas", "visita"}
+            ):
+                presentacion_enviada = False
+            elif proyecto_para_presentacion == "buenaventura" and (
+                es_inicio_general_bnv(texto_cliente)
+                or cta_bnv_presentacion in {"inicio", "visita", "ubicacion"}
+            ):
+                presentacion_enviada = False
+            else:
+                presentacion_enviada = enviar_presentacion_si_corresponde(
+                    numero_cliente,
+                    message_id
+                )
 
         # Si el PRIMER mensaje fue únicamente un saludo, ya respondimos con la
         # presentación. Terminamos aquí para que OpenAI no mande un segundo saludo.
@@ -13198,7 +13266,7 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
 
         # BUENAVENTURA CUYOTENANGO: flujo comercial progresivo con
         # calificación adicional por uso (vivir / invertir / negocio).
-        if manejar_flujo_buenaventura_humano(
+        if (not MODO_VENDEDOR_LIBRE) and manejar_flujo_buenaventura_humano(
             numero_cliente,
             texto_cliente,
             proyecto,
@@ -13208,7 +13276,7 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
 
         # VISTA HERMOSA: mismo cerebro comercial progresivo de Palmeras,
         # con sus precios, fases, reserva, garita, muro y reglas propias.
-        if manejar_flujo_vista_hermosa_humano(
+        if (not MODO_VENDEDOR_LIBRE) and manejar_flujo_vista_hermosa_humano(
             numero_cliente,
             texto_cliente,
             proyecto,
@@ -13219,7 +13287,7 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
         # PALMERAS SAN MIGUEL: conversación comercial progresiva.
         # Va ANTES del coordinador genérico para evitar que una consulta de precio
         # vuelva a disparar el paquete completo antiguo.
-        if manejar_flujo_palmeras_humano(
+        if (not MODO_VENDEDOR_LIBRE) and manejar_flujo_palmeras_humano(
             numero_cliente,
             texto_cliente,
             proyecto,
@@ -13230,7 +13298,7 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
         # Si el cliente envió varias preguntas seguidas (o una sola frase con
         # varias solicitudes), las atendemos TODAS antes de entrar a los flujos
         # de una sola intención que terminan con `return`.
-        if manejar_intenciones_multiples(
+        if (not MODO_VENDEDOR_LIBRE) and manejar_intenciones_multiples(
             numero_cliente,
             texto_cliente,
             proyecto,
@@ -13244,7 +13312,7 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
         # Tienen prioridad sobre todos los detectores generales y sobre OpenAI.
         # Así "precios y cuotas", "ubicación", "lotes disponibles" y "agendar visita"
         # siempre siguen el guion definido para esta campaña.
-        if manejar_cta_buenaventura(
+        if (not MODO_VENDEDOR_LIBRE) and manejar_cta_buenaventura(
             numero_cliente,
             texto_cliente,
             proyecto,
@@ -13254,7 +13322,7 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
 
         # Respuestas cortas a preguntas que hizo el flujo anterior:
         # "para mi casa", "locales", "fin de semana", "sábado", "por la tarde", etc.
-        if manejar_seguimiento_cta_buenaventura(
+        if (not MODO_VENDEDOR_LIBRE) and manejar_seguimiento_cta_buenaventura(
             numero_cliente,
             texto_cliente,
             proyecto,
@@ -13856,7 +13924,7 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
         # Si "¿cuánto valen los terrenos?" es la primera consulta comercial,
         # mantenemos el comportamiento completo. Si la conversación ya venía
         # avanzando, respondemos solo precios + una pregunta de calificación.
-        if proyecto != "palmeras" and es_consulta_general_de_precio(texto_cliente):
+        if (not MODO_VENDEDOR_LIBRE) and proyecto != "palmeras" and es_consulta_general_de_precio(texto_cliente):
             if es_primera_consulta_comercial(numero_cliente):
                 guardar_mensaje(numero_cliente, "user", texto_cliente)
                 guardar_mensaje(
@@ -13916,7 +13984,7 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
         # en este app.py: resumen, ubicación, cotizaciones, fotos/videos y amenidades.
         # Este bloque está justo antes de la IA para NO alterar ningún flujo específico
         # que ya se trabajó anteriormente.
-        if proyecto and proyecto != "palmeras" and es_seleccion_simple_de_proyecto(texto_cliente):
+        if (not MODO_VENDEDOR_LIBRE) and proyecto and proyecto != "palmeras" and es_seleccion_simple_de_proyecto(texto_cliente):
             guardar_mensaje(numero_cliente, "user", texto_cliente)
             guardar_mensaje(
                 numero_cliente,
