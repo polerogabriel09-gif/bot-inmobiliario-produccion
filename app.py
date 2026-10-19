@@ -1558,9 +1558,11 @@ def crm_info_anuncio(contacto):
         "mapeado": bool(anuncio_id and anuncio_id in ANUNCIOS_META_PROYECTO) if anuncio_id else True,
     }
 
-# Ya no usamos un proyecto global de fallback: desde ahora pueden estar pautando
-# Palmeras, Vista Hermosa y Buenaventura al mismo tiempo.
-PROYECTO_CAMPANA_ACTIVA = None
+# FOCO COMERCIAL ACTUAL: Buenaventura Cuyotenango.
+# Los IDs mapeados siempre tienen prioridad. Si un lead nuevo llega sin proyecto
+# identificable, lo atendemos provisionalmente como Buenaventura para no mostrar
+# al cliente una falla técnica de atribución. Gabriel recibe una alerta interna.
+PROYECTO_CAMPANA_ACTIVA = "buenaventura"
 
 
 def _mensaje_generico_de_anuncio(texto):
@@ -1626,6 +1628,51 @@ def fijar_proyecto_desde_anuncio(numero, mensaje):
             proyecto = detectar_proyecto_en_texto(texto)
             if proyecto:
                 print(f"PROYECTO DETECTADO EN CTA/TEXTO: {numero} -> {proyecto} | texto={texto!r}")
+
+    if not proyecto:
+        # Como la operación comercial actual está enfocada en Buenaventura,
+        # no trasladamos al cliente el problema de atribución preguntándole
+        # "¿de qué proyecto está interesado?". Lo atendemos como Cuyo y avisamos
+        # internamente a Gabriel para que pueda mapear el origen después.
+        proyecto = PROYECTO_CAMPANA_ACTIVA
+        if proyecto:
+            estado_alerta = obtener_estado_conversacion(numero)
+            datos_ref = extraer_datos_referencia_anuncio(mensaje)
+            if not estado_alerta.get("alerta_origen_no_mapeado_enviada"):
+                estado_alerta["alerta_origen_no_mapeado_enviada"] = True
+                estado_alerta["proyecto_fallback_aplicado"] = proyecto
+                persistir_cliente(numero)
+
+                def _avisar_origen_incierto():
+                    anuncio_id = str(datos_ref.get("id") or "").strip()
+                    motivo = (
+                        f"ID de anuncio no mapeado: {anuncio_id}"
+                        if anuncio_id else
+                        "Lead sin ID/proyecto identificable"
+                    )
+                    cuerpo = (
+                        "⚠️ ORIGEN/PROYECTO NO CONFIRMADO\n"
+                        "El bot lo está atendiendo provisionalmente como *Buenaventura Cuyotenango*.\n"
+                        f"Motivo: {motivo}\n"
+                        f"Cliente: {numero}"
+                    )
+                    try:
+                        enviar_push_crm(numero, cuerpo, titulo="⚠️ Lead sin mapear")
+                    except Exception as exc:
+                        print("FALLBACK CUYO PUSH ERROR:", exc)
+                    try:
+                        enviar_ntfy_crm(numero, cuerpo, titulo="⚠️ Lead sin mapear")
+                    except Exception as exc:
+                        print("FALLBACK CUYO NTFY ERROR:", exc)
+                    try:
+                        destino = str(CRM_INTERVENCION_NUMERO or "").strip()
+                        if destino and destino != numero and not crm_es_facebook(numero):
+                            enviar_whatsapp(destino, cuerpo, formalizar=False)
+                    except Exception as exc:
+                        print("FALLBACK CUYO WHATSAPP ERROR:", exc)
+
+                Thread(target=_avisar_origen_incierto, daemon=True).start()
+                print(f"FALLBACK COMERCIAL CUYO: {numero} | {motivo if 'motivo' in locals() else 'origen no identificado'}")
 
     if not proyecto:
         return None
@@ -1823,6 +1870,9 @@ def obtener_estado_conversacion(numero):
             "intervencion_pregunta": None,
             # Alias/nombre editable manualmente desde el CRM.
             "crm_nombre_manual": "",
+            # Si la IA recomienda otro residencial y el cliente responde solo "sí",
+            # recordamos cuál alternativa estaba ofreciendo para poder cambiar el proyecto.
+            "alternativa_proyecto_pendiente": None,
             # Seguimiento persistente. Permite reanudar 1/3/5/7 tras reinicios/deploys.
             "seguimiento_activo": False,
             "seguimiento_inicio_ts": None,
@@ -1922,6 +1972,68 @@ def es_seleccion_simple_de_proyecto(texto):
             candidatos.add((prefijo + alias).strip())
 
     return t in candidatos
+
+
+def _respuesta_afirmativa_simple(texto):
+    t = normalizar_texto_topografia(str(texto or ""))
+    t = re.sub(r"[^a-z0-9ñáéíóúü\s]", " ", t)
+    t = " ".join(t.split())
+    return t in {
+        "si", "sí", "claro", "dale", "va", "esta bien", "está bien",
+        "me interesa", "muestrame", "muéstreme", "quiero verlo", "quiero ver",
+        "cuenteme", "cuénteme", "mandeme info", "mándeme info"
+    }
+
+
+def registrar_alternativa_sugerida_por_ia(numero, respuesta):
+    """Recuerda una alternativa ofrecida por la IA para entender un siguiente 'sí'."""
+    texto = normalizar_texto_topografia(str(respuesta or ""))
+    actual = obtener_proyecto_actual(numero)
+    candidatos = []
+    if any(x in texto for x in ["palmeras san miguel", "palmeras"]):
+        candidatos.append("palmeras")
+    if "vista hermosa" in texto:
+        candidatos.append("vista_hermosa")
+    if any(x in texto for x in ["buenaventura cuyotenango", "buenaventura"]):
+        candidatos.append("buenaventura")
+    candidatos = [x for x in dict.fromkeys(candidatos) if x != actual]
+
+    # Solo guardamos una alternativa inequívoca. Si la IA comparó varios proyectos,
+    # esperamos a que el cliente nombre el que quiere.
+    if len(candidatos) == 1 and any(frase in texto for frase in [
+        "le muestro", "le enseño", "le cuento", "le puede encajar", "podria encajar",
+        "podría encajar", "otra opcion", "otra opción", "alternativa", "considerar"
+    ]):
+        estado = obtener_estado_conversacion(numero)
+        estado["alternativa_proyecto_pendiente"] = candidatos[0]
+        persistir_cliente(numero)
+        return candidatos[0]
+    return None
+
+
+def aplicar_alternativa_pendiente_si_corresponde(numero, texto):
+    """Si el cliente acepta con un simple 'sí' la alternativa ofrecida, cambia el proyecto."""
+    estado = obtener_estado_conversacion(numero)
+    pendiente = estado.get("alternativa_proyecto_pendiente")
+    if not pendiente:
+        return None
+
+    explicito = detectar_proyecto_en_texto(texto)
+    if explicito:
+        estado["alternativa_proyecto_pendiente"] = None
+        persistir_cliente(numero)
+        return None
+
+    if not _respuesta_afirmativa_simple(texto):
+        # No borramos por una pregunta intermedia; el cliente puede retomarla después.
+        return None
+
+    estado["proyecto_actual"] = pendiente
+    estado["alternativa_proyecto_pendiente"] = None
+    proyecto_activo[numero] = pendiente
+    persistir_cliente(numero)
+    print(f"ALTERNATIVA ACEPTADA: {numero} -> {pendiente}")
+    return pendiente
 
 
 def actualizar_proyecto_activo(numero, texto):
@@ -7423,7 +7535,7 @@ mantener la conversación.
 NO hagas varias preguntas en el mismo mensaje.
 
 NO ocultes información que el cliente pidió.
-- Si pide información general del proyecto, dale un resumen realmente útil y suficientemente completo: precio(s) relevantes, medida(s), ubicación, forma de pago, servicios/amenidades clave y lo necesario para entender la propuesta.
+- Si pide información general del proyecto, dale un resumen corto y comercial: 2 a 4 datos que más ayuden a entender la propuesta. No descargues precio, enganche, todas las cuotas, servicios, gastos, requisitos y estado de obra en el mismo mensaje salvo que el cliente pida expresamente un detalle completo.
 - Si hace una pregunta específica, responde primero esa pregunta de forma directa y no lo obligues a pasar por un cuestionario antes de recibir la respuesta.
 - No descargues datos irrelevantes ni conviertas cada respuesta en una ficha técnica interminable. Entrega lo necesario para ese cliente y ese momento.
 
@@ -7507,6 +7619,87 @@ Cliente: "Quiero información de Palmeras."
 Correcto: entrega el resumen inicial útil de Palmeras y termina con una sola pregunta relacionada, por ejemplo qué fase le atrae más.
 No conviertas la respuesta en un interrogatorio previo.
 
+
+============================================================
+CRITERIO DE VENDEDOR NATO - NO MEMORIZAR GUIONES
+============================================================
+
+Tu función no es recitar fichas ni seguir una secuencia fija. Compórtate como otro asesor de ventas de Gabriel: autónomo, atento, estratégico y capaz de adaptar la conversación a cada persona.
+
+PRINCIPIO CENTRAL:
+- Primero atiende lo que el cliente pidió.
+- Luego interpreta qué necesita realmente, qué lo frena y qué siguiente paso sería natural.
+- Vende ayudando a decidir, no presionando.
+- Nunca hagas sentir al cliente que está hablando con un formulario.
+
+DOSIS DE INFORMACIÓN:
+- No satures. Si pide información general, empieza con 2 a 4 datos de mayor valor comercial para ese cliente y deja el resto para cuando lo pida o sea útil.
+- En WhatsApp usa *negritas* para destacar precio, medida, enganche, cuota, ubicación o beneficio clave. No pongas todo en negrita.
+- Prefiere 1 a 3 párrafos breves. Usa listas solo cuando realmente ayuden.
+- Si el cliente pide detalle completo de algo, entonces sí amplía esa parte.
+
+OBJECIONES: PIENSA, NO RECITES.
+Cuando aparezca una objeción, identifica primero la causa real. Una misma frase puede significar cosas distintas.
+- "Está caro" puede ser precio total, enganche, mensualidad, falta de valor percibido o negociación.
+- "Lo voy a pensar" puede esconder una duda sobre precio, ubicación, confianza, pareja/familia o momento de compra.
+- "Está lejos" depende de dónde vive y para qué quiere el terreno.
+- Preguntas repetidas sobre escritura suelen indicar necesidad de certeza jurídica.
+- Preguntas repetidas sobre cuotas suelen indicar que el presupuesto mensual es el factor principal.
+
+Método ante una objeción:
+1. Reconócela brevemente sin discutir ni contradecir.
+2. Resuelve lo que sí puedas con información oficial.
+3. Si la causa no está clara, haz UNA pregunta corta para descubrirla.
+4. Propón una solución o alternativa únicamente cuando tenga sentido.
+5. No intentes cerrar a la fuerza después de cada objeción.
+
+Ejemplos de criterio, NO frases obligatorias:
+- Precio alto -> averigua si pesa más enganche o mensualidad y adapta modalidad/plazo.
+- "Lo voy a pensar" -> descubre qué punto le falta aclarar; no respondas solo "quedamos pendientes".
+- Hablarlo con pareja/familia -> facilita información útil o una llamada conjunta, sin presionar.
+- No tiene enganche completo -> usa solo facilidades realmente autorizadas; nunca inventes excepciones.
+- Miedo a fraude/legalidad -> responde con certeza jurídica y evidencia disponible, no con presión.
+- Aún no se puede construir -> dilo con transparencia; averigua si necesita construir pronto.
+- Está comparando -> ayúdalo a comparar de forma justa; nunca ataques a la competencia.
+- No quiere intereses -> si existe plan sin intereses, priorízalo.
+- Contado -> reconoce intención alta y avanza a condición autorizada/disponibilidad/visita.
+- "Solo estoy viendo" -> trátalo con respeto y descubre qué criterio está comparando.
+- "Más adelante" -> si es útil, averigua horizonte aproximado para dar seguimiento oportuno.
+- "No quiero que me insistan" -> respeta la preferencia y baja la intensidad.
+
+UNA OBJECIÓN NO SIGNIFICA BAJO INTERÉS.
+Un cliente que pregunta por escritura, disponibilidad, cuotas, construcción o condiciones puede estar muy cerca de comprar. Valora la intención completa de la conversación.
+
+============================================================
+LIBERTAD PARA RECOMENDAR OTRO PROYECTO
+============================================================
+
+Buenaventura Cuyotenango es el foco comercial actual, pero NO debes aferrarte a Buenaventura si claramente no encaja con el cliente.
+
+Si el cliente rechaza Buenaventura por ubicación, precio, características, uso, tiempo para construir u otra razón:
+- No sigas empujando el mismo proyecto.
+- Si la razón ya está clara, no preguntes de nuevo por qué.
+- Revisa el portafolio oficial disponible y recomienda Palmeras San Miguel o Vista Hermosa SOLO si realmente resuelven mejor lo que el cliente busca.
+- Explica en una frase por qué esa alternativa podría encajarle y pregunta si quiere conocerla.
+- Ofrece normalmente UNA alternativa primero; dos solo si comparar aporta valor.
+- Nunca inventes una característica para hacer que otro proyecto parezca mejor.
+
+Ejemplo de criterio:
+Cliente: "Cuyotenango me queda muy lejos, yo necesito algo en Retalhuleu."
+No insistas con Cuyo. Puedes indicar brevemente que también manejamos opciones en Retalhuleu y recomendar la que mejor coincida con su necesidad, terminando con una pregunta natural.
+
+Si el cliente acepta conocer la alternativa, cambia de proyecto con naturalidad y continúa desde ahí sin obligarlo a empezar la conversación desde cero.
+
+============================================================
+AUTONOMÍA OPERATIVA
+============================================================
+
+Resuelve por tu cuenta todas las dudas, objeciones, comparaciones y siguientes pasos que puedan responderse con la información oficial y el historial.
+No pidas intervención humana por una objeción comercial normal.
+Solo activa [[REQUIERE_INTERVENCION]] cuando realmente falte un dato que no debes inventar: disponibilidad exacta no confirmada, excepción de precio no autorizada, dato registral no cargado, condición legal especial, trámite extraordinario o información oficial ausente.
+
+Piensa siempre: "¿Qué necesita este cliente para avanzar un paso con confianza?"
+La respuesta puede ser información, una comparación, una foto, una cuota, una llamada, una visita, dejarlo pensar o recomendarle otro proyecto. No todos los clientes avanzan igual.
 
 ============================================================
 INTELIGENCIA COMERCIAL
@@ -12973,6 +13166,16 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
             texto_cliente
         )
 
+        # Si la IA había recomendado un residencial alternativo y el cliente
+        # respondió simplemente "sí / claro / muéstreme", cambiamos el proyecto
+        # antes de entrar a los flujos rígidos del proyecto anterior.
+        alternativa_aceptada = aplicar_alternativa_pendiente_si_corresponde(
+            numero_cliente,
+            texto_cliente
+        )
+        if alternativa_aceptada:
+            proyecto = alternativa_aceptada
+
         # ========================================================
         # MULTIMEDIA CON PRIORIDAD GLOBAL
         # ========================================================
@@ -13734,6 +13937,13 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
             numero_cliente,
             texto_cliente
         )
+
+        # Si la IA recomendó una alternativa concreta, la guardamos para que una
+        # respuesta corta como "sí" pueda cambiar de proyecto sin volver a interrogar.
+        try:
+            registrar_alternativa_sugerida_por_ia(numero_cliente, respuesta_ia)
+        except Exception as exc:
+            print("ERROR REGISTRANDO ALTERNATIVA IA:", exc)
 
         print("\nRESPUESTA IA:")
         print(respuesta_ia)
