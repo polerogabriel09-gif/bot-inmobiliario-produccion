@@ -6460,6 +6460,23 @@ def guardar_mensaje(numero_cliente, rol, contenido, formalizar=True):
 # GARANTIZAR CONTINUIDAD EN RESPUESTAS GENERADAS POR IA
 # ============================================================
 
+def normalizar_negritas_whatsapp(texto):
+    """Normaliza Markdown a negrita real de WhatsApp con UN solo asterisco.
+
+    Los modelos a veces devuelven **texto** (Markdown web), que WhatsApp puede
+    mostrar literalmente. Aquí lo convertimos a *texto* antes de enviar.
+    """
+    texto = str(texto or "").strip()
+    if not texto:
+        return texto
+
+    # **texto** -> *texto*
+    texto = re.sub(r"\*\*([^*\n]+?)\*\*", r"*\1*", texto)
+    # Evitar triples accidentales.
+    texto = texto.replace("***", "*")
+    return texto
+
+
 def reforzar_negritas_comerciales(texto):
     """Añade énfasis WhatsApp solo cuando una respuesta comercial quedó sin negritas.
 
@@ -6467,7 +6484,7 @@ def reforzar_negritas_comerciales(texto):
     hasta tres datos importantes ya presentes en el texto (proyecto, precio, medida,
     financiamiento o ubicación) para mejorar lectura en teléfono.
     """
-    texto = str(texto or "").strip()
+    texto = normalizar_negritas_whatsapp(texto)
     if not texto or "*" in texto:
         return texto
 
@@ -6520,7 +6537,7 @@ def asegurar_negritas_comerciales_ia(texto):
     """Red de seguridad visual: la IA debe usar negritas; si olvida hacerlo,
     resaltamos hasta dos datos comerciales claros sin convertir todo el mensaje.
     """
-    texto = str(texto or "").strip()
+    texto = normalizar_negritas_whatsapp(texto)
     if not texto:
         return texto
     if re.search(r"\*[^*\n]{2,100}\*", texto):
@@ -6565,9 +6582,69 @@ def asegurar_negritas_comerciales_ia(texto):
 
 
 def asegurar_estilo_vendedor_ia(texto):
+    texto = normalizar_negritas_whatsapp(texto)
     texto = formalizar_trato_usted(str(texto or "").strip())
     texto = asegurar_negritas_comerciales_ia(texto)
+    texto = normalizar_negritas_whatsapp(texto)
     return asegurar_pregunta_final_ia(texto)
+
+
+def pulir_respuesta_comercial_ia(mensaje_cliente, borrador, proyecto_actual="NINGUNO", es_primer_mensaje=False):
+    """Segunda lectura comercial hecha por IA.
+
+    No usa guiones ni respuestas prefabricadas. El modelo revisa el borrador como
+    un jefe de ventas antes de enviarlo: elimina saturación, conserva la respuesta
+    a la duda real y deja una sola pregunta útil. No puede agregar hechos nuevos.
+    """
+    borrador = normalizar_negritas_whatsapp(borrador)
+    if not borrador:
+        return borrador
+
+    instrucciones_editor = f"""
+USTED ES EL EDITOR FINAL DE UN ASESOR INMOBILIARIO QUE VENDE POR WHATSAPP.
+NO converse con el cliente desde cero: EDITE el borrador recibido.
+
+OBJETIVO: que el mensaje se sienta escrito por un vendedor humano excelente, breve y fácil de leer en teléfono.
+
+REGLAS OBLIGATORIAS:
+- Mantenga el trato de USTED.
+- Responda exactamente lo que el cliente pidió ANTES de intentar calificarlo.
+- Si el cliente NO pidió explícitamente información completa/detallada: deje solo 2 o 3 datos comerciales de mayor valor.
+- En ese caso, normalmente use entre 35 y 85 palabras y 1 a 3 párrafos cortos.
+- Si el cliente sí pidió todos los detalles, requisitos completos, todas las cuotas o una explicación exhaustiva, puede ampliar, pero mantenga lectura cómoda.
+- Nunca convierta una consulta simple en una ficha técnica.
+- No enumere enganche + cuotas + servicios + gastos + requisitos + estado de obra a la vez salvo que el cliente lo haya pedido.
+- Use entre 1 y 3 negritas REALES de WhatsApp con UN SOLO asterisco: *así*.
+- NUNCA use **doble asterisco**.
+- No use un menú de varias preguntas.
+- Termine con EXACTAMENTE UNA pregunta natural y útil, basada en lo que el cliente acaba de decir.
+- No repita una pregunta ya respondida.
+- No presente otra vez a Gabriel salvo que realmente sea el primer mensaje y aporte naturalidad.
+- No agregue ningún precio, condición, beneficio, ubicación o dato que no esté en el borrador.
+- Puede eliminar datos del borrador para hacerlo mejor; NO puede inventar datos nuevos.
+- Si el borrador expresa que hace falta confirmar un dato, conserve esa cautela.
+
+PROYECTO ACTUAL: {proyecto_actual}
+¿ES PRIMER MENSAJE?: {'SI' if es_primer_mensaje else 'NO'}
+"""
+
+    entrada = (
+        "MENSAJE DEL CLIENTE:\n" + str(mensaje_cliente or "").strip()
+        + "\n\nBORRADOR DEL ASESOR:\n" + borrador
+        + "\n\nDevuelva únicamente el mensaje final listo para WhatsApp."
+    )
+
+    try:
+        revision = client.responses.create(
+            model="gpt-5-mini",
+            instructions=instrucciones_editor,
+            input=entrada
+        )
+        texto = str(revision.output_text or "").strip()
+        return normalizar_negritas_whatsapp(texto) or borrador
+    except Exception as exc:
+        print("ERROR EDITOR COMERCIAL IA:", exc)
+        return borrador
 
 
 def generar_respuesta(numero_cliente, mensaje_cliente, nota_tecnica=""):
@@ -6721,6 +6798,15 @@ UBICACIONES Y LINKS CARGADOS:
 
 CITA YA CERRADA EN ESTA CONVERSACIÓN: {cita_cerrada_actual}.
 
+REGLA FINAL DE SALIDA - PRIORIDAD MÁXIMA:
+Antes de responder, haga mentalmente una última revisión comercial:
+- ¿Estoy contestando la duda real del cliente?
+- ¿Estoy enviando demasiada información que el cliente todavía no pidió?
+- ¿Puede entender mi respuesta en pocos segundos desde un teléfono?
+- ¿Resalté solo 1 a 3 datos importantes con *negrita de WhatsApp*?
+- ¿Terminé con UNA sola pregunta que hace avanzar esta conversación concreta?
+Si la respuesta está cargada, RECÓRTELA antes de enviarla. Un buen vendedor no demuestra todo lo que sabe en un solo mensaje; administra la información según el interés del cliente.
+
 RECUERDE: la meta no es demostrar cuánta información sabe. La meta es que el cliente sienta que está hablando con un asesor humano que entiende lo que necesita, le resuelve y lo ayuda a tomar la siguiente decisión.
 """
 
@@ -6787,7 +6873,13 @@ RECUERDE: la meta no es demostrar cuánta información sabe. La meta es que el c
                 "¿Me permite revisarlo y le respondo enseguida?"
             )
 
-        texto_respuesta = asegurar_estilo_vendedor_ia(texto_limpio)
+        texto_editado = pulir_respuesta_comercial_ia(
+            mensaje_cliente,
+            texto_limpio,
+            proyecto_actual=proyecto_actual_texto,
+            es_primer_mensaje=(len(historial) == 0),
+        )
+        texto_respuesta = asegurar_estilo_vendedor_ia(texto_editado)
 
         if requiere_intervencion:
             marcar_intervencion_automatica(
@@ -7328,8 +7420,10 @@ def enviar_whatsapp(numero, texto, formalizar=True):
     """
 
     if formalizar:
+        texto = normalizar_negritas_whatsapp(texto)
         texto = formalizar_trato_usted(texto)
         texto = reforzar_negritas_comerciales(texto)
+        texto = normalizar_negritas_whatsapp(texto)
 
     # MISMA LÓGICA, DISTINTO CANAL: todo el motor sigue llamando a enviar_whatsapp(),
     # pero un contacto fb:<psid> sale por Messenger sin tocar la lógica comercial.
