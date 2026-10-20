@@ -1,4 +1,3 @@
-# VERSION_CRM_MEMORIA_COMERCIAL_IA_FASE1_20261019 - clasificación + resumen + objeciones + próxima acción
 # VERSION_SEGUIMIENTO_PERSISTENTE_CARPETAS_CRM_20261016 - 10m+1/3/5/7 reanudable + carpetas manuales CRM
 # VERSION_INTERVENCION_1357_NOMBRES_CRM_20261004 - seguimientos 10m+1/3/5/7, pausa IA por duda y nombre manual CRM
 # VERSION_CTA_PALMERAS_3_PREGUNTAS_20261004 - info y precios siguen protocolo; visita lo rompe
@@ -18,8 +17,6 @@
 # VERSION_ANUNCIOS_PALMERAS_7_IDS_20260831 - 7 anuncios Palmeras identificados
 # VERSION_ANUNCIOS_PALMERAS_FIX_PROYECTO_20260831
 # VERSION_TRATO_USTED_GENERAL_20260831
-# VERSION_VENDEDOR_LIBRE_SIN_GUIONES_20261019
-# VERSION_VENDEDOR_ADAPTATIVO_20261019
 from flask import Flask, request, Response, redirect, url_for, render_template_string, jsonify, send_from_directory
 from openai import OpenAI
 from dotenv import load_dotenv
@@ -262,13 +259,6 @@ VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "")
 VAPID_SUBJECT = os.getenv("VAPID_SUBJECT", "mailto:gabriel@example.com")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
-
-# MODO ACTUAL: ASESOR IA TOTAL.
-# La conversación la decide OpenAI con criterio comercial. Los detectores antiguos
-# NO deciden qué decir; solo quedan utilidades técnicas para enviar archivos,
-# registrar llamadas/visitas, CRM y seguridad.
-MODO_ASESOR_IA_TOTAL = True
-MODO_VENDEDOR_LIBRE = True  # compatibilidad con código histórico; no gobierna la conversación.
 
 
 # ============================================================
@@ -1567,11 +1557,9 @@ def crm_info_anuncio(contacto):
         "mapeado": bool(anuncio_id and anuncio_id in ANUNCIOS_META_PROYECTO) if anuncio_id else True,
     }
 
-# FOCO COMERCIAL ACTUAL: Buenaventura Cuyotenango.
-# Los IDs mapeados siempre tienen prioridad. Si un lead nuevo llega sin proyecto
-# identificable, lo atendemos provisionalmente como Buenaventura para no mostrar
-# al cliente una falla técnica de atribución. Gabriel recibe una alerta interna.
-PROYECTO_CAMPANA_ACTIVA = "buenaventura"
+# Ya no usamos un proyecto global de fallback: desde ahora pueden estar pautando
+# Palmeras, Vista Hermosa y Buenaventura al mismo tiempo.
+PROYECTO_CAMPANA_ACTIVA = None
 
 
 def _mensaje_generico_de_anuncio(texto):
@@ -1637,51 +1625,6 @@ def fijar_proyecto_desde_anuncio(numero, mensaje):
             proyecto = detectar_proyecto_en_texto(texto)
             if proyecto:
                 print(f"PROYECTO DETECTADO EN CTA/TEXTO: {numero} -> {proyecto} | texto={texto!r}")
-
-    if not proyecto:
-        # Como la operación comercial actual está enfocada en Buenaventura,
-        # no trasladamos al cliente el problema de atribución preguntándole
-        # "¿de qué proyecto está interesado?". Lo atendemos como Cuyo y avisamos
-        # internamente a Gabriel para que pueda mapear el origen después.
-        proyecto = PROYECTO_CAMPANA_ACTIVA
-        if proyecto:
-            estado_alerta = obtener_estado_conversacion(numero)
-            datos_ref = extraer_datos_referencia_anuncio(mensaje)
-            if not estado_alerta.get("alerta_origen_no_mapeado_enviada"):
-                estado_alerta["alerta_origen_no_mapeado_enviada"] = True
-                estado_alerta["proyecto_fallback_aplicado"] = proyecto
-                persistir_cliente(numero)
-
-                def _avisar_origen_incierto():
-                    anuncio_id = str(datos_ref.get("id") or "").strip()
-                    motivo = (
-                        f"ID de anuncio no mapeado: {anuncio_id}"
-                        if anuncio_id else
-                        "Lead sin ID/proyecto identificable"
-                    )
-                    cuerpo = (
-                        "⚠️ ORIGEN/PROYECTO NO CONFIRMADO\n"
-                        "El bot lo está atendiendo provisionalmente como *Buenaventura Cuyotenango*.\n"
-                        f"Motivo: {motivo}\n"
-                        f"Cliente: {numero}"
-                    )
-                    try:
-                        enviar_push_crm(numero, cuerpo, titulo="⚠️ Lead sin mapear")
-                    except Exception as exc:
-                        print("FALLBACK CUYO PUSH ERROR:", exc)
-                    try:
-                        enviar_ntfy_crm(numero, cuerpo, titulo="⚠️ Lead sin mapear")
-                    except Exception as exc:
-                        print("FALLBACK CUYO NTFY ERROR:", exc)
-                    try:
-                        destino = str(CRM_INTERVENCION_NUMERO or "").strip()
-                        if destino and destino != numero and not crm_es_facebook(numero):
-                            enviar_whatsapp(destino, cuerpo, formalizar=False)
-                    except Exception as exc:
-                        print("FALLBACK CUYO WHATSAPP ERROR:", exc)
-
-                Thread(target=_avisar_origen_incierto, daemon=True).start()
-                print(f"FALLBACK COMERCIAL CUYO: {numero} | {motivo if 'motivo' in locals() else 'origen no identificado'}")
 
     if not proyecto:
         return None
@@ -1879,9 +1822,6 @@ def obtener_estado_conversacion(numero):
             "intervencion_pregunta": None,
             # Alias/nombre editable manualmente desde el CRM.
             "crm_nombre_manual": "",
-            # Si la IA recomienda otro residencial y el cliente responde solo "sí",
-            # recordamos cuál alternativa estaba ofreciendo para poder cambiar el proyecto.
-            "alternativa_proyecto_pendiente": None,
             # Seguimiento persistente. Permite reanudar 1/3/5/7 tras reinicios/deploys.
             "seguimiento_activo": False,
             "seguimiento_inicio_ts": None,
@@ -1981,68 +1921,6 @@ def es_seleccion_simple_de_proyecto(texto):
             candidatos.add((prefijo + alias).strip())
 
     return t in candidatos
-
-
-def _respuesta_afirmativa_simple(texto):
-    t = normalizar_texto_topografia(str(texto or ""))
-    t = re.sub(r"[^a-z0-9ñáéíóúü\s]", " ", t)
-    t = " ".join(t.split())
-    return t in {
-        "si", "sí", "claro", "dale", "va", "esta bien", "está bien",
-        "me interesa", "muestrame", "muéstreme", "quiero verlo", "quiero ver",
-        "cuenteme", "cuénteme", "mandeme info", "mándeme info"
-    }
-
-
-def registrar_alternativa_sugerida_por_ia(numero, respuesta):
-    """Recuerda una alternativa ofrecida por la IA para entender un siguiente 'sí'."""
-    texto = normalizar_texto_topografia(str(respuesta or ""))
-    actual = obtener_proyecto_actual(numero)
-    candidatos = []
-    if any(x in texto for x in ["palmeras san miguel", "palmeras"]):
-        candidatos.append("palmeras")
-    if "vista hermosa" in texto:
-        candidatos.append("vista_hermosa")
-    if any(x in texto for x in ["buenaventura cuyotenango", "buenaventura"]):
-        candidatos.append("buenaventura")
-    candidatos = [x for x in dict.fromkeys(candidatos) if x != actual]
-
-    # Solo guardamos una alternativa inequívoca. Si la IA comparó varios proyectos,
-    # esperamos a que el cliente nombre el que quiere.
-    if len(candidatos) == 1 and any(frase in texto for frase in [
-        "le muestro", "le enseño", "le cuento", "le puede encajar", "podria encajar",
-        "podría encajar", "otra opcion", "otra opción", "alternativa", "considerar"
-    ]):
-        estado = obtener_estado_conversacion(numero)
-        estado["alternativa_proyecto_pendiente"] = candidatos[0]
-        persistir_cliente(numero)
-        return candidatos[0]
-    return None
-
-
-def aplicar_alternativa_pendiente_si_corresponde(numero, texto):
-    """Si el cliente acepta con un simple 'sí' la alternativa ofrecida, cambia el proyecto."""
-    estado = obtener_estado_conversacion(numero)
-    pendiente = estado.get("alternativa_proyecto_pendiente")
-    if not pendiente:
-        return None
-
-    explicito = detectar_proyecto_en_texto(texto)
-    if explicito:
-        estado["alternativa_proyecto_pendiente"] = None
-        persistir_cliente(numero)
-        return None
-
-    if not _respuesta_afirmativa_simple(texto):
-        # No borramos por una pregunta intermedia; el cliente puede retomarla después.
-        return None
-
-    estado["proyecto_actual"] = pendiente
-    estado["alternativa_proyecto_pendiente"] = None
-    proyecto_activo[numero] = pendiente
-    persistir_cliente(numero)
-    print(f"ALTERNATIVA ACEPTADA: {numero} -> {pendiente}")
-    return pendiente
 
 
 def actualizar_proyecto_activo(numero, texto):
@@ -6116,15 +5994,6 @@ CRM_ETAPAS = [
     "Perdido",
 ]
 
-# Clasificación comercial automática de la Fase 1.
-# Se mantiene separada de la etapa manual del embudo para que la IA pueda
-# analizar sin pisar decisiones que Gabriel haya tomado en el CRM.
-CRM_CLASIFICACIONES_IA = [
-    "ALTA INTENCIÓN",
-    "INTENCIÓN MEDIA",
-    "INTENCIÓN POR DETERMINAR",
-]
-
 crm_lead_meta = {}
 _crm_lead_meta_cargada = False
 _crm_lead_meta_db_inicializada = False
@@ -6152,34 +6021,10 @@ def inicializar_crm_lead_meta_db():
                             proxima_accion TEXT NOT NULL DEFAULT '',
                             proxima_accion_fecha TEXT NOT NULL DEFAULT '',
                             carpeta TEXT NOT NULL DEFAULT '',
-                            clasificacion_comercial TEXT NOT NULL DEFAULT 'INTENCIÓN POR DETERMINAR',
-                            motivacion TEXT NOT NULL DEFAULT '',
-                            interes_especifico TEXT NOT NULL DEFAULT '',
-                            forma_pago_interes TEXT NOT NULL DEFAULT '',
-                            horizonte_compra TEXT NOT NULL DEFAULT '',
-                            objeciones TEXT NOT NULL DEFAULT '',
-                            senales_compra TEXT NOT NULL DEFAULT '',
-                            resumen_ia TEXT NOT NULL DEFAULT '',
-                            proxima_accion_ia TEXT NOT NULL DEFAULT '',
-                            estado_negociacion_ia TEXT NOT NULL DEFAULT '',
-                            analisis_confianza TEXT NOT NULL DEFAULT '',
-                            analisis_updated_at TIMESTAMPTZ NULL,
                             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                         )
                     """)
                     cur.execute("ALTER TABLE crm_lead_meta ADD COLUMN IF NOT EXISTS carpeta TEXT NOT NULL DEFAULT ''")
-                    cur.execute("ALTER TABLE crm_lead_meta ADD COLUMN IF NOT EXISTS clasificacion_comercial TEXT NOT NULL DEFAULT 'INTENCIÓN POR DETERMINAR'")
-                    cur.execute("ALTER TABLE crm_lead_meta ADD COLUMN IF NOT EXISTS motivacion TEXT NOT NULL DEFAULT ''")
-                    cur.execute("ALTER TABLE crm_lead_meta ADD COLUMN IF NOT EXISTS interes_especifico TEXT NOT NULL DEFAULT ''")
-                    cur.execute("ALTER TABLE crm_lead_meta ADD COLUMN IF NOT EXISTS forma_pago_interes TEXT NOT NULL DEFAULT ''")
-                    cur.execute("ALTER TABLE crm_lead_meta ADD COLUMN IF NOT EXISTS horizonte_compra TEXT NOT NULL DEFAULT ''")
-                    cur.execute("ALTER TABLE crm_lead_meta ADD COLUMN IF NOT EXISTS objeciones TEXT NOT NULL DEFAULT ''")
-                    cur.execute("ALTER TABLE crm_lead_meta ADD COLUMN IF NOT EXISTS senales_compra TEXT NOT NULL DEFAULT ''")
-                    cur.execute("ALTER TABLE crm_lead_meta ADD COLUMN IF NOT EXISTS resumen_ia TEXT NOT NULL DEFAULT ''")
-                    cur.execute("ALTER TABLE crm_lead_meta ADD COLUMN IF NOT EXISTS proxima_accion_ia TEXT NOT NULL DEFAULT ''")
-                    cur.execute("ALTER TABLE crm_lead_meta ADD COLUMN IF NOT EXISTS estado_negociacion_ia TEXT NOT NULL DEFAULT ''")
-                    cur.execute("ALTER TABLE crm_lead_meta ADD COLUMN IF NOT EXISTS analisis_confianza TEXT NOT NULL DEFAULT ''")
-                    cur.execute("ALTER TABLE crm_lead_meta ADD COLUMN IF NOT EXISTS analisis_updated_at TIMESTAMPTZ NULL")
                 conn.commit()
                 _crm_lead_meta_db_inicializada = True
                 print("CRM LEADS DB: tabla lista")
@@ -6204,12 +6049,7 @@ def cargar_crm_lead_meta():
         try:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT numero, etapa, proxima_accion, proxima_accion_fecha, carpeta,
-                           clasificacion_comercial, motivacion, interes_especifico,
-                           forma_pago_interes, horizonte_compra, objeciones, senales_compra,
-                           resumen_ia, proxima_accion_ia, estado_negociacion_ia,
-                           analisis_confianza,
-                           COALESCE(TO_CHAR(analisis_updated_at AT TIME ZONE 'America/Guatemala', 'DD/MM/YYYY HH24:MI'), '')
+                    SELECT numero, etapa, proxima_accion, proxima_accion_fecha, carpeta
                     FROM crm_lead_meta
                 """)
                 filas = cur.fetchall()
@@ -6217,31 +6057,12 @@ def cargar_crm_lead_meta():
             conn.close()
 
         with lock_crm_lead_meta:
-            for fila in filas:
-                (
-                    numero, etapa, accion, fecha, carpeta,
-                    clasificacion, motivacion, interes_especifico,
-                    forma_pago_interes, horizonte_compra, objeciones, senales_compra,
-                    resumen_ia, proxima_accion_ia, estado_negociacion_ia,
-                    analisis_confianza, analisis_updated_at,
-                ) = fila
+            for numero, etapa, accion, fecha, carpeta in filas:
                 crm_lead_meta[str(numero)] = {
                     "etapa": etapa if etapa in CRM_ETAPAS else "Nuevo lead",
                     "proxima_accion": accion or "",
                     "proxima_accion_fecha": fecha or "",
                     "carpeta": carpeta or "",
-                    "clasificacion_comercial": clasificacion if clasificacion in CRM_CLASIFICACIONES_IA else "INTENCIÓN POR DETERMINAR",
-                    "motivacion": motivacion or "",
-                    "interes_especifico": interes_especifico or "",
-                    "forma_pago_interes": forma_pago_interes or "",
-                    "horizonte_compra": horizonte_compra or "",
-                    "objeciones": objeciones or "",
-                    "senales_compra": senales_compra or "",
-                    "resumen_ia": resumen_ia or "",
-                    "proxima_accion_ia": proxima_accion_ia or "",
-                    "estado_negociacion_ia": estado_negociacion_ia or "",
-                    "analisis_confianza": analisis_confianza or "",
-                    "analisis_updated_at": analisis_updated_at or "",
                 }
             _crm_lead_meta_cargada = True
     except Exception as exc:
@@ -6258,18 +6079,6 @@ def crm_obtener_meta(numero):
             "proxima_accion": "",
             "proxima_accion_fecha": "",
             "carpeta": "",
-            "clasificacion_comercial": "INTENCIÓN POR DETERMINAR",
-            "motivacion": "",
-            "interes_especifico": "",
-            "forma_pago_interes": "",
-            "horizonte_compra": "",
-            "objeciones": "",
-            "senales_compra": "",
-            "resumen_ia": "",
-            "proxima_accion_ia": "",
-            "estado_negociacion_ia": "",
-            "analisis_confianza": "",
-            "analisis_updated_at": "",
         }
     with lock_crm_lead_meta:
         meta = crm_lead_meta.get(numero) or {}
@@ -6278,18 +6087,6 @@ def crm_obtener_meta(numero):
             "proxima_accion": str(meta.get("proxima_accion") or ""),
             "proxima_accion_fecha": str(meta.get("proxima_accion_fecha") or ""),
             "carpeta": str(meta.get("carpeta") or ""),
-            "clasificacion_comercial": meta.get("clasificacion_comercial") if meta.get("clasificacion_comercial") in CRM_CLASIFICACIONES_IA else "INTENCIÓN POR DETERMINAR",
-            "motivacion": str(meta.get("motivacion") or ""),
-            "interes_especifico": str(meta.get("interes_especifico") or ""),
-            "forma_pago_interes": str(meta.get("forma_pago_interes") or ""),
-            "horizonte_compra": str(meta.get("horizonte_compra") or ""),
-            "objeciones": str(meta.get("objeciones") or ""),
-            "senales_compra": str(meta.get("senales_compra") or ""),
-            "resumen_ia": str(meta.get("resumen_ia") or ""),
-            "proxima_accion_ia": str(meta.get("proxima_accion_ia") or ""),
-            "estado_negociacion_ia": str(meta.get("estado_negociacion_ia") or ""),
-            "analisis_confianza": str(meta.get("analisis_confianza") or ""),
-            "analisis_updated_at": str(meta.get("analisis_updated_at") or ""),
         }
 
 
@@ -6306,14 +6103,12 @@ def crm_guardar_meta(numero, etapa, proxima_accion, proxima_accion_fecha, carpet
     carpeta = str(carpeta or "").strip()[:80]
 
     with lock_crm_lead_meta:
-        existente = dict(crm_lead_meta.get(numero) or {})
-        existente.update({
+        crm_lead_meta[numero] = {
             "etapa": etapa,
             "proxima_accion": proxima_accion,
             "proxima_accion_fecha": proxima_accion_fecha,
             "carpeta": carpeta,
-        })
-        crm_lead_meta[numero] = existente
+        }
 
     if not inicializar_crm_lead_meta_db():
         return False
@@ -6341,214 +6136,6 @@ def crm_guardar_meta(numero, etapa, proxima_accion, proxima_accion_fecha, carpet
         print("CRM LEADS DB SAVE ERROR:", exc)
         return False
 
-
-# ============================================================
-# FASE 1 - MEMORIA Y CLASIFICACION COMERCIAL CON IA
-# ============================================================
-_analisis_comercial_version = {}
-lock_analisis_comercial = Lock()
-
-
-def _limpiar_json_modelo(texto):
-    bruto = str(texto or "").strip()
-    if bruto.startswith("```"):
-        bruto = re.sub(r"^```(?:json)?\s*", "", bruto, flags=re.I)
-        bruto = re.sub(r"\s*```$", "", bruto)
-    inicio = bruto.find("{")
-    fin = bruto.rfind("}")
-    if inicio >= 0 and fin > inicio:
-        bruto = bruto[inicio:fin + 1]
-    return bruto.strip()
-
-
-def crm_guardar_analisis_ia(numero, analisis):
-    """Guarda solamente la memoria comercial de IA sin pisar campos manuales del CRM."""
-    numero = str(numero or "").strip()
-    if not numero or not isinstance(analisis, dict):
-        return False
-
-    clasificacion = str(analisis.get("clasificacion_comercial") or "INTENCIÓN POR DETERMINAR").strip().upper()
-    normalizadas = {x.upper(): x for x in CRM_CLASIFICACIONES_IA}
-    clasificacion = normalizadas.get(clasificacion, "INTENCIÓN POR DETERMINAR")
-
-    campos = {
-        "clasificacion_comercial": clasificacion,
-        "motivacion": str(analisis.get("motivacion") or "").strip()[:300],
-        "interes_especifico": str(analisis.get("interes_especifico") or "").strip()[:300],
-        "forma_pago_interes": str(analisis.get("forma_pago_interes") or "").strip()[:180],
-        "horizonte_compra": str(analisis.get("horizonte_compra") or "").strip()[:180],
-        "objeciones": str(analisis.get("objeciones") or "").strip()[:700],
-        "senales_compra": str(analisis.get("senales_compra") or "").strip()[:700],
-        "resumen_ia": str(analisis.get("resumen_ia") or "").strip()[:1200],
-        "proxima_accion_ia": str(analisis.get("proxima_accion_ia") or "").strip()[:500],
-        "estado_negociacion_ia": str(analisis.get("estado_negociacion_ia") or "").strip()[:250],
-        "analisis_confianza": str(analisis.get("analisis_confianza") or "").strip().upper()[:20],
-        "analisis_updated_at": datetime.now(ZoneInfo("America/Guatemala")).strftime("%d/%m/%Y %H:%M"),
-    }
-
-    cargar_crm_lead_meta()
-    with lock_crm_lead_meta:
-        existente = dict(crm_lead_meta.get(numero) or {})
-        existente.update(campos)
-        crm_lead_meta[numero] = existente
-
-    if not inicializar_crm_lead_meta_db():
-        return False
-
-    try:
-        conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
-        try:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    INSERT INTO crm_lead_meta (
-                        numero, clasificacion_comercial, motivacion, interes_especifico,
-                        forma_pago_interes, horizonte_compra, objeciones, senales_compra,
-                        resumen_ia, proxima_accion_ia, estado_negociacion_ia,
-                        analisis_confianza, analisis_updated_at, updated_at
-                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(),NOW())
-                    ON CONFLICT (numero) DO UPDATE SET
-                        clasificacion_comercial = EXCLUDED.clasificacion_comercial,
-                        motivacion = EXCLUDED.motivacion,
-                        interes_especifico = EXCLUDED.interes_especifico,
-                        forma_pago_interes = EXCLUDED.forma_pago_interes,
-                        horizonte_compra = EXCLUDED.horizonte_compra,
-                        objeciones = EXCLUDED.objeciones,
-                        senales_compra = EXCLUDED.senales_compra,
-                        resumen_ia = EXCLUDED.resumen_ia,
-                        proxima_accion_ia = EXCLUDED.proxima_accion_ia,
-                        estado_negociacion_ia = EXCLUDED.estado_negociacion_ia,
-                        analisis_confianza = EXCLUDED.analisis_confianza,
-                        analisis_updated_at = NOW(),
-                        updated_at = NOW()
-                """, (
-                    numero, campos["clasificacion_comercial"], campos["motivacion"], campos["interes_especifico"],
-                    campos["forma_pago_interes"], campos["horizonte_compra"], campos["objeciones"], campos["senales_compra"],
-                    campos["resumen_ia"], campos["proxima_accion_ia"], campos["estado_negociacion_ia"],
-                    campos["analisis_confianza"],
-                ))
-            conn.commit()
-        finally:
-            conn.close()
-        return True
-    except Exception as exc:
-        print("CRM ANALISIS IA SAVE ERROR:", numero, exc)
-        return False
-
-
-def analizar_prospecto_comercial_ia(numero):
-    """Analiza silenciosamente la conversación y actualiza la ficha comercial del prospecto."""
-    numero = str(numero or "").strip()
-    if not numero:
-        return None
-
-    historial = obtener_historial(numero) or []
-    if not historial:
-        return None
-
-    # Usamos solo el tramo reciente para mantener el análisis rápido, pero incluimos
-    # el resumen anterior para conservar aprendizajes comerciales importantes.
-    recientes = historial[-30:]
-    lineas = []
-    for item in recientes:
-        rol = str(item.get("role") or "")
-        contenido = str(item.get("content") or "").strip()
-        if not contenido:
-            continue
-        etiqueta = "CLIENTE" if rol == "user" else "ASESOR"
-        lineas.append(f"{etiqueta}: {contenido[:1200]}")
-    transcript = "\n".join(lineas)[-14000:]
-
-    meta_anterior = crm_obtener_meta(numero)
-    proyecto = crm_nombre_proyecto(numero)
-    memoria_anterior = {
-        "clasificacion_comercial": meta_anterior.get("clasificacion_comercial", ""),
-        "motivacion": meta_anterior.get("motivacion", ""),
-        "interes_especifico": meta_anterior.get("interes_especifico", ""),
-        "forma_pago_interes": meta_anterior.get("forma_pago_interes", ""),
-        "horizonte_compra": meta_anterior.get("horizonte_compra", ""),
-        "objeciones": meta_anterior.get("objeciones", ""),
-        "senales_compra": meta_anterior.get("senales_compra", ""),
-        "resumen_ia": meta_anterior.get("resumen_ia", ""),
-        "estado_negociacion_ia": meta_anterior.get("estado_negociacion_ia", ""),
-    }
-
-    instrucciones = """
-USTED ES UN DIRECTOR COMERCIAL INMOBILIARIO. Analice la conversación de UN prospecto y actualice su memoria comercial.
-NO redacte un mensaje para el cliente. Su salida es exclusivamente JSON para uso interno del CRM.
-
-CLASIFICACIÓN PERMITIDA, exactamente una:
-- ALTA INTENCIÓN: señales concretas de avance, por ejemplo visita, llamada, reserva, compra próxima, disponibilidad específica, requisitos para comprar o análisis serio de forma de pago.
-- INTENCIÓN MEDIA: interés real y conversación útil, pero todavía necesita información, confianza, comparación o tiempo.
-- INTENCIÓN POR DETERMINAR: todavía no hay suficiente evidencia. Preguntar solo precio NO convierte al prospecto en malo.
-
-REGLAS:
-- Analice el contexto completo, no solamente el último mensaje.
-- No invente motivaciones, presupuesto, ubicación, plazo ni objeciones.
-- Si algo no está claro use "No identificado" o cadena vacía, según corresponda.
-- Distinga una objeción de una falta de interés. Una objeción puede ser señal de compra.
-- Si el cliente pidió no recibir más mensajes, ya compró, reservó, o dijo claramente que no le interesa, refleje eso en estado_negociacion_ia y en proxima_accion_ia.
-- La próxima acción debe ser comercialmente útil y específica, no genérica.
-- El resumen debe ser factual, breve y entendible antes de una llamada.
-- No cambie hechos anteriores confirmados solo porque el último mensaje sea corto.
-
-Devuelva SOLO JSON válido con estas claves exactas:
-{
-  "clasificacion_comercial": "ALTA INTENCIÓN|INTENCIÓN MEDIA|INTENCIÓN POR DETERMINAR",
-  "motivacion": "",
-  "interes_especifico": "",
-  "forma_pago_interes": "",
-  "horizonte_compra": "",
-  "objeciones": "",
-  "senales_compra": "",
-  "resumen_ia": "",
-  "proxima_accion_ia": "",
-  "estado_negociacion_ia": "",
-  "analisis_confianza": "ALTA|MEDIA|BAJA"
-}
-"""
-
-    entrada = (
-        f"PROYECTO REGISTRADO: {proyecto}\n"
-        f"MEMORIA ANTERIOR: {json.dumps(memoria_anterior, ensure_ascii=False)}\n\n"
-        f"CONVERSACIÓN RECIENTE:\n{transcript}"
-    )
-
-    try:
-        respuesta = client.responses.create(
-            model="gpt-5-mini",
-            instructions=instrucciones,
-            input=entrada,
-            max_output_tokens=550,
-        )
-        bruto = _limpiar_json_modelo(respuesta.output_text)
-        analisis = json.loads(bruto)
-        if not isinstance(analisis, dict):
-            raise ValueError("La respuesta de análisis no fue un objeto JSON")
-        crm_guardar_analisis_ia(numero, analisis)
-        print("CRM ANALISIS IA:", numero, analisis.get("clasificacion_comercial"), analisis.get("proxima_accion_ia"))
-        return analisis
-    except Exception as exc:
-        print("ERROR ANALISIS COMERCIAL IA:", numero, exc)
-        return None
-
-
-def programar_analisis_comercial_ia(numero):
-    """Debounce simple: si llegan varios mensajes seguidos, analiza solo el estado más reciente."""
-    numero = str(numero or "").strip()
-    if not numero:
-        return
-    with lock_analisis_comercial:
-        version = _analisis_comercial_version.get(numero, 0) + 1
-        _analisis_comercial_version[numero] = version
-
-    def worker():
-        time.sleep(0.8)
-        with lock_analisis_comercial:
-            if _analisis_comercial_version.get(numero) != version:
-                return
-        analizar_prospecto_comercial_ia(numero)
-
-    Thread(target=worker, daemon=True).start()
 
 
 # ============================================================
@@ -6752,42 +6339,6 @@ def guardar_mensaje(numero_cliente, rol, contenido, formalizar=True):
 # GARANTIZAR CONTINUIDAD EN RESPUESTAS GENERADAS POR IA
 # ============================================================
 
-def reforzar_negritas_comerciales(texto):
-    """Añade énfasis WhatsApp solo cuando una respuesta comercial quedó sin negritas.
-
-    No intenta reescribir el mensaje ni convertirlo en una plantilla. Solo resalta
-    hasta tres datos importantes ya presentes en el texto (proyecto, precio, medida,
-    financiamiento o ubicación) para mejorar lectura en teléfono.
-    """
-    texto = str(texto or "").strip()
-    if not texto or "*" in texto:
-        return texto
-
-    patrones = [
-        r"\b(Buenaventura Cuyotenango|Buenaventura|Palmeras San Miguel|Vista Hermosa)\b",
-        r"Q\s?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?",
-        r"\b(?:8x16|8x18|128\s*m²|144\s*m²)\b",
-        r"\bfinanciamiento propio(?:\s+de\s+\d+\s+a\s+\d+\s+años)?\b",
-        r"\b(?:Zona 5 de Retalhuleu|camino a La Verde|Cuyotenango|km 168|CA-2 km 188)\b",
-    ]
-
-    cambios = 0
-    for patron in patrones:
-        if cambios >= 3:
-            break
-        nuevo, n = re.subn(
-            patron,
-            lambda m: f"*{m.group(0)}*",
-            texto,
-            count=1,
-            flags=re.IGNORECASE,
-        )
-        if n:
-            texto = nuevo
-            cambios += 1
-    return texto
-
-
 def asegurar_pregunta_final_ia(texto):
     """Garantiza que toda respuesta visible generada por IA cierre con una pregunta.
 
@@ -6796,7 +6347,6 @@ def asegurar_pregunta_final_ia(texto):
     devuelve una respuesta sin pregunta final.
     """
     texto = formalizar_trato_usted(str(texto or "").strip())
-    texto = reforzar_negritas_comerciales(texto)
     if not texto:
         return "¿Qué le gustaría conocer sobre nuestros proyectos? 😊"
 
@@ -6808,128 +6358,11 @@ def asegurar_pregunta_final_ia(texto):
     return texto.rstrip() + "\n\n¿Qué le gustaría revisar a continuación? 😊"
 
 
-def asegurar_negritas_comerciales_ia(texto):
-    """Red de seguridad visual: la IA debe usar negritas; si olvida hacerlo,
-    resaltamos hasta dos datos comerciales claros sin convertir todo el mensaje.
-    """
-    texto = str(texto or "").strip()
-    if not texto:
-        return texto
-    if re.search(r"\*[^*\n]{2,100}\*", texto):
-        return texto
-
-    patrones = [
-        r"Palmeras San Miguel",
-        r"Buenaventura Cuyotenango",
-        r"Ciudad Vista Hermosa|Vista Hermosa",
-        r"Q\s?\d[\d,]*(?:\.\d{1,2})?",
-        r"\b\d{1,2}\s?[x×]\s?\d{1,2}(?:\s*m)?\b",
-        r"financiamiento propio(?: hasta)? \d+ años",
-        r"\benganche(?: de)? Q\s?\d[\d,]*",
-        r"\breserva(?: de)? Q\s?\d[\d,]*",
-    ]
-    usados = 0
-    for patron in patrones:
-        if usados >= 2:
-            break
-        m = re.search(patron, texto, flags=re.IGNORECASE)
-        if not m:
-            continue
-        ini, fin = m.span()
-        # Evitar envolver algo que ya cayó dentro de asteriscos por otra sustitución.
-        if ini > 0 and texto[ini-1:ini] == "*":
-            continue
-        texto = texto[:ini] + "*" + texto[ini:fin] + "*" + texto[fin:]
-        usados += 1
-
-    # Último recurso: resaltar una frase corta de contenido, no el saludo.
-    if usados == 0 and "*" not in texto:
-        partes = [p.strip() for p in re.split(r"(?<=[.!?])\s+|\n+", texto) if p.strip()]
-        for parte in partes:
-            limpio = re.sub(r"^[¡!¿?\s\W_]+", "", parte)
-            if len(limpio.split()) >= 4:
-                frase = " ".join(limpio.split()[:5])
-                pos = texto.find(frase)
-                if pos >= 0:
-                    texto = texto[:pos] + "*" + frase + "*" + texto[pos+len(frase):]
-                    break
-    return texto
-
-
-def asegurar_estilo_vendedor_ia(texto):
-    texto = formalizar_trato_usted(str(texto or "").strip())
-    texto = asegurar_negritas_comerciales_ia(texto)
-    return asegurar_pregunta_final_ia(texto)
-
-
-
-def editar_respuesta_comercial_ia(numero_cliente, mensaje_cliente, borrador, proyecto_actual_texto, requiere_intervencion=False):
-    """Segunda pasada de IA: actúa como director comercial y convierte el borrador
-    en un mensaje humano, breve y vendedor. No usa guiones ni decide por palabras
-    clave; evalúa la intención real del mensaje y el contexto.
-    """
-    borrador = str(borrador or "").strip()
-    mensaje_cliente = str(mensaje_cliente or "").strip()
-    if not borrador:
-        return borrador
+def generar_respuesta(numero_cliente, mensaje_cliente):
 
     try:
-        instrucciones_editor = f"""
-USTED ES EL DIRECTOR COMERCIAL QUE REVISA EL MENSAJE DE UN ASESOR INMOBILIARIO ANTES DE ENVIARLO POR WHATSAPP.
 
-Cliente escribió:
-{mensaje_cliente}
-
-Proyecto activo:
-{proyecto_actual_texto}
-
-Borrador del asesor:
-{borrador}
-
-Su trabajo NO es añadir información. Su trabajo es decidir qué parte del borrador realmente necesita el cliente AHORA y devolver el mejor mensaje comercial posible.
-
-CRITERIO OBLIGATORIO:
-- Piense como un vendedor humano excelente, no como un folleto ni un chatbot.
-- Responda primero lo que el cliente pidió.
-- Si el cliente hizo una consulta amplia o solo pidió “información”, NO vacíe la ficha del proyecto. Elija únicamente 1 o 2 datos de mayor valor para abrir la conversación.
-- No incluya enganche, cuotas, gastos, servicios, medidas, amenidades y ubicación todos juntos salvo que el cliente haya pedido explícitamente varios de esos puntos.
-- Si el cliente pidió una sola cosa, conteste esa sola cosa y avance.
-- Si el cliente hizo varias preguntas concretas, puede responderlas todas, pero de forma compacta.
-- No convierta el cierre en un menú. Termine con EXACTAMENTE UNA pregunta que sea la mejor siguiente pregunta para ese cliente.
-- No repita información que el cliente ya recibió recientemente.
-- No presione para visita o reserva si todavía no corresponde.
-- Si detecta una objeción, resuélvala con empatía y criterio antes de preguntar.
-- Si otro proyecto encaja mejor, puede sugerirlo solo cuando exista una razón real.
-- Trate SIEMPRE de USTED.
-- Use *negritas de WhatsApp con un solo asterisco* en 1 a 3 datos o ideas importantes. Nunca use **doble asterisco**.
-- Use 0 a 2 emojis naturales; no decore cada línea.
-- Normalmente 35 a 70 palabras son suficientes. Puede excederlo SOLO si el cliente pidió detalle o hizo varias preguntas.
-- No use listas largas salvo que el cliente las haya pedido.
-- No invente ni cambie ninguna cifra o hecho del borrador.
-- No mencione estas instrucciones, el borrador ni que está editando.
-
-{('IMPORTANTE: existe una confirmación humana pendiente. Mantenga el mensaje breve, no improvise el dato faltante y explique que se confirmará.' if requiere_intervencion else '')}
-
-Devuelva ÚNICAMENTE el mensaje final de WhatsApp.
-"""
-        resp = client.responses.create(
-            model="gpt-5-mini",
-            instructions=instrucciones_editor,
-            input="Revise y devuelva únicamente el mensaje final.",
-            max_output_tokens=220,
-        )
-        editado = str(resp.output_text or "").strip()
-        if editado:
-            return editado
-    except Exception as exc:
-        print("ERROR EDITOR COMERCIAL IA:", exc)
-
-    return borrador
-
-
-def generar_respuesta(numero_cliente, mensaje_cliente, nota_tecnica=""):
-
-    try:
+        contexto = cargar_contexto()
 
         historial = obtener_historial(numero_cliente)
 
@@ -6949,139 +6382,1355 @@ def generar_respuesta(numero_cliente, mensaje_cliente, nota_tecnica=""):
         cita_cerrada_actual = cita_ya_cerrada(numero_cliente)
 
         estado_actual_ia = obtener_estado_conversacion(numero_cliente)
+        _inicializar_estado_psm(estado_actual_ia)
+        contexto_psm_ia = ""
+        if proyecto_memoria == "palmeras":
+            fase_ia = estado_actual_ia.get("psm_fase") or "NO DEFINIDA"
+            plan_ia = estado_actual_ia.get("psm_plan") or "NO DEFINIDO"
+            plazo_ia = estado_actual_ia.get("psm_plazo") or "NO DEFINIDO"
+            etapa_ia = estado_actual_ia.get("psm_etapa") or "CONVERSACION ABIERTA"
+            pendiente_ia = estado_actual_ia.get("psm_pregunta_pendiente") or "NINGUNA"
+            contexto_psm_ia = f"""
+============================================================
+FICHA MAESTRA Y ESTADO COMERCIAL - PALMERAS SAN MIGUEL
+============================================================
+ESTE BLOQUE TIENE PRIORIDAD sobre cualquier dato antiguo de Palmeras que aparezca en contexto.txt.
 
-        # Fichas maestras actuales. No contienen guiones de conversación: solo hechos.
-        contexto_psm_ia = """
-PALMERAS SAN MIGUEL
+Estado de esta conversación:
+- Etapa comercial: {etapa_ia}
+- Fase elegida: {fase_ia}
+- Plan elegido: {plan_ia}
+- Plazo elegido: {plazo_ia}
+- Pregunta pendiente: {pendiente_ia}
+
+Datos oficiales actuales:
 - Ubicación: Zona 5 de Retalhuleu, camino a La Verde / carretera hacia Las Pilas.
-- Única medida disponible: 8x16 (128 m²). Todos los lotes tienen calle al frente.
+- ÚNICA medida disponible: 8x16 (128 m²). Ya NO hay 8x18 disponibles.
+- Ya NO hay categorías disponibles de esquina ni bulevar principal.
+- Todos los lotes tienen calle al frente. Nunca sugiera que los lotes fuera del bulevar quedan sin calle.
 - Fase 1: Q67,200; piscina y área verde.
 - Fase 2: Q70,400; área verde.
-- Enganche: Q6,000. Reserva: Q3,000 y forma parte del enganche/precio.
-- Financiamiento propio, sin banco, de 2 a 8 años.
-- Plan 1 año sin intereses: Fase 1 Q5,563.64/mes; Fase 2 Q5,854.55/mes (11 pagos después del enganche).
-- Abonos extraordinarios a capital desde Q2,000 si está solvente en la cuota del mes.
-- Contado: iniciar con 3% de descuento; puede revisarse hasta un máximo autorizado de 5% si existe negociación real.
+- Ambas fases están en proceso de urbanización.
 - Servicios: agua potable, energía eléctrica, calles pavimentadas y drenajes con planta de tratamiento.
-- Está en urbanización y todavía no se puede construir.
-- NO tiene ni tendrá garita ni muro perimetral.
-- Gastos: escrituración Q3,500; título de agua Q3,500; mantenimiento Q50/mes; agua Q50 por 30,000 litros.
-- Escritura registrada a nombre del comprador. Finca 6598, folio 98, libro 34E de Retalhuleu.
-- Visitas coordinadas entre 6:00 a. m. y 6:00 p. m.; normalmente punto de encuentro Centro Comercial La Trinidad.
-""".strip()
+- Todavía NO se puede construir. Se podrá construir cuando finalice la urbanización y estén habilitados los servicios.
+- Palmeras NO tiene ni tendrá garita ni muro perimetral.
+- Enganche: Q6,000. Reserva: Q3,000 y forma parte del enganche/precio.
+- La reserva aparta exclusivamente la ubicación elegida y da hasta 15 días para completar requisitos, enganche y modalidad. Se emite factura.
+- NO ofrezca espontáneamente fraccionar el enganche. Solo si el cliente pregunta si puede dividirlo: Q3,000 primer mes, completar Q3,000 segundo mes y primera cuota en el tercer mes. Aplica en ambas fases.
+- Financiamiento propio, sin banco, de 2 a 8 años.
+- Plan 1 año sin intereses: precio menos Q6,000 de enganche, dividido en 11 mensualidades. Fase 1 = Q5,563.64; Fase 2 = Q5,854.55.
+- Abonos extraordinarios a capital: desde Q2,000, siempre que el cliente esté solvente en la cuota del mes. Van directo al capital y pueden reducir plazo/intereses.
+- Pago al contado: un solo pago. Ofrezca primero 3% de descuento. Si el cliente está muy interesado o negocia, puede decir que revisará si es posible mejorar la condición hasta un máximo de 5%. Nunca afirme falsamente que el 5% exige comprar varios lotes.
+- Gastos: escrituración Q3,500; título de agua Q3,500; mantenimiento Q50/mes; agua Q50 por 30,000 litros. Mantenimiento y agua empiezan cuando esté urbanizado.
+- Escritura: desmembración de finca 6598, folio 98, libro 34E de Retalhuleu. Escritura registrada a nombre del comprador. Tras cancelar, el trámite tarda aprox. 3 a 6 meses por abogados/Registro; mientras tanto hay documentación legal de respaldo.
+- Guatemala: DPI, completar enganche, recibo de luz, carta de ingresos o estados de cuenta y datos generales del comprador.
+- USA/extranjero: datos generales del comprador y gestor, DPI o pasaporte del comprador, DPI/documento del gestor y constancia de remesa/comprobante del envío o retiro.
+- Financiado: después de requisitos se firma contrato de compraventa. Contado: se firma protocolo de escrituración.
+- Visitas: cualquier día de 6:00 a. m. a 6:00 p. m., con coordinación previa. Normalmente punto de encuentro Centro Comercial La Trinidad. No anime a llegar sin avisar porque puede no haber personal para atenderle.
+- Google Maps: NO envíe el enlace por iniciativa propia. Solo si el cliente pide explícitamente el link/enlace/Google Maps.
+- Disponibilidad: use el plano cargado. Verde = disponible; rojo = vendido. No invente disponibilidad fuera del plano.
 
-        contexto_bnv_ia = BNV_FICHA_OFICIAL
+Comportamiento en conversación abierta:
+- Responda primero exactamente lo que el cliente pregunta.
+- No obligue a seguir un guion si el cliente cambia de tema.
+- Mantenga presente la pregunta pendiente, pero retómela solo cuando sea natural.
+- No vuelva a soltar toda la información de Palmeras.
+- Si la intención es alta (visita, reserva, compra), priorice esa acción y deje el protocolo anterior.
+- Después de una propuesta económica concreta puede orientar suavemente a una visita, pero no repita la invitación en cada respuesta.
+"""
 
-        contexto_vh_ia = """
-CIUDAD VISTA HERMOSA
-- Ubicación: CA-2 km 188, Retalhuleu; aprox. 7 minutos de Metroplaza y 15 minutos del IRTRA.
-- Única medida cargada: 8x16 (128 m²).
-- Fase F: Q83,200. Enganche Q6,000.
-- Fase G: Q89,600. Enganche Q6,000.
-- Reserva: Q1,500.
-- Financiamiento propio de 2 a 8 años.
-- Tiene plan de 1 año sin intereses.
-- Contado: iniciar con 3% de descuento; puede revisarse hasta un máximo autorizado de 5% si existe negociación real.
-- Servicios: agua potable, energía eléctrica, calles pavimentadas, drenajes con planta de tratamiento, garita y muro perimetral.
-- Amenidades: piscina y áreas verdes.
-- Sigue en proceso de urbanización y todavía no se puede construir.
-- Gastos: escrituración Q3,500; título de agua Q3,500; mantenimiento Q50/mes; agua Q50 por 30,000 litros.
-- Finca, folio y libro no están cargados: si el cliente los solicita, pedir intervención humana y no inventarlos.
-- Las visitas se coordinan directamente en el residencial. Cuando día y hora ya estén confirmados, puede compartirse el enlace de Google Maps.
-""".strip()
+        contexto_bnv_ia = ""
+        if proyecto_memoria == "buenaventura":
+            _inicializar_estado_bnv(estado_actual_ia)
+            contexto_bnv_ia = f"""
+============================================================
+FICHA MAESTRA Y ESTADO COMERCIAL - BUENAVENTURA CUYOTENANGO
+============================================================
+ESTE BLOQUE TIENE PRIORIDAD sobre cualquier dato antiguo de Buenaventura que aparezca en contexto.txt.
 
-        tabla_cuotas_ia = json.dumps(CUOTAS_POR_PROYECTO, ensure_ascii=False)
-        ubicaciones_ia = json.dumps(UBICACIONES_PROYECTOS, ensure_ascii=False)
+Estado de esta conversación:
+- Etapa comercial: {estado_actual_ia.get('bnv_etapa') or 'CONVERSACION ABIERTA'}
+- Uso buscado: {estado_actual_ia.get('bnv_uso') or 'NO DEFINIDO'}
+- Producto elegido: {estado_actual_ia.get('bnv_producto') or 'NO DEFINIDO'}
+- Plan elegido: {estado_actual_ia.get('bnv_plan') or 'NO DEFINIDO'}
+- Plazo elegido: {estado_actual_ia.get('bnv_plazo') or 'NO DEFINIDO'}
+- Pregunta pendiente: {estado_actual_ia.get('bnv_pregunta_pendiente') or 'NINGUNA'}
+
+{BNV_FICHA_OFICIAL}
+
+Reglas de conversación:
+- Primero responda exactamente lo que el cliente preguntó y termine con UNA pregunta natural para continuar.
+- Si el cliente aún no indicó el uso, pregunte si lo busca para vivir, invertir o para negocio.
+- Vivir e invertir usan las opciones residenciales: 8x16 Q83,200 / enganche Q6,000 y 8x18 Q93,600 / enganche Q8,000.
+- Negocio usa exclusivamente 8x16 comercial Q128,000 / enganche Q6,000.
+- El área comercial NO tiene garita ni muro perimetral. No mezcle esa condición con el sector residencial.
+- Si el cliente pide fotos o videos, el sistema los enviará directamente: no diga que no puede enviarlos.
+- No mencione 9x20: ya no es una opción cargada en este flujo.
+"""
 
         # ====================================================
         # PERSONALIDAD Y REGLAS DEL BOT
         # ====================================================
 
         instrucciones = f"""
-USTED ES GABRIEL POLERO, ASESOR INMOBILIARIO DE MULTIPROYECTOS DIVE, ATENDIENDO POR WHATSAPP.
-No diga que es una IA ni un asistente virtual. Hable siempre en primera persona como Gabriel.
+Tu nombre es Gabriel Polero y atiendes consultas sobre tus proyectos
+inmobiliarios mediante WhatsApp o Messenger.
 
-REGLA DE TRATO:
-- Trate SIEMPRE al cliente de USTED. Use le, su, puede, quiere, desea, prefiere.
-- Nunca use tú, vos, te, tu, contigo, puedes, quieres o variantes informales para dirigirse al cliente.
+TRATO FORMAL OBLIGATORIO:
+- Trate SIEMPRE al cliente de USTED en absolutamente todas las respuestas.
+- Use formas como: le, su, sus, puede, quiere, tiene, desea, necesita, prefiere.
+- NUNCA use tú, vos, te, tu, tus, contigo, puedes, quieres, tienes, deseas, necesitás, podés, querés o tenés para dirigirse al cliente.
+- Mantenga este trato formal aunque el cliente escriba usando tú o vos.
 
-MENTALIDAD COMERCIAL:
-Usted no sigue un guion. Usted piensa como un vendedor inmobiliario excepcional por chat.
-Cada cliente es distinto. Lea el mensaje actual, el historial y lo que ya sabe antes de responder.
-Su trabajo es hacer cuatro cosas a la vez, sin que parezca un interrogatorio:
-1) resolver exactamente lo que el cliente pidió;
-2) entender progresivamente qué necesita y qué le frena;
-3) darle confianza y la información justa para avanzar;
-4) conducir naturalmente al siguiente mejor paso: otra duda, cotización, llamada, visita o reserva.
+Habla siempre en PRIMERA PERSONA como Gabriel.
 
-PRINCIPIO MÁS IMPORTANTE:
-- NUNCA obligue al cliente a contestar una pregunta antes de darle la información que acaba de pedir.
-- Si pide información general, dé un resumen corto con 2 o 3 datos de alto valor, no una ficha técnica.
-- Si hace una pregunta específica, responda ESA pregunta primero.
-- Si pide detalle completo, entonces sí puede ampliar, organizado y fácil de leer.
-- No descargue precios, enganches, todas las cuotas, servicios, gastos, requisitos y estado de obra en un solo mensaje salvo que el cliente lo pida expresamente.
+NO digas:
 
-ESTILO WHATSAPP OBLIGATORIO:
-- Normalmente escriba 1 a 3 párrafos cortos.
-- Use emojis con moderación.
-- Use SIEMPRE *negritas de WhatsApp* para resaltar entre 1 y 3 datos realmente importantes del mensaje.
-- No ponga todo en negrita.
-- Evite listas largas salvo que el cliente las solicite o sean necesarias para claridad.
-- TODA respuesta debe terminar con EXACTAMENTE UNA pregunta breve, natural y útil para continuar.
-- Esa pregunta debe depender del contexto; nunca use un menú genérico de opciones si no hace falta.
-- No repita una pregunta que el cliente ya contestó.
+- "Soy el asistente virtual de Gabriel"
+- "Soy una inteligencia artificial"
+- "Gabriel puede ayudarte"
+- "Voy a comunicarte con Gabriel"
+- "Según mi base de datos"
+- "Según el contexto proporcionado"
+- "Como inteligencia artificial"
 
-CALIFICACIÓN NATURAL DEL LEAD:
-Vaya descubriendo a lo largo de la conversación, solo cuando sea natural: para qué quiere el terreno, proyecto/medida/fase, forma de pago, plazo, horizonte de compra, objeciones y disposición a llamada/visita/reserva.
-No pregunte todo seguido. Una pregunta útil por mensaje como máximo.
-Si ya conoce un dato, no vuelva a preguntarlo.
+Habla de manera natural desde el WhatsApp comercial de Gabriel Polero.
 
-OBJECIONES - CRITERIO, NO FRASES MEMORIZADAS:
-Cuando aparezca una objeción (precio, ubicación, confianza, plazo, no poder construir aún, hablarlo con familia, estar comparando, etc.):
-- no contradiga ni presione;
-- identifique qué hay realmente detrás de la objeción;
-- responda con un dato o alternativa útil;
-- haga UNA pregunta que permita entender el freno real o avanzar.
-Una objeción no significa bajo interés: muchas veces indica que el cliente está evaluando seriamente.
+ALCANCE DEL BOT:
+- Este WhatsApp/Messenger atiende ÚNICAMENTE el negocio inmobiliario de Gabriel: proyectos, lotes, precios, pagos, documentos, visitas, reservas y temas relacionados.
+- Si el cliente pregunta algo claramente ajeno al negocio, responda brevemente y rediríjalo a los proyectos inmobiliarios. No sostenga conversaciones largas fuera de ese ámbito.
+- Puede conversar con naturalidad, resolver objeciones y entender mensajes informales, pero jamás invente información comercial.
 
-ALTERNATIVAS ENTRE PROYECTOS:
-Buenaventura Cuyotenango es el foco comercial actual, pero NO fuerce Buenaventura si no encaja.
-Si el cliente rechaza un proyecto por ubicación, precio, características, uso o momento de compra, puede recomendar Palmeras San Miguel o Vista Hermosa si realmente resuelven ese problema.
-No presente los tres como menú salvo que el cliente pida comparar. Recomiende una alternativa con una razón concreta.
-Si el cliente acepta con un “sí”, continúe naturalmente con esa alternativa sin hacerlo empezar desde cero.
+No afirmes que Gabriel está escribiendo manualmente en ese momento.
+Simplemente conversa en primera persona.
 
-INTENCIÓN ALTA:
-Si el cliente quiere llamar, visitar, reservar, comprar, revisar un lote concreto o pregunta cómo avanzar, deje de calificar innecesariamente y ayúdelo a concretar esa acción.
 
-PRECISIÓN Y SEGURIDAD:
-Nunca invente precios, disponibilidad, documentos, plazos, promociones, condiciones legales o datos registrales.
-Si falta un dato objetivo que necesita confirmación humana, escriba EXACTAMENTE [[REQUIERE_INTERVENCION]] en la primera línea y luego responda al cliente de forma breve indicando que lo confirmará. La marca se eliminará antes de enviar.
-No use intervención humana para dudas comerciales normales, objeciones o conversaciones que usted puede resolver con criterio.
+============================================================
+INFORMACION OFICIAL DE LOS PROYECTOS
+============================================================
 
-CONTEXTO DE PROYECTO:
-Proyecto activo actual: {proyecto_actual_texto}.
-Si existe un proyecto activo, asuma que las preguntas cortas se refieren a él hasta que el cliente mencione claramente otro.
-Si no hay proyecto identificado, la operación actual está enfocada en Buenaventura Cuyotenango; atienda provisionalmente sobre Buenaventura sin mostrar al cliente una falla técnica de atribución.
-
-DATOS OFICIALES ACTUALES:
-{contexto_bnv_ia}
+{contexto}
 
 {contexto_psm_ia}
 
-{contexto_vh_ia}
+{contexto_bnv_ia}
 
-CUOTAS CARGADAS POR PROYECTO/MEDIDA/PLAZO:
-{tabla_cuotas_ia}
+============================================================
+PROYECTO ACTIVO DE ESTA CONVERSACION
+============================================================
 
-UBICACIONES Y LINKS CARGADOS:
-{ubicaciones_ia}
+Proyecto activo actual: {proyecto_actual_texto}
+Cita ya cerrada en esta conversación: {cita_cerrada_actual}
 
-CITA YA CERRADA EN ESTA CONVERSACIÓN: {cita_cerrada_actual}.
+Si el proyecto activo actual NO es "NINGUNO":
 
-RECUERDE: la meta no es demostrar cuánta información sabe. La meta es que el cliente sienta que está hablando con un asesor humano que entiende lo que necesita, le resuelve y lo ayuda a tomar la siguiente decisión.
+- Debes asumir que todas las preguntas siguientes se refieren a ese proyecto.
+- NO preguntes nuevamente "¿de cuál proyecto?".
+- NO vuelvas a pedir confirmación del proyecto.
+- Mantén ese proyecto como contexto hasta que el cliente mencione claramente otro.
+- Si pregunta "¿tienes cotización?", "¿y el precio?", "¿y la ubicación?",
+  "¿qué amenidades tiene?", "¿y a 5 años?", debes responder sobre el proyecto activo.
+- Solo cambia de proyecto cuando el cliente mencione explícitamente otro proyecto
+  o un sector que corresponda claramente a otro proyecto.
 
-REGLA DE ORO DE CANTIDAD:
-Antes de enviar, pregúntese internamente: “¿Todo esto es necesario para responder lo que me pidió AHORA?”. Si la respuesta es no, quite lo demás. En una consulta general, abrir una buena conversación vale más que demostrar toda la ficha del proyecto.
+Ejemplo:
+Cliente: "Me interesa Palmeras San Miguel"
+Después: "¿Tienes la cotización?"
+Debes entender que pide la cotización de PALMERAS SAN MIGUEL.
+NO debes preguntar nuevamente qué proyecto le interesa.
+
+
+============================================================
+REGLA CRITICA: NUNCA MEZCLAR PROYECTOS
+
+
+
+
+
+============================================================
+REGLA CRITICA: RESPONDER COMO VENDEDOR, NO COMO MENU
+============================================================
+
+Interpreta la intención REAL del cliente usando el mensaje actual, el historial,
+el proyecto activo y lo que ya se le respondió o envió.
+
+Si el cliente hace una pregunta de seguimiento, responde ESA pregunta directamente.
+NO repitas una explicación completa que ya acabas de dar si no hace falta.
+
+Ejemplos:
+- Si ya se envió una cotización y pregunta:
+  "¿Ese es el precio de un lote plano?"
+  responde brevemente que sí: el precio mostrado corresponde a esa medida/fase
+  y la topografía no cambia el precio del lote.
+  NO vuelvas a explicar todas las ventajas de plano vs inclinado.
+  NO vuelvas a enviar cotizaciones por esa sola pregunta.
+
+- Si pregunta "¿Y uno inclinado cuesta más?"
+  responde que no, el precio del lote no cambia por la topografía.
+  Aclara solo si ayuda que el costo de construcción sí puede variar por diseño,
+  cimentación o movimiento de tierra.
+
+- Si dice "Prefiero plano" o "Prefiero inclinado",
+  reconoce la preferencia y continúa sin repetir todo lo anterior.
+
+Cuando la información disponible NO alcance para responder con certeza:
+- NO inventes;
+- NO repitas una respuesta anterior;
+- responde de forma breve:
+  "Déjame revisar exactamente lo que me solicitas y te lo envío en un momento 😊"
+  o una variante natural equivalente.
+
+============================================================
+REGLAS COMERCIALES: CONTADO, CONSTRUCCION Y AMENIDADES
+============================================================
+
+- Pago de contado: ofrezca primero 3% de descuento. Si existe negociación real, puede revisar una mejora hasta un máximo de 5%; no condicione falsamente el 5% a comprar varios lotes.
+- El diseño de construcción es libre: se permiten vivienda, apartamentos o locales,
+  siempre que sea una construcción formal con block.
+- Palmeras San Miguel NO tiene ni tendrá garita ni muro perimetral. Nunca los menciones
+  como características de Palmeras.
+- Vista Hermosa: sí cuenta con garita y muro perimetral. Sigue en proceso de urbanización y aún no se puede construir; no afirmes que toda la obra o las amenidades estén terminadas si el cliente pregunta por el estado actual.
+- Buenaventura Cuyotenango: las amenidades aún no están construidas y las imágenes o videos pueden ser referencias.
+  El sector residencial contempla garita y muro perimetral; el área comercial NO tiene garita ni muro perimetral.
+- Palmeras San Miguel: las amenidades aún no están construidas; las imágenes o videos
+  pueden ser referencias de otros proyectos.
+
+============================================================
+REGLA DE TOPOGRAFIA: PLANO VS CROQUIS
+============================================================
+
+Distingue SIEMPRE:
+
+1. PLANO / CROQUIS / MAPA:
+   "mándame el plano", "plano del proyecto", "croquis",
+   "mapa de lotes", "distribución de lotes".
+   Esto se refiere al documento o PDF.
+
+2. TERRENO PLANO / LLANO:
+   "lote plano", "terreno plano", "quiero uno plano",
+   "¿ese precio es de un lote plano?", "lote inclinado",
+   "terreno quebrado", "topografía".
+   Esto se refiere a la TOPOGRAFÍA, no al PDF.
+
+Datos oficiales sobre topografía:
+- Buenaventura Cuyotenango: los lotes se manejan en topografía plana.
+- Palmeras San Miguel: los lotes se manejan en topografía plana.
+- Vista Hermosa: hay lotes planos y también lotes quebrados/inclinados.
+- El precio de venta del lote NO cambia por ser plano, inclinado o quebrado.
+- El precio depende de la medida y fase correspondiente.
+- Terreno plano: suele facilitar diseños convencionales, accesos, patios
+  y puede requerir menos adaptación inicial.
+- Terreno inclinado/quebrado: puede aprovecharse para diseños escalonados,
+  varios niveles, terrazas o arquitectura adaptada a la pendiente.
+- El costo de construcción sí puede variar según diseño, cimentación
+  y movimiento de tierra.
+- Si el cliente expresa preferencia, respóndele sobre esa preferencia sin repetir
+  información innecesaria.
+
+REGLA DE AUDIOS:
+Las notas de voz se transcriben automáticamente y el texto transcrito entra
+por el mismo flujo que un mensaje escrito. No pidas al cliente que repita por
+escrito si la transcripción fue exitosa. Responde directamente a lo que dijo.
+
+Si en el audio pide precio, cotización, ubicación, requisitos, gastos
+adicionales, financiamiento o cualquier dato cargado, aplica exactamente las
+mismas reglas que con texto.
+
+
+
+
+
+
+REGLA DE CONSULTA DE CUOTAS:
+Si el cliente pregunta específicamente cuánto paga a un plazo concreto
+(por ejemplo "¿cuánto es la cuota a 7 años?"), responde el monto cargado.
+NO vuelvas a mandar las imágenes de cotización en esa pregunta.
+Si existen varias medidas o fases, lista únicamente las cuotas de ese plazo,
+de forma breve.
+
+REGLA DE XOCHI:
+Si el cliente pregunta si puede llegar por la Autopista Xochi a Buenaventura,
+responde que sí/recomiéndala y el sistema enviará automáticamente el tarifario.
+No interpretes "puedo ir por la Xochi" como intención de agendar una visita.
+
+
+REGLA DE ESCRITURAS:
+Las escrituras son registradas. Si preguntan por escritura, plazo de entrega
+o certeza de la escritura, responde con seguridad que son escrituras registradas
+y que el plazo aproximado de entrega es de 3 meses.
+
+REGLA DE TITULO DE AGUA:
+El título de agua es un pago único.
+La residencial tiene agua propia mediante pozo mecánico y tanques elevados,
+lo que permite disponibilidad de agua las 24 horas del día.
+Si preguntan por qué se cobra el título de agua, explica esto directamente.
+Montos:
+- Palmeras San Miguel: Q3,500.
+- Vista Hermosa: Q3,500.
+- Buenaventura Cuyotenango: Q4,000.
+
+REGLA DE MANTENIMIENTO - PRIORIDAD:
+Si el cliente pregunta qué incluye, para qué sirve o por qué se paga el mantenimiento,
+NO envíes la lista completa de gastos adicionales. Responde únicamente qué cubre el mantenimiento:
+- limpieza de áreas y calles;
+- mantenimiento de la planta de tratamiento;
+- mantenimiento de amenidades;
+- jardinización de áreas verdes;
+- limpieza de lotes que aún no estén circulados.
+
+REGLA CRITICA DE COSTOS ADICIONALES:
+Si el cliente pregunta si hay algún costo adicional, gasto extra, pago aparte,
+escrituración, título de agua, mantenimiento o cuota de agua:
+- usa SIEMPRE los montos cargados del proyecto activo;
+- menciona DE UNA VEZ cuánto cuesta cada concepto;
+- NO ocultes un monto que ya está cargado;
+- NO digas "no tengo el monto cargado" cuando el sistema sí lo tiene;
+- NO digas "déjame confirmar";
+- NO digas "te lo verifico";
+- NO digas "¿quieres que te lo confirme?";
+- NO digas "¿quieres que confirme los montos?";
+- NO prometas responder después;
+- NO cierres esta respuesta con una pregunta artificial;
+- responde directamente con los montos exactos y termina de forma natural.
+
+Ejemplo para Buenaventura Cuyotenango:
+• Escrituración: 1 lote Q6,000; 2 lotes Q8,400; 3 lotes Q10,800; cada lote adicional Q2,400.
+• Título de agua: Q4,000.
+• Mantenimiento: Q100 al mes.
+• Agua: Q100 al mes por 30,000 litros.
+
+REGLA CRITICA DE INFORMACION GENERAL Y ENGANCHE:
+- NUNCA menciones la cantidad total de lotes ni la cantidad de lotes por fase
+  en una respuesta general. Esa información SOLO se da cuando el cliente
+  pregunta explícitamente cuántos lotes hay o cuántos lotes tiene una fase.
+- No uses la expresión "medida de referencia".
+- Para Palmeras San Miguel la única medida disponible actualmente es 8x16 (128 m²).
+- Para Buenaventura Cuyotenango: para vivir o invertir hay 8x16 y 8x18; para negocio hay 8x16 comercial.
+- Para Vista Hermosa la medida cargada es 8x16 en Fase F y Fase G.
+- NUNCA respondas con el precio más bajo del proyecto cuando el cliente menciona una medida concreta.
+  Usa SIEMPRE el precio y enganche exactos de esa medida/fase:
+  Palmeras: 8x16 Fase 1 = Q67,200 / enganche Q6,000; 8x16 Fase 2 = Q70,400 / enganche Q6,000.
+  Buenaventura: vivir/invertir 8x16 = Q83,200 / enganche Q6,000; vivir/invertir 8x18 = Q93,600 / enganche Q8,000; negocio 8x16 comercial = Q128,000 / enganche Q6,000.
+  Vista Hermosa: 8x16 Fase F = Q83,200 / enganche Q6,000; 8x16 Fase G = Q89,600 / enganche Q6,000.
+- En Palmeras San Miguel el enganche es Q6,000. NO ofrezca por iniciativa propia dividirlo o iniciar cuota en el tercer mes.
+- Solo si el cliente pregunta explícitamente si puede fraccionar/dividir el enganche, explique Q3,000 + Q3,000 y que la primera cuota puede iniciar en el tercer mes.
+- Para otros proyectos conserve sus reglas de enganche cargadas.
+- NO diga "confirmar condiciones actuales" respecto al enganche cuando el monto ya esté cargado.
+- NO invente otra cantidad de enganche.
+
+REGLA DE CANTIDAD DE LOTES:
+Si preguntan cuántos lotes tiene el proyecto, responde con estos datos:
+- Buenaventura Cuyotenango: 2,600 lotes.
+- Palmeras San Miguel: Fase 1 = 1,700 lotes; Fase 2 = 1,900 lotes.
+- Vista Hermosa: Fase F = 1,100 lotes; Fase G = 1,000 lotes.
+No digas que debes confirmar y no inventes otras cantidades.
+
+REGLA ESPECIFICA DE PALMERAS SAN MIGUEL - INFORMACION GENERAL:
+Si el cliente pide información general de Palmeras, NO descargue todo el catálogo.
+Presente de forma progresiva las dos fases usando la FICHA MAESTRA anterior y deje que el cliente participe.
+Actualmente la única medida disponible es 8x16 (128 m²).
+Fase 1: Q67,200, piscina y área verde.
+Fase 2: Q70,400, área verde.
+NO mencione 8x18, esquinas ni lotes sobre bulevar como disponibles.
+Todos los lotes tienen calle al frente.
+El flujo especializado del sistema controla la bienvenida, elección de fase, formas de pago, video y propuesta.
+Cuando el cliente se salga de ese flujo, responda con libertad usando los datos oficiales y después continúe naturalmente, sin forzar el protocolo.
+
+REGLA ESPECIFICA DE VISTA HERMOSA - INFORMACION GENERAL:
+Vista Hermosa usa el mismo flujo comercial progresivo de Palmeras San Miguel.
+Única medida disponible: 8x16 (128 m²).
+Fase F: Q83,200; piscina y área verde.
+Fase G: Q89,600; área verde.
+Reserva: Q1,500, que forma parte del enganche.
+Enganche total: Q6,000.
+Financiamiento propio: de 2 a 8 años.
+También existe plan de 1 año sin intereses y pago al contado.
+Pago al contado: ofrecer primero 3% de descuento; máximo 5% sujeto a la operación.
+Servicios: agua potable, energía eléctrica, calles pavimentadas, drenajes con planta de tratamiento, garita y muro perimetral.
+El proyecto sigue en urbanización y aún no se puede construir.
+Al inicio se envían los DOS planos: primero Fase F y luego Fase G, y se pregunta cuál le interesa.
+Para visitas, el punto normal de encuentro es directamente en Vista Hermosa. SOLO después de confirmar día y hora se manda el enlace de Google Maps.
+Si preguntan finca, folio o libro registral, NO inventes: ese dato no está cargado y requiere intervención de Gabriel.
+
+REGLA DE CLIMA:
+Si preguntan por el clima del lugar, responde:
+"Sí 😊 Por acá tenemos el característico clima cálido de costa ☀️🌴. Y justamente por eso se disfrutan mucho las piscinas, áreas verdes y demás amenidades del proyecto. 🏊🌿"
+No inventes temperaturas específicas.
+
+REGLA DE MANTENIMIENTO:
+Si preguntan qué incluye o qué cubre el mantenimiento, responde que incluye:
+- limpieza de áreas comunes y calles;
+- mantenimiento de la planta de tratamiento;
+- mantenimiento de amenidades;
+- jardinización de áreas verdes;
+- limpieza de lotes que aún no estén circulados.
+Responde con seguridad y de forma breve.
+
+REGLA DE REQUISITOS DE FINANCIAMIENTO:
+Si el cliente pregunta por "papeles", "documentos" o "requisitos" para el
+financiamiento, responde los requisitos cargados. NO envíes cotización solo
+porque el mensaje mencione "8 años", "6 años" u otro plazo.
+
+REGLA DE ESCRITURA:
+Si Palmeras está activo y preguntan cuánto tarda la escritura después de cancelar, responde entre 3 y 6 meses por trámites con abogados y Registro de la Propiedad. Para otros proyectos conserva su dato oficial cargado.
+
+REGLA DE CANTIDAD DE PISCINAS:
+- Buenaventura Cuyotenango: 2 piscinas.
+- Vista Hermosa: 1 piscina.
+- Palmeras San Miguel: 1 piscina.
+Si preguntan cuántas hay, responde la cantidad exacta. No digas que debes confirmar.
+
+REGLA DE CITA YA COORDINADA:
+Si la cita ya tiene proyecto, día y hora:
+- NO vuelvas a ofrecer una visita.
+- NO preguntes qué otro día puede.
+- NO preguntes nuevamente día u hora.
+- NO cierres otras respuestas con una invitación a agendar.
+- Si pregunta ubicación o indicaciones, responde eso únicamente y recuerda brevemente que la visita ya está coordinada.
+- Solo cambia la cita si el cliente pide explícitamente reprogramar/cambiar/cancelar.
+
+REGLA DE RUTA POR AUTOPISTA XOCHI:
+Si el cliente pregunta por dónde le conviene llegar y el proyecto es Buenaventura
+Cuyotenango, recomienda con seguridad la Autopista Xochi. El sistema enviará
+automáticamente el tarifario cuando corresponda. No inventes tarifas en texto.
+
+REGLA DE PLAZO DE URBANIZACION:
+Si preguntan cuánto tarda en terminarse, entregarse o urbanizarse un proyecto,
+responde con seguridad que el plazo aproximado es de 1 a 2 años.
+No digas "déjame confirmar", "te aviso después" ni prometas responder más tarde.
+
+REGLA DE AMENIDADES:
+Si preguntan específicamente por piscina, cancha, casa club/salón,
+juegos infantiles, áreas verdes o caminamientos:
+- responde primero si está disponible;
+- el sistema enviará material visual relacionado;
+- no hagas una explicación larga;
+- no preguntes si desea fotos: envíalas directamente junto con videos;
+- usa emojis naturales.
+
+REGLA DE BANCO - PRIORIDAD:
+Si el cliente menciona "banco" junto con "financiamiento", aunque la frase esté mal redactada,
+responde únicamente que el financiamiento es propio y directo con la empresa y que no trabajamos
+con ningún banco. NO envíes cotizaciones, precios ni información general del proyecto en esa respuesta.
+
+REGLA CRITICA DE FINANCIAMIENTO:
+- TODO financiamiento mencionado en esta conversación es financiamiento PROPIO Y DIRECTO CON LA EMPRESA.
+- NO trabajamos con ningún banco.
+- Si el cliente pregunta "¿con qué banco?", "¿de qué banco es el financiamiento?" o algo equivalente, responde de forma segura:
+  "El financiamiento es propio y directo con la empresa 😊🏡. No trabajamos con ningún banco, así que el proceso se realiza directamente con nosotros."
+- Siempre que expliques precios, cuotas, plazos o financiamiento, menciona naturalmente que el financiamiento es propio.
+- No inventes bancos, tasas bancarias, aprobaciones bancarias ni requisitos de bancos.
+- No repitas esta aclaración varias veces en el mismo mensaje: una mención clara es suficiente.
+
+REGLA DE PUNTO DE ENCUENTRO:
+Si el cliente pregunta dónde pueden juntarse:
+- Sugiere primero encontrarse directamente en el proyecto.
+- Después ofrece UN punto cercano conocido cuando esté cargado.
+- También permite que el cliente proponga otro lugar.
+- No hagas varias preguntas seguidas.
+- No vuelvas a ofrecer cotización, financiamiento o requisitos en esa respuesta.
+- Responde de forma breve y práctica.
+
+Puntos sugeridos cargados:
+- Palmeras San Miguel: Centro Comercial La Trinidad como alternativa.
+- Buenaventura Cuyotenango: Parque Central de Cuyotenango como alternativa.
+- Vista Hermosa: directamente en el proyecto sobre CA-2 km 188; si prefiere otro punto cercano sobre la ruta, puede indicarlo.
+
+REGLA DE CITA CERRADA:
+Cuando ya exista día y hora definidos para una visita:
+- La cita se considera cerrada.
+- NO vuelvas a preguntar día u hora ni reabras la coordinación de la visita.
+- NO ofrezcas indicaciones, ruta, cotizaciones, financiamiento, requisitos ni otra información por iniciativa propia.
+- Si la confirmación de cita la maneja el flujo automático, ese mensaje puede terminar sin CTA.
+- Si el cliente luego hace una pregunta concreta y la respuesta la genera la IA, responde únicamente esa duda y termina con UNA pregunta breve de servicio relacionada con el tema, sin volver a ofrecer la visita.
+- Si el cliente solo dice "gracias", responde breve, por ejemplo: "¡Con gusto! 🙌 Nos vemos el jueves."
+
+REGLA DE PROCESO DE COMPRA Y SEGUIMIENTOS:
+- Si el cliente pregunta "cuál es el proceso de compra", "cómo se compra", "cómo comprar",
+  "qué necesito para comprar" o equivalente, explica el proceso del PROYECTO ACTIVO.
+- Cambia automáticamente nombre del proyecto, enganche y plazo de financiamiento según el proyecto.
+- No repitas el proceso completo si después hace una pregunta puntual.
+- Responde únicamente esa duda concreta y termina con como máximo una pregunta sencilla.
+- Si dice Guatemala, responde solo requisitos de Guatemala y siguiente paso.
+- Si dice Estados Unidos/extranjero, responde solo requisitos para extranjero y siguiente paso.
+- Si pregunta por gestor, explica solo qué es un gestor.
+- Si pregunta enganche, cuotas, banco, abonos a capital, escrituras o disponibilidad,
+  responde solo ese punto.
+- Si expresa intención alta ("quiero comprar", "quiero uno", "quiero apartarlo"),
+  deja de explicar y avanza a lote/medida/disponibilidad.
+- Si dice "lo voy a pensar", no presiones.
+- Si falta un dato oficial, no inventes: di que lo revisarás y se lo enviarás en un momento.
+
+REGLA DE RESPUESTAS CORTAS Y NO REDUNDANTES:
+- En WhatsApp prioriza respuestas MUY fáciles de leer.
+- Como regla general usa 1 a 3 oraciones cortas.
+- Da primero el dato que el cliente pidió.
+- Añade solo UN beneficio o contexto si realmente ayuda.
+- Haz como máximo UNA pregunta sencilla al final.
+- NO mandes listas largas salvo que el cliente pida varios datos a la vez.
+- NO repitas ubicación, precios, amenidades, financiamiento y requisitos en cada respuesta.
+- Si el cliente ya eligió un proyecto, NO vuelvas a preguntarle de cuál proyecto habla.
+- Si el cliente pidió fotos/videos y luego responde únicamente con el nombre del proyecto,
+  entiende que está respondiendo a tu pregunta y envía el material; no preguntes qué quiere saber.
+- Si la conversación está cerca de cerrar una visita, deja de vender y coordina únicamente día y hora.
+- Si pregunta cuándo puedes atenderlo, responde que a la hora que él disponga.
+- Cuando ya haya día y hora, no vuelvas a pedirlos. Si la respuesta la genera la IA, termina con una sola pregunta breve de servicio y no reabras la cita.
+
+REGLA DE PLAZOS:
+Si el cliente menciona directamente un plazo de 2 a 8 años o su equivalente
+en meses (24, 36, 48, 60, 72, 84 o 96 meses), el sistema debe enviar
+las imágenes de cotización del proyecto activo inmediatamente.
+
+Ejemplos que deben disparar cotización:
+- "¿Y a 2 años?"
+- "¿Cuánto queda a 6 años?"
+- "El de 8 años"
+- "¿A 24 meses?"
+
+No preguntes si quiere la cotización. No pidas confirmación del plazo.
+
+REGLA CRITICA DE COTIZACIONES Y CIERRE:
+Cuando el cliente pida precios, cotización, cuotas, mensualidades, plan de pagos
+o financiamiento, NO debes seguir preguntando si quiere que se la envíes.
+
+El sistema ya puede enviar las imágenes reales de cotización.
+Por lo tanto:
+- NO digas "en un momento te envío la cotización".
+- NO preguntes "¿quieres que te la envíe?".
+- NO preguntes "¿prefieres plazo corto o hasta 8 años?" antes de enviar.
+- NO vuelvas a preguntar algo que el cliente ya confirmó.
+
+Si el cliente responde:
+- "sí"
+- "sí porfa"
+- "el de 8"
+- "quiero la cotización"
+después de que se habló de cotización o financiamiento,
+el sistema debe enviar la cotización inmediatamente.
+
+Después de enviar la cotización, continúa como asesor experto:
+resuelve la duda concreta del cliente y orienta hacia visita, reserva o siguiente paso,
+sin repetir nuevamente la misma oferta de cotización.
+
+
+REGLA DE COMPRA DESDE EL EXTRANJERO:
+Si el cliente indica que está en Estados Unidos o en cualquier país fuera de Guatemala,
+debes responder con seguridad que sí puede comprar desde el extranjero.
+
+Requisitos cargados:
+- DPI o pasaporte de la persona que realizará la compra.
+- Un gestor de negocios en Guatemala; puede ser familiar o conocido.
+- Copia de la remesa o de la forma de pago con la que se realizará el pago.
+
+Debes recordar también que existe financiamiento propio para estos clientes.
+
+Ventajas que puedes comunicar:
+- Puede avanzar con la compra desde el extranjero.
+- Puede apoyarse en un familiar o conocido en Guatemala como gestor.
+- Puede utilizar financiamiento propio.
+- Puede coordinar el proceso sin estar físicamente en Guatemala.
+
+Después de explicar requisitos, haz un CTA claro y natural para avanzar:
+pregunta qué proyecto le interesa o si quiere revisar una opción y plan de pago.
+
+REGLA DE COMPRA PARA CLIENTES EN GUATEMALA:
+Si el cliente pide requisitos y no ha indicado que está en el extranjero,
+usa los requisitos para Guatemala:
+
+- DPI.
+- Recibo de luz o de agua.
+- Constancia de ingresos; puede ser de su contador o estados de cuenta.
+
+También recuerda que existe financiamiento propio.
+
+No dudes con estos requisitos. Son datos oficiales cargados por Gabriel.
+No uses "creo", "probablemente", "puede ser" o "tendría que confirmar"
+cuando respondas estos requisitos.
+
+
+REGLA DE PRESENTACION:
+El sistema ya se encarga de enviar automáticamente la presentación
+"¡Hola! 👋 Soy Gabriel Polero. 😊 ¿En qué le podemos servir?"
+al inicio de cada conversación.
+
+Por eso, en las respuestas normales posteriores NO vuelvas a presentarte
+ni repitas "Soy Gabriel Polero", salvo que el cliente pregunte explícitamente
+quién eres o con quién está hablando.
+
+Si el primer mensaje del cliente pide algo concreto, el sistema primero
+manda la presentación y después debe responder directamente lo solicitado.
+Si solo saluda, la respuesta debe ser breve y orientada a preguntar en qué
+le podemos servir, sin repetir varias presentaciones.
+
+REGLA DE SEGURIDAD Y FIRMEZA CON DATOS OFICIALES:
+Toda cifra y condición que esté cargada explícitamente en este código o en
+el contexto oficial debe responderse con seguridad, de forma directa y sin
+dudar.
+
+Cuando el dato existe, NO uses expresiones como:
+- "creo que"
+- "aproximadamente" (salvo que el dato oficial sea aproximado)
+- "puede ser"
+- "probablemente"
+- "déjame confirmar"
+- "tendría que revisar"
+- "según entiendo"
+
+Si el sistema tiene el monto exacto, di el monto exacto.
+
+Ejemplos:
+- Si preguntan mantenimiento de Palmeras: "Q50 al mes."
+- Si preguntan escrituración de Vista Hermosa: "Q3,500."
+- Si preguntan título de agua de Buenaventura: "Q4,000."
+
+Solo debes decir que no tienes un dato cuando REALMENTE no está cargado.
+Nunca inventes información que no exista.
+
+REGLA ESPECIAL DE GASTOS ADICIONALES:
+Estos datos NO se mencionan por iniciativa propia.
+Pero cuando el cliente pregunte por gastos adicionales, otros pagos,
+mantenimiento, agua, título de agua o escrituración, debes dar los montos
+exactos cargados y responder con seguridad.
+
+REGLA SOBRE DIFERENCIA DE PRECIOS ENTRE FASES:
+Si el cliente pregunta por qué una fase cuesta más que otra, responde con
+seguridad y de forma directa.
+
+Debes explicar que la diferencia se debe a:
+1. la plusvalía que ha ido ganando el proyecto; y
+2. el mayor avance de urbanización de las fases más recientes.
+
+Puedes mencionar que conforme avanzan calles, servicios, amenidades e
+infraestructura, el valor de los lotes se actualiza.
+
+NO uses frases dubitativas como:
+- "puede ser"
+- "quizá"
+- "probablemente"
+- "creo"
+- "posiblemente"
+
+NO digas que necesitas confirmar esta explicación si el cliente pregunta
+únicamente por la diferencia de precio entre fases.
+
+Tampoco prometas una ganancia futura específica ni un porcentaje de plusvalía.
+
+REGLA DE GASTOS ADICIONALES:
+Los gastos de escrituración, título de agua, mantenimiento y cuota de agua
+son información REACTIVA.
+
+NO los menciones por iniciativa propia.
+NO los agregues cuando el cliente solo pregunta precio, cuotas, ubicación,
+amenidades, fotos o financiamiento.
+
+Solo se explican cuando el cliente pregunta explícitamente por:
+- gastos adicionales;
+- otros pagos;
+- mantenimiento;
+- agua;
+- título de agua;
+- escrituración.
+
+
+REGLA DE MEMORIA DEL PROYECTO:
+Una vez que el cliente menciona un proyecto, ese proyecto queda como contexto
+activo y NO cambia por preguntas genéricas.
+
+Ejemplo:
+Cliente: "Me interesa Palmeras San Miguel"
+Luego: "¿Dónde queda?"
+Luego: "¿Y las cuotas?"
+Luego: "Mándame fotos"
+
+Todo sigue siendo PALMERAS SAN MIGUEL.
+
+No debes cambiar de proyecto por palabras como:
+- ubicación
+- precio
+- fotos
+- videos
+- cuotas
+- financiamiento
+- amenidades
+- servicios
+
+Solo cambia el proyecto si el cliente menciona explícitamente:
+- Palmeras San Miguel
+- Vista Hermosa
+- Buenaventura Cuyotenango
+
+Si el cliente menciona otro proyecto explícitamente, entonces sí cambia
+el contexto y desde ese punto continúa con el nuevo proyecto.
+============================================================
+
+Cada proyecto inmobiliario es COMPLETAMENTE INDEPENDIENTE.
+
+NUNCA mezcles información de diferentes proyectos.
+
+Esto incluye:
+
+- precios
+- enganches
+- cuotas
+- financiamiento
+- ubicaciones
+- medidas
+- amenidades
+- servicios
+- promociones
+- características
+- condiciones
+
+Si el cliente está hablando de BUENAVENTURA:
+
+UTILIZA EXCLUSIVAMENTE información de Buenaventura.
+
+NO utilices información de Palmeras San Miguel.
+NO utilices información de Vista Hermosa.
+
+
+Si el cliente está hablando de PALMERAS SAN MIGUEL:
+
+UTILIZA EXCLUSIVAMENTE información de Palmeras San Miguel.
+
+NO utilices información de Buenaventura.
+NO utilices información de Vista Hermosa.
+
+
+Si el cliente está hablando de VISTA HERMOSA:
+
+UTILIZA EXCLUSIVAMENTE información de Vista Hermosa.
+
+NO utilices información de Buenaventura.
+NO utilices información de Palmeras San Miguel.
+
+
+Solo puedes hablar de varios proyectos cuando el cliente
+EXPLICITAMENTE pida comparar proyectos.
+
+REGLA DE PRECIOS, CUOTAS Y COTIZACIONES:
+
+IMPORTANTE:
+Cuando el cliente pida precio, precios, costo, cotización, cuotas,
+mensualidades, financiamiento o enganche, NO debes desarrollar una
+respuesta de precios en texto. El sistema se encargará de enviar
+automáticamente las imágenes reales de las cotizaciones del proyecto.
+
+Solo debes mantener el proyecto activo correctamente.
+No preguntes medida.
+No preguntes fase.
+No preguntes nuevamente el proyecto si ya fue mencionado.
+
+Si el cliente ya está hablando de un proyecto y escribe:
+"precio", "precios", "¿cuánto cuesta?", "¿cuánto vale?",
+"cuotas", "cotización", "cotizaciones", "mensualidades",
+"plan de pagos" o "financiamiento",
+NO vuelvas a preguntar qué proyecto ni qué medida quiere.
+
+Para Palmeras San Miguel NO envíe todas las cotizaciones: siga su flujo progresivo por fase y modalidad. Para los demás proyectos conserve el comportamiento cargado.
+
+Cuando el sistema ya envíe el resumen de precios y las imágenes:
+- NO preguntes "¿quieres que te prepare una cotización?"
+- NO preguntes "¿qué medida quieres?"
+- NO vuelvas a ofrecer algo que ya fue enviado.
+- El siguiente paso comercial debe ser orientar hacia una visita o resolver
+  una duda específica que el cliente tenga.
+
+FASES:
+Cuando existan varias fases, menciona correctamente la fase de cada opción.
+No llames a dos cotizaciones distintas como si fueran el mismo lote.
+
+DIFERENCIA DE PRECIOS ENTRE FASES:
+Si el cliente pregunta por qué una fase tiene mayor precio que otra,
+puedes explicar de forma comercial y responsable que el desarrollo,
+avance y valorización observada en la fase anterior influyeron en la
+actualización del precio de las fases siguientes.
+
+Ejemplo de respuesta:
+"Sí 😊 La diferencia se debe a que el desarrollo y la plusvalía que fue
+ganando la primera fase influyeron en la actualización del precio de la
+siguiente etapa 🏡📈. Eso refleja la valorización que ha tenido el proyecto."
+
+IMPORTANTE:
+No afirmes que una compra "garantiza la inversión", ganancias futuras
+o una plusvalía determinada. Puedes hablar de valorización observada,
+pero nunca prometer rendimientos garantizados.
+
+
+============================================================
+MEMORIA DE LA CONVERSACION
+============================================================
+
+Antes de responder debes analizar los mensajes anteriores.
+
+Debes recordar de qué proyecto se está hablando.
+
+Ejemplo:
+
+Cliente:
+"¿Cuánto cuesta Buenaventura?"
+
+Gabriel:
+"Los lotes 8x16 están desde Q83,200 🏡💰"
+
+Cliente:
+"¿Y el financiamiento?"
+
+Debes entender que sigue preguntando por BUENAVENTURA.
+
+Por lo tanto debes responder UNICAMENTE con el financiamiento
+de Buenaventura.
+
+
+Otro ejemplo:
+
+Cliente:
+"Me interesa Palmeras"
+
+Gabriel:
+responde sobre Palmeras.
+
+Cliente:
+"¿Dónde queda?"
+
+Debes entender que pregunta dónde queda PALMERAS.
+
+
+También debes comprender mensajes cortos como:
+
+"Sí"
+"No"
+"Cuéntame"
+"¿Y el enganche?"
+"¿Y las cuotas?"
+"¿Dónde queda?"
+"¿Cuántos años?"
+"¿Qué incluye?"
+"¿Tiene piscina?"
+"¿Cómo sería?"
+"¿Y para comprar?"
+"¿Cuánto tengo que dar?"
+"¿Puedo abonar?"
+"Me interesa"
+
+utilizando el historial de conversación.
+
+
+============================================================
+PRECISION DE LA INFORMACION
+============================================================
+
+NUNCA inventes información.
+
+NUNCA completes información faltante utilizando datos
+de otro residencial.
+
+Si no conoces un dato específico, responde naturalmente:
+
+"Déjame confirmarte ese dato para darte la información correcta 👍"
+
+o:
+
+"Prefiero confirmarte ese dato antes de darte una información
+incorrecta 😊"
+
+Nunca inventes:
+
+- precios
+- cuotas
+- enganches
+- promociones
+- disponibilidad
+- fechas
+- medidas
+- ubicaciones
+- condiciones
+- documentos
+- procesos legales
+
+
+============================================================
+PRECIOS
+============================================================
+
+Respeta exactamente la forma en que aparecen los precios.
+
+Si dice:
+
+"desde Q83,200"
+
+debes decir:
+
+"desde Q83,200"
+
+NO debes convertirlo en un precio fijo.
+
+
+Si un precio es promocional, puedes indicarlo.
+
+Si una promoción necesita confirmación de vigencia,
+NO afirmes que todavía está vigente.
+
+
+============================================================
+PERSONALIDAD
+============================================================
+
+Tu personalidad debe sentirse:
+
+- amable
+- profesional
+- cercana
+- segura
+- conversacional
+- entusiasta
+- servicial
+- comercial sin ser agresiva
+
+COMPÓRTATE COMO UN ASESOR INMOBILIARIO EXPERTO EN VENTAS:
+- entiende la intención del cliente antes de responder;
+- no suenes desesperado por vender;
+- resuelve dudas con seguridad;
+- utiliza beneficios concretos;
+- detecta señales de compra;
+- cuando haya interés, conduce naturalmente hacia visita o siguiente paso;
+- no repitas preguntas que ya fueron respondidas;
+- no prometas rendimientos, plusvalía garantizada ni resultados financieros;
+- vende con claridad, confianza y seguimiento profesional.
+
+Habla como una persona acostumbrada a atender clientes
+por WhatsApp.
+
+NO debes sonar como robot.
+
+
+============================================================
+EMOJIS
+============================================================
+
+Utiliza emojis de manera frecuente pero natural.
+
+Puedes utilizar aproximadamente entre 1 y 4 emojis
+por respuesta cuando tenga sentido.
+
+Ejemplos:
+
+🏡 terrenos y vivienda
+
+📍 ubicaciones
+
+💰 precios y enganches
+
+💳 financiamiento
+
+📆 plazos y visitas
+
+✅ beneficios
+
+🏊 piscinas
+
+🌳 áreas verdes
+
+🇬🇹 Guatemala
+
+🇺🇸 Estados Unidos
+
+🙌 interés del cliente
+
+👋 saludos
+
+📲 contacto y seguimiento
+
+🔑 compra o propiedad
+
+🚗 visitas
+
+✨ características destacadas
+
+
+NO pongas emojis después de cada oración.
+
+NO llenes el mensaje de emojis sin sentido.
+
+
+============================================================
+ESTILO DE WHATSAPP
+============================================================
+
+Las respuestas deben ser relativamente cortas.
+
+Normalmente utiliza entre 1 y 3 párrafos pequeños.
+
+Evita enviar bloques enormes de texto.
+
+NO utilices lenguaje excesivamente formal.
+
+Evita expresiones como:
+
+"Estimado cliente"
+
+"Permítame informarle"
+
+"Por medio de la presente"
+
+"Será un placer brindarle información"
+
+
+Prefiere expresiones naturales como:
+
+"¡Claro! 😊"
+
+"Sí 🙌"
+
+"Te cuento..."
+
+"En este caso..."
+
+"Tenemos..."
+
+"Está ubicado..."
+
+"Podemos..."
+
+"Perfecto 👍"
+
+
+============================================================
+COMO RESPONDER
+============================================================
+
+Utiliza esta estructura mental:
+
+PASO 1:
+Entiende exactamente qué está preguntando el cliente.
+
+PASO 2:
+Identifica de qué proyecto se está hablando utilizando
+el mensaje actual y el historial.
+
+PASO 3:
+Responde directamente la pregunta.
+
+PASO 4:
+Agrega únicamente información complementaria que sea útil.
+
+PASO 5:
+Cuando tenga sentido, realiza UNA pregunta corta para
+mantener la conversación.
+
+
+NO hagas varias preguntas en el mismo mensaje.
+
+NO entregues toda la información del proyecto de golpe.
+
+
+============================================================
+EJEMPLO CORRECTO
+============================================================
+
+Cliente:
+
+"¿Cuánto cuesta Buenaventura?"
+
+
+Respuesta:
+
+"En Buenaventura Cuyotenango tenemos lotes 8x16 desde
+Q83,200 🏡💰
+
+¿Quieres que te cuente cómo sería el financiamiento? 😊"
+
+
+============================================================
+EJEMPLO INCORRECTO
+============================================================
+
+Cliente:
+
+"¿Cuánto cuesta Buenaventura?"
+
+
+Respuesta incorrecta:
+
+"Buenaventura cuesta Q83,200, Palmeras Q67,200 y Vista
+Hermosa Q83,200..."
+
+
+NUNCA hagas eso a menos que el cliente solicite comparar.
+
+
+============================================================
+INTELIGENCIA COMERCIAL
+============================================================
+
+No debes limitarte únicamente a contestar preguntas.
+
+También debes entender progresivamente qué necesita el cliente.
+
+Durante la conversación puedes descubrir:
+
+- qué proyecto le interesa
+- si busca terreno para construir
+- si busca patrimonio o inversión
+- qué ubicación le conviene
+- si necesita financiamiento
+- si vive en Guatemala
+- si vive en Estados Unidos
+- si desea visitar
+- si está listo para reservar
+
+PERO:
+
+NO interrogues al cliente.
+
+Haz como máximo UNA pregunta relevante por respuesta.
+
+
+============================================================
+CLIENTE QUE BUSCA PARA SU FAMILIA
+============================================================
+
+Si el cliente indica que busca un terreno para construir
+su casa o para su familia, adapta la conversación.
+
+Puedes destacar información relevante como:
+
+🏡 ubicación
+🌳 áreas verdes
+🏊 amenidades
+📍 cercanía
+✅ servicios
+
+siempre que esos datos estén disponibles para el proyecto.
+
+
+============================================================
+CLIENTE QUE BUSCA INVERSION
+============================================================
+
+Si el cliente dice que busca inversión o patrimonio,
+adapta la conversación.
+
+Puedes hablar de ubicación, proyecto, precio y características.
+
+NO inventes porcentajes de plusvalía.
+
+NO prometas ganancias.
+
+NO asegures que el precio subirá una cantidad específica.
+
+
+============================================================
+CLIENTES EN ESTADOS UNIDOS
+============================================================
+
+Si el cliente dice que vive en Estados Unidos,
+adapta automáticamente la conversación.
+
+Puedes utilizar:
+
+🇺🇸🇬🇹
+
+Explica solamente el proceso que esté documentado
+en la información oficial.
+
+Nunca inventes:
+
+- requisitos legales
+- poderes
+- documentos
+- procesos notariales
+- procesos migratorios
+
+Si falta información, indica que necesitas confirmarla.
+
+
+============================================================
+DETECTAR INTENCION ALTA DE COMPRA
+============================================================
+
+Considera que existe interés alto cuando el cliente diga
+cosas como:
+
+"Me interesa"
+
+"Quiero comprar"
+
+"Quiero uno"
+
+"Quiero reservar"
+
+"Quiero apartarlo"
+
+"Quiero dar el enganche"
+
+"Quiero ir"
+
+"Quiero visitarlo"
+
+"Quiero conocer el proyecto"
+
+"Mándame ubicación"
+
+"¿Cuándo puedo ir?"
+
+"¿Cómo hacemos?"
+
+"¿Cómo lo aparto?"
+
+"¿Qué necesito para comprar?"
+
+"Estoy interesado"
+
+
+Cuando esto suceda:
+
+NO satures al cliente con más información.
+
+Avanza hacia una acción concreta.
+
+
+Ejemplo:
+
+Cliente:
+
+"Quiero ir a conocer Buenaventura."
+
+
+Respuesta:
+
+"¡Excelente! 🙌🏡 Podemos coordinar una visita para que
+conozcas el proyecto personalmente 📍🚗
+
+¿Qué día te quedaría bien visitarlo? 📆"
+
+
+============================================================
+SALUDOS
+============================================================
+
+Si es el PRIMER mensaje del cliente y solamente dice:
+
+"Hola"
+
+"Buenas"
+
+"Información"
+
+"Info"
+
+"Quiero información"
+
+
+Puedes responder algo similar a:
+
+"¡Hola! 👋 Soy Gabriel Polero asesor de multiproyectos dive.😊
+
+Con gusto te ayudo. 🏡📍
+
+¿En qué sector estás buscando lotes?"
+
+
+IMPORTANTE:
+
+NO vuelvas a decir:
+
+"Soy Gabriel Polero"
+
+en cada mensaje.
+
+Solo preséntate cuando tenga sentido al inicio de la conversación.
+ 
+y tampoco limites al cliente en el primer mensaje a un lugar o otro deja que el te diga en donde esta interesado
+
+
+
+
+============================================================
+RESPUESTAS A MENSAJES MUY CORTOS
+============================================================
+
+Si el cliente responde:
+
+"Sí"
+
+debes revisar qué pregunta hiciste anteriormente.
+
+Ejemplo:
+
+Gabriel:
+
+"¿Quieres conocer el enganche de Buenaventura?"
+
+Cliente:
+
+"Sí"
+
+Debes responder con el enganche de Buenaventura.
+
+
+Si el cliente responde:
+
+"Cuéntame"
+
+debes continuar exactamente con el tema anterior.
+
+
+============================================================
+NO REPETIR INFORMACION
+============================================================
+
+Evita repetir datos que acabas de mencionar.
+
+Si ya dijiste:
+
+"Buenaventura está en el km 168"
+
+no vuelvas a explicar toda la ubicación en el siguiente
+mensaje si el cliente está preguntando por financiamiento.
+
+
+============================================================
+OBJETIVO PRINCIPAL
+============================================================
+
+Tu objetivo es que la conversación se sienta:
+
+HUMANA
+NATURAL
+UTIL
+RAPIDA
+PROFESIONAL
+
+Debes:
+
+- recordar el contexto
+- identificar correctamente el proyecto
+- responder con precisión
+- nunca mezclar proyectos
+- nunca inventar información
+- utilizar emojis naturalmente
+- mantener la conversación activa
+- detectar intención de compra
+- llevar al cliente progresivamente hacia una visita,
+  reserva o siguiente paso cuando corresponda
+
+REGLA ABSOLUTA DE CONTINUIDAD:
+- TODA respuesta que generes para el cliente debe terminar con EXACTAMENTE UNA pregunta breve y natural.
+- La pregunta debe nacer de lo que el cliente acaba de decir y ayudar a avanzar la conversación.
+- NO uses preguntas tipo menú si no hacen falta.
+- NO repitas una pregunta que el cliente ya respondió.
+- Primero resuelve completamente la duda actual y DESPUÉS haz la pregunta.
+- Si el cliente cambió de decisión, adapta la pregunta a su nueva decisión.
+- Si ya existe visita coordinada, no vuelvas a preguntar día u hora; haz una pregunta breve de servicio relacionada con su duda actual.
+
+REGLA DE INTERVENCIÓN HUMANA AUTOMÁTICA:
+- Si el cliente hace una pregunta INMOBILIARIA o comercial que no puedes responder con seguridad usando la información oficial y el historial, NO inventes ni adivines.
+- Si la consulta es inusual y necesita criterio/confirmación humana (por ejemplo disponibilidad exacta no confirmada, excepción comercial, trámite no documentado, condición especial o dato que no aparece), coloca EXACTAMENTE esta marca en la primera línea:
+[[REQUIERE_INTERVENCION]]
+- Después de la marca escribe una respuesta breve y natural en primera persona, por ejemplo: "Permítame confirmarle ese detalle para darle la información correcta 😊. ¿Me permite revisarlo y le respondo enseguida?"
+- La marca es interna y será eliminada antes de enviar el mensaje al cliente.
+- NO uses la marca simplemente porque el cliente haga una pregunta ajena al negocio; en temas ajenos al negocio solo redirige brevemente al tema inmobiliario.
 """
 
 
@@ -7100,16 +7749,9 @@ Antes de enviar, pregúntese internamente: “¿Todo esto es necesario para resp
 
 
         # Agregamos mensaje actual.
-        contenido_modelo = mensaje_cliente
-        if nota_tecnica:
-            contenido_modelo += (
-                "\n\n[NOTA INTERNA DEL SISTEMA - NO LA MENCIONE AL CLIENTE]\n"
-                + str(nota_tecnica)
-            )
-
         mensajes.append({
             "role": "user",
-            "content": contenido_modelo
+            "content": mensaje_cliente
         })
 
 
@@ -7147,16 +7789,7 @@ Antes de enviar, pregúntese internamente: “¿Todo esto es necesario para resp
                 "¿Me permite revisarlo y le respondo enseguida?"
             )
 
-        # Segunda pasada: un director comercial recorta, prioriza y humaniza el borrador.
-        # No usa guiones ni palabras clave: evalúa la intención real del cliente.
-        texto_editado = editar_respuesta_comercial_ia(
-            numero_cliente,
-            mensaje_cliente,
-            texto_limpio,
-            proyecto_actual_texto,
-            requiere_intervencion=requiere_intervencion,
-        )
-        texto_respuesta = asegurar_estilo_vendedor_ia(texto_editado)
+        texto_respuesta = asegurar_pregunta_final_ia(texto_limpio)
 
         if requiere_intervencion:
             marcar_intervencion_automatica(
@@ -7182,12 +7815,6 @@ Antes de enviar, pregúntese internamente: “¿Todo esto es necesario para resp
             texto_respuesta
         )
 
-        # Fase 1: la clasificación se actualiza en segundo plano y nunca retrasa
-        # la respuesta que recibe el cliente.
-        try:
-            programar_analisis_comercial_ia(numero_cliente)
-        except Exception as exc:
-            print("ERROR PROGRAMANDO ANALISIS COMERCIAL:", numero_cliente, exc)
 
         return texto_respuesta
 
@@ -7616,8 +8243,30 @@ def procesar_imagen_o_video_cliente(numero, mensaje, tipo_mensaje):
                 caption
             )
 
-        # En modo asesor IA total no usamos respuestas rígidas por estado antiguo.
-        # La imagen se analiza directamente y la respuesta nace del contenido real.
+        estado_topografia = obtener_estado_conversacion(numero)
+        proyecto_topografia = obtener_proyecto_actual(numero)
+
+        # Si el cliente viene de escoger topografía y manda una captura de un lote,
+        # podemos responder con la regla oficial del proyecto.
+        if estado_topografia.get("topografia_en_conversacion"):
+            if proyecto_topografia in {"palmeras", "buenaventura"} and not caption:
+                return (
+                    "Perfecto 😊 Recibí la captura. En este proyecto los lotes se "
+                    "manejan en topografía plana. Si me escribes también el número "
+                    "del lote, te ayudo a seguir revisando esa opción. 🏡"
+                )
+
+            if proyecto_topografia == "vista_hermosa" and not caption:
+                marcar_intervencion_automatica(
+                    numero,
+                    "Confirmar la topografía exacta del lote mostrado en la captura de Vista Hermosa",
+                    motivo="topografía exacta no confirmada"
+                )
+                return (
+                    "Perfecto 😊 Recibí la captura. En Vista Hermosa hay lotes planos "
+                    "y quebrados, así que para darle seguridad prefiero confirmar la "
+                    "topografía exacta de esa opción. ¿Me permite revisarlo y le respondo enseguida?"
+                )
 
         archivo, mime = obtener_media_whatsapp(
             media_id
@@ -7625,8 +8274,8 @@ def procesar_imagen_o_video_cliente(numero, mensaje, tipo_mensaje):
 
         if not archivo:
             return (
-                "Recibí su imagen 😊, pero no pude abrirla en este momento. "
-                "Puede intentar enviarla nuevamente."
+                "Recibí tu imagen 😊, pero no pude abrirla en este momento. "
+                "Puedes intentar enviarla nuevamente."
             )
 
         return analizar_imagen_cliente(
@@ -7653,8 +8302,8 @@ def procesar_imagen_o_video_cliente(numero, mensaje, tipo_mensaje):
 
         if not archivo:
             return (
-                "Recibí su video 🎥, pero no pude abrirlo en este momento. "
-                "Puede intentar enviarlo nuevamente."
+                "Recibí tu video 🎥, pero no pude abrirlo en este momento. "
+                "Puedes intentar enviarlo nuevamente."
             )
 
         return analizar_video_cliente(
@@ -7665,12 +8314,12 @@ def procesar_imagen_o_video_cliente(numero, mensaje, tipo_mensaje):
 
     if tipo_mensaje == "document":
         return (
-            "Recibí el documento 📄😊. Si necesita que revise algo específico, "
-            "puede enviarme una captura de la parte que desea consultar."
+            "Recibí el documento 📄😊. Si necesitas que revise algo específico, "
+            "puedes enviarme una captura de la parte que deseas consultar."
         )
 
     return (
-        "Recibí su archivo 😊. Para ayudarle mejor, escríbame qué desea "
+        "Recibí tu archivo 😊. Para ayudarte mejor, escríbeme qué deseas "
         "consultar sobre terrenos, precios, ubicación o financiamiento."
     )
 
@@ -7704,7 +8353,6 @@ def enviar_whatsapp(numero, texto, formalizar=True):
 
     if formalizar:
         texto = formalizar_trato_usted(texto)
-        texto = reforzar_negritas_comerciales(texto)
 
     # MISMA LÓGICA, DISTINTO CANAL: todo el motor sigue llamando a enviar_whatsapp(),
     # pero un contacto fb:<psid> sale por Messenger sin tocar la lógica comercial.
@@ -11026,31 +11674,45 @@ BNV_CUOTAS_FINANCIAMIENTO = {
 
 BNV_FICHA_OFICIAL = """
 PROYECTO: Buenaventura Cuyotenango.
-UBICACIÓN: km 168 de la carretera hacia la playa de Tulate, Cuyotenango; cerca de la Autopista Xochi y aproximadamente 15–18 minutos de los parques del IRTRA.
+UBICACIÓN: km 168 de la carretera hacia la playa de Tulate, Cuyotenango.
 PLANO: existe un solo plano general grande para todo el proyecto.
 
-OPCIONES RESIDENCIALES (para vivir o invertir):
+CALIFICACIÓN OBLIGATORIA:
+- Preguntar si el terreno lo busca para vivir, invertir o para negocio.
+- Para vivir o invertir se usan las opciones residenciales.
+- Para negocio se usa el lote comercial.
+
+VIVIR / INVERTIR:
 - 8x16: Q83,200. Enganche Q6,000.
 - 8x18: Q93,600. Enganche Q8,000.
-- El sector residencial contempla garita y muro perimetral.
+- El sector residencial mantiene los servicios y amenidades del proyecto, además de garita y muro perimetral.
 
-OPCIÓN COMERCIAL (para negocio):
-- 8x16 comercial: Q128,000. Enganche Q6,000.
+NEGOCIO / COMERCIAL:
+- Únicamente 8x16 comercial: Q128,000.
+- Enganche Q6,000.
 - El área comercial NO tiene garita y NO tiene muro perimetral.
+- Conserva los servicios cargados del proyecto.
 
 FORMAS DE PAGO:
 - Financiamiento propio de 2 a 8 años.
-- Plan de 1 año sin intereses: precio menos enganche dividido entre 11 mensualidades.
-- Pago al contado: iniciar ofreciendo 3% de descuento; puede revisarse una mejora hasta un máximo autorizado de 5% si existe negociación real.
-- Se permiten abonos extraordinarios a capital conforme a las condiciones cargadas.
+- Plan de 1 año sin intereses: precio menos enganche, dividido entre 11 mensualidades.
+- Pago al contado: ofrecer primero 3% de descuento; se puede negociar hasta un máximo de 5% según la operación.
+- Abonos extraordinarios a capital conforme a las reglas comerciales ya cargadas; no inventar condiciones nuevas.
 
 SERVICIOS:
-- Agua potable, energía eléctrica, calles pavimentadas y drenajes con planta de tratamiento.
+- Agua potable.
+- Energía eléctrica.
+- Calles pavimentadas.
+- Drenajes con planta de tratamiento.
 
 AMENIDADES:
-- Casa club, piscinas, áreas verdes, juegos para niños y caminamientos.
+- Casa club.
+- Piscinas.
+- Áreas verdes.
+- Juegos para niños.
+- Caminamientos.
 
-GASTOS ADICIONALES (solo cuando sean pertinentes o el cliente los pregunte):
+GASTOS ADICIONALES (son los mismos para vivir, invertir o negocio; solo si preguntan):
 - Escrituración 1 lote: Q6,000.
 - Cada lote adicional suma Q2,400 (2 lotes Q8,400; 3 lotes Q10,800).
 - Título de agua: Q4,000.
@@ -11058,12 +11720,12 @@ GASTOS ADICIONALES (solo cuando sean pertinentes o el cliente los pregunte):
 - Agua: Q100 al mes por 30,000 litros.
 
 RESERVA:
-- El monto exacto de reserva no está confirmado en esta versión. Si el cliente pregunta el monto exacto, no inventarlo: solicitar intervención humana.
+- El monto exacto de reserva NO fue definido en esta actualización. Si el cliente pregunta el monto exacto para reservar, no inventarlo: pausar la IA y avisar a Gabriel.
 
-DATOS IMPORTANTES:
-- No ofrecer 9x20.
+REGLAS:
+- No ofrecer 9x20: ya no forma parte de las opciones cargadas en este flujo.
 - No mezclar el precio residencial 8x16 con el comercial 8x16.
-- Si el cliente pide fotos, videos, plano o cotización, el sistema puede adjuntarlos.
+- Si el cliente pide fotos o videos, enviarlos inmediatamente desde las carpetas ya cargadas.
 """.strip()
 
 
@@ -12003,91 +12665,6 @@ def notificar_solicitud_llamada(numero, texto_cliente, dia=None, hora=None, inme
     Thread(target=avisar, daemon=True).start()
 
 
-def registrar_solicitud_llamada_ia(numero, texto):
-    """Registra/alerta una solicitud de llamada sin redactar la respuesta.
-    La redacción queda 100% en manos de la IA.
-    """
-    estado = obtener_estado_conversacion(numero)
-    pendiente = bool(estado.get("esperando_hora_llamada"))
-    es_solicitud = _es_solicitud_llamada(texto)
-    if not es_solicitud and not pendiente:
-        return None
-
-    dia = extraer_dia_visita(texto)
-    hora = extraer_hora_visita(texto)
-    if pendiente and not dia:
-        dia = estado.get("dia_llamada")
-
-    if hora:
-        estado["esperando_hora_llamada"] = False
-        estado["dia_llamada"] = dia
-        estado["hora_llamada"] = hora
-        persistir_cliente(numero)
-        notificar_solicitud_llamada(numero, texto, dia=dia, hora=hora, inmediata=False)
-        return {"estado": "programada", "dia": dia, "hora": hora}
-
-    if es_solicitud and _es_llamada_inmediata(texto) and not dia:
-        estado["esperando_hora_llamada"] = False
-        estado["dia_llamada"] = None
-        estado["hora_llamada"] = None
-        persistir_cliente(numero)
-        notificar_solicitud_llamada(numero, texto, inmediata=True)
-        return {"estado": "inmediata", "dia": None, "hora": None}
-
-    if dia:
-        estado["dia_llamada"] = dia
-    estado["esperando_hora_llamada"] = True
-    persistir_cliente(numero)
-    return {"estado": "falta_hora", "dia": dia, "hora": None}
-
-
-def registrar_visita_ia(numero, texto, proyecto):
-    """Actualiza el estado técnico de una visita sin imponer ninguna frase al cliente."""
-    estado = estado_visitas.setdefault(
-        numero, {"dia": None, "hora": None, "proyecto": proyecto, "cerrada": False, "pendiente": False}
-    )
-    ya_pendiente = bool(estado.get("pendiente") and not estado.get("cerrada"))
-    es_nueva_visita = detectar_intencion_visita(texto)
-    if not es_nueva_visita and not ya_pendiente:
-        return None
-
-    if es_nueva_visita:
-        estado["pendiente"] = True
-        estado["cerrada"] = False
-    if proyecto:
-        estado["proyecto"] = proyecto
-    dia = extraer_dia_visita(texto)
-    hora = extraer_hora_visita(texto)
-    if dia:
-        estado["dia"] = dia
-    if hora:
-        estado["hora"] = hora
-    if estado.get("dia") and estado.get("hora"):
-        estado["cerrada"] = True
-        estado["pendiente"] = False
-    persistir_cliente(numero)
-    return {
-        "proyecto": estado.get("proyecto"),
-        "dia": estado.get("dia"),
-        "hora": estado.get("hora"),
-        "cerrada": bool(estado.get("cerrada")),
-    }
-
-
-def pide_cotizacion_visual_ia(texto):
-    """Solo adjunta cotización cuando el cliente realmente pide verla/recibirla.
-    Preguntar precio o información general NO dispara imágenes automáticamente.
-    """
-    t = normalizar_ventas(texto)
-    expresiones = [
-        "cotizacion", "cotización", "mandeme la cotizacion", "mándeme la cotización",
-        "envie la cotizacion", "envíe la cotización", "quiero la cotizacion",
-        "tabla de cuotas", "cuadro de cuotas", "todas las cuotas", "ver las cuotas",
-        "plan de pagos", "imagen de cuotas"
-    ]
-    return any(x in t for x in expresiones)
-
-
 def manejar_solicitud_llamada(numero, texto, message_id=None):
     """Maneja llamadas con una respuesta breve y sin pedir el número de WhatsApp.
 
@@ -12217,11 +12794,10 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
 
         if tipo_mensaje == "audio":
             # La nota de voz se convierte en texto y continúa por TODO el flujo normal.
-            if not MODO_ASESOR_IA_TOTAL:
-                enviar_presentacion_si_corresponde(
-                    numero_cliente,
-                    message_id
-                )
+            enviar_presentacion_si_corresponde(
+                numero_cliente,
+                message_id
+            )
 
             texto_cliente = transcribir_audio_whatsapp(
                 mensaje
@@ -12234,8 +12810,8 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
                 ):
                     enviar_whatsapp(
                         numero_cliente,
-                        "Recibí su audio 🎙️😊, pero no pude transcribirlo "
-                        "en este momento. Intente enviarlo nuevamente."
+                        "Recibí tu audio 🎙️😊, pero no pude transcribirlo "
+                        "en este momento. Intenta enviarlo nuevamente."
                     )
                 return
 
@@ -12249,11 +12825,10 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
 
         elif tipo_mensaje != "text":
             # Fotos y videos se analizan; otros archivos reciben respuesta controlada.
-            if not MODO_ASESOR_IA_TOTAL:
-                enviar_presentacion_si_corresponde(
-                    numero_cliente,
-                    message_id
-                )
+            enviar_presentacion_si_corresponde(
+                numero_cliente,
+                message_id
+            )
 
             respuesta_media = procesar_imagen_o_video_cliente(
                 numero_cliente,
@@ -12285,17 +12860,59 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
             numero_cliente, mensaje, texto_cliente
         )
 
-        # SOLICITUD DE LLAMADA: en modo IA total solo registramos/alertamos.
-        # La frase que verá el cliente la redacta la IA según el contexto.
-        contexto_llamada_ia = None
-        if MODO_ASESOR_IA_TOTAL:
-            contexto_llamada_ia = registrar_solicitud_llamada_ia(numero_cliente, texto_cliente)
-        elif manejar_solicitud_llamada(numero_cliente, texto_cliente, message_id):
+        # SOLICITUD DE LLAMADA CON PRIORIDAD GLOBAL.
+        # No pedimos el número: ya estamos conversando con ese WhatsApp.
+        # Además evita que OpenAI responda con el guion antiguo de "número + horario".
+        if manejar_solicitud_llamada(numero_cliente, texto_cliente, message_id):
             return
 
-        # En el modo actual no existe bienvenida/presentación prefabricada.
-        # La IA decide cómo abrir según el mensaje real del cliente.
-        presentacion_enviada = False
+        # PRESENTACION INICIAL:
+        # Palmeras tiene una bienvenida comercial propia y flexible. Si el proyecto
+        # ya viene identificado como Palmeras y el mensaje es genérico, NO mandamos
+        # antes el saludo corto porque duplicaría la presentación.
+        proyecto_previo_presentacion = obtener_proyecto_actual(numero_cliente)
+        proyecto_mencionado_presentacion = detectar_proyecto_en_texto(texto_cliente)
+        proyecto_para_presentacion = proyecto_previo_presentacion or proyecto_mencionado_presentacion
+        cta_palmeras_presentacion = detectar_cta_palmeras(texto_cliente)
+        cta_vh_presentacion = detectar_cta_vista_hermosa(texto_cliente)
+        cta_bnv_presentacion = detectar_cta_bnv_nuevo(texto_cliente)
+        if proyecto_para_presentacion == "palmeras" and (
+            es_inicio_general_psm(texto_cliente)
+            or cta_palmeras_presentacion in {"informacion", "precios_cuotas", "visita"}
+        ):
+            presentacion_enviada = False
+        elif proyecto_para_presentacion == "vista_hermosa" and (
+            es_inicio_general_vh(texto_cliente)
+            or cta_vh_presentacion in {"informacion", "precios_cuotas", "visita"}
+        ):
+            # Vista Hermosa también tiene su propia presentación comercial progresiva.
+            presentacion_enviada = False
+        elif proyecto_para_presentacion == "buenaventura" and (
+            es_inicio_general_bnv(texto_cliente)
+            or cta_bnv_presentacion in {"inicio", "visita", "ubicacion"}
+        ):
+            # Buenaventura usa su propia presentación y calificación por uso.
+            presentacion_enviada = False
+        else:
+            presentacion_enviada = enviar_presentacion_si_corresponde(
+                numero_cliente,
+                message_id
+            )
+
+        # Si el PRIMER mensaje fue únicamente un saludo, ya respondimos con la
+        # presentación. Terminamos aquí para que OpenAI no mande un segundo saludo.
+        #
+        # Si escribió algo como:
+        # "Hola, ¿cuánto cuesta Buenaventura?"
+        # NO entra aquí: se presenta y luego continúa para responder la consulta.
+        if presentacion_enviada and es_solo_saludo(texto_cliente):
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(
+                numero_cliente,
+                "assistant",
+                mensaje_presentacion_inicial()
+            )
+            return
 
         # El proyecto del anuncio ya quedó fijado al inicio del procesamiento.
         # Si el cliente menciona explícitamente otro proyecto en el texto,
@@ -12307,103 +12924,786 @@ def procesar_mensaje_en_segundo_plano(datos, message_id):
             texto_cliente
         )
 
-        # Si la IA había recomendado un residencial alternativo y el cliente
-        # respondió simplemente "sí / claro / muéstreme", cambiamos el proyecto
-        # antes de entrar a los flujos rígidos del proyecto anterior.
-        alternativa_aceptada = aplicar_alternativa_pendiente_si_corresponde(
-            numero_cliente,
-            texto_cliente
-        )
-        if alternativa_aceptada:
-            proyecto = alternativa_aceptada
-
         # ========================================================
-        # ASESOR IA TOTAL: la IA decide TODA la conversación.
-        # Solo ejecutamos acciones técnicas que requieren archivos/estado del sistema.
-        # Ningún detector antiguo de precios, gastos, enganches, FAQs o protocolos
-        # puede redactar la respuesta del cliente mientras este modo esté activo.
+        # MULTIMEDIA CON PRIORIDAD GLOBAL
         # ========================================================
-        if MODO_ASESOR_IA_TOTAL:
-            notas_tecnicas = []
-
-            # Fotos/videos: se adjuntan si fueron pedidos, pero la IA decide qué decir después.
-            quiere_fotos = pide_fotos(texto_cliente)
-            quiere_videos = pide_videos(texto_cliente)
-            if quiere_fotos or quiere_videos:
-                enviar_multimedia_del_proyecto(
-                    numero_cliente, proyecto,
-                    enviar_fotos=quiere_fotos, enviar_videos=quiere_videos
-                )
-                notas_tecnicas.append(
-                    "Ya se adjuntó al cliente el material multimedia que pidió; responda como continuación después del envío."
-                )
-
-            # Planos: acción de archivo, no guion conversacional.
-            if pide_plano(texto_cliente):
-                if proyecto:
-                    enviar_planos_solicitados(numero_cliente, proyecto, texto_cliente)
-                    notas_tecnicas.append(
-                        "Ya se enviaron al cliente los planos solicitados del proyecto activo. No prometa enviarlos de nuevo."
-                    )
-                else:
-                    notas_tecnicas.append(
-                        "El cliente pidió planos pero no hay proyecto técnico confirmado; no invente cuál plano enviar."
-                    )
-
-            # Cotización visual: solo cuando la pide de forma explícita, nunca por 'más información'.
-            if proyecto and pide_cotizacion_visual_ia(texto_cliente):
-                enviar_cotizacion_del_proyecto(
-                    numero_cliente, proyecto, detectar_medida_en_texto(texto_cliente)
-                )
-                notas_tecnicas.append(
-                    "Ya se adjuntó la cotización/tabla de cuotas solicitada; use el mensaje para explicar o avanzar, no para repetir toda la tabla."
-                )
-
-            # Visitas: guardamos día/hora y dejamos que la IA redacte la coordinación.
-            contexto_visita_ia = registrar_visita_ia(numero_cliente, texto_cliente, proyecto)
-            if contexto_visita_ia:
-                notas_tecnicas.append(
-                    "Estado técnico de visita: " + json.dumps(contexto_visita_ia, ensure_ascii=False) + ". "
-                    "Si falta día o hora, pida únicamente el dato faltante. Si ya están ambos, confirme la visita. "
-                    "Para Vista Hermosa, con día y hora confirmados puede incluir el Google Maps cargado."
-                )
-
-            if contexto_llamada_ia:
-                notas_tecnicas.append(
-                    "Estado técnico de llamada: " + json.dumps(contexto_llamada_ia, ensure_ascii=False) + ". "
-                    "No pida el número de teléfono: ya es el WhatsApp del cliente. Si es inmediata, confirme que se le llama ahora; "
-                    "si falta hora, pregunte solo la hora; si ya existe hora, confírmela."
-                )
-
-            respuesta_ia = generar_respuesta(
-                numero_cliente, texto_cliente, nota_tecnica="\n".join(notas_tecnicas)
-            )
-
-            try:
-                registrar_alternativa_sugerida_por_ia(numero_cliente, respuesta_ia)
-            except Exception as exc:
-                print("ERROR REGISTRANDO ALTERNATIVA IA:", exc)
-
-            print("\nRESPUESTA IA TOTAL:")
-            print(respuesta_ia)
+        # Si el cliente pide fotos o videos, se le envía exactamente el tipo
+        # solicitado ANTES de cualquier protocolo comercial. Así Palmeras,
+        # Vista Hermosa y Buenaventura obedecen la petición aunque la conversación
+        # esté esperando fase, uso, medida o forma de pago.
+        quiere_fotos_prioridad = pide_fotos(texto_cliente)
+        quiere_videos_prioridad = pide_videos(texto_cliente)
+        if quiere_fotos_prioridad or quiere_videos_prioridad:
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
             if procesamiento_sigue_vigente(numero_cliente, message_id):
-                enviar_whatsapp(numero_cliente, respuesta_ia)
+                enviar_multimedia_del_proyecto(
+                    numero_cliente,
+                    proyecto,
+                    enviar_fotos=quiere_fotos_prioridad,
+                    enviar_videos=quiere_videos_prioridad
+                )
+            return
+
+        # BUENAVENTURA CUYOTENANGO: flujo comercial progresivo con
+        # calificación adicional por uso (vivir / invertir / negocio).
+        if manejar_flujo_buenaventura_humano(
+            numero_cliente,
+            texto_cliente,
+            proyecto,
+            message_id
+        ):
+            return
+
+        # VISTA HERMOSA: mismo cerebro comercial progresivo de Palmeras,
+        # con sus precios, fases, reserva, garita, muro y reglas propias.
+        if manejar_flujo_vista_hermosa_humano(
+            numero_cliente,
+            texto_cliente,
+            proyecto,
+            message_id
+        ):
+            return
+
+        # PALMERAS SAN MIGUEL: conversación comercial progresiva.
+        # Va ANTES del coordinador genérico para evitar que una consulta de precio
+        # vuelva a disparar el paquete completo antiguo.
+        if manejar_flujo_palmeras_humano(
+            numero_cliente,
+            texto_cliente,
+            proyecto,
+            message_id
+        ):
+            return
+
+        # Si el cliente envió varias preguntas seguidas (o una sola frase con
+        # varias solicitudes), las atendemos TODAS antes de entrar a los flujos
+        # de una sola intención que terminan con `return`.
+        if manejar_intenciones_multiples(
+            numero_cliente,
+            texto_cliente,
+            proyecto,
+            message_id
+        ):
             return
 
         # ========================================================
-        # RUTA DE RESPALDO
+        # BOTONES CONTROLADOS DE LA CAMPAÑA DE BUENAVENTURA
         # ========================================================
-        # Los algoritmos conversacionales antiguos fueron retirados de este
-        # procesador. Incluso si se desactiva temporalmente el modo principal,
-        # la conversación vuelve a OpenAI y no a respuestas/guiones históricos.
-        respuesta_ia = generar_respuesta(numero_cliente, texto_cliente)
-        try:
-            registrar_alternativa_sugerida_por_ia(numero_cliente, respuesta_ia)
-        except Exception as exc:
-            print("ERROR REGISTRANDO ALTERNATIVA IA:", exc)
+        # Tienen prioridad sobre todos los detectores generales y sobre OpenAI.
+        # Así "precios y cuotas", "ubicación", "lotes disponibles" y "agendar visita"
+        # siempre siguen el guion definido para esta campaña.
+        if manejar_cta_buenaventura(
+            numero_cliente,
+            texto_cliente,
+            proyecto,
+            message_id
+        ):
+            return
+
+        # Respuestas cortas a preguntas que hizo el flujo anterior:
+        # "para mi casa", "locales", "fin de semana", "sábado", "por la tarde", etc.
+        if manejar_seguimiento_cta_buenaventura(
+            numero_cliente,
+            texto_cliente,
+            proyecto,
+            message_id
+        ):
+            return
+
+        # INFORMACIÓN DE LOS TRES PROYECTOS EN UNA SOLA CONSULTA
+        # No obligamos al cliente a escoger antes si pidió explícitamente las 3 opciones.
+        if pide_info_todos_proyectos(texto_cliente):
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(
+                numero_cliente,
+                "assistant",
+                "Se envió el resumen comparativo de los 3 proyectos con ubicación, servicios y fotos de amenidades."
+            )
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_info_todos_proyectos(numero_cliente)
+            return
+
+        # Si justo antes recibió la información de los 3 proyectos y ahora elige uno,
+        # tratamos esa elección como si hubiera pedido información completa de ese proyecto
+        # desde el inicio. A partir de ahí queda fijado como proyecto activo y sigue el
+        # algoritmo normal de precios, planos, cuotas, fotos, ubicación, etc.
+        if esperando_proyecto_despues_tres(numero_cliente):
+            elegido = proyecto_elegido_despues_tres(texto_cliente)
+            if elegido:
+                estado = obtener_estado_conversacion(numero_cliente)
+                estado["proyecto_actual"] = elegido
+                proyecto_activo[numero_cliente] = elegido
+                estado["esperando_proyecto_despues_tres"] = False
+                persistir_cliente(numero_cliente)
+
+                guardar_mensaje(numero_cliente, "user", texto_cliente)
+                guardar_mensaje(
+                    numero_cliente,
+                    "assistant",
+                    f"Se envió la información completa del proyecto {elegido}."
+                )
+
+                if procesamiento_sigue_vigente(numero_cliente, message_id):
+                    if elegido == "palmeras":
+                        estado_psm_actual = reiniciar_flujo_psm_para_presentacion(numero_cliente)
+                        bienvenida = generar_bienvenida_psm(numero_cliente, texto_cliente)
+                        estado_psm_actual["psm_etapa"] = "esperando_fase"
+                        estado_psm_actual["psm_pregunta_pendiente"] = "fase"
+                        persistir_cliente(numero_cliente)
+                        enviar_whatsapp(numero_cliente, bienvenida)
+                        enviar_planos_psm_sin_topografia(numero_cliente)
+                    elif elegido == "vista_hermosa":
+                        estado_vh_actual = reiniciar_flujo_vh_para_presentacion(numero_cliente)
+                        bienvenida = generar_bienvenida_vh(numero_cliente, texto_cliente)
+                        estado_vh_actual["vh_etapa"] = "esperando_fase"
+                        estado_vh_actual["vh_pregunta_pendiente"] = "fase"
+                        persistir_cliente(numero_cliente)
+                        enviar_whatsapp(numero_cliente, bienvenida)
+                        enviar_planos_vh(numero_cliente)
+                    else:
+                        enviar_info_completa_proyecto(numero_cliente, elegido, cierre=True)
+                return
+
+            # No reutilizar un proyecto viejo si el cliente todavía no eligió cuál de los 3.
+            if any(x in normalizar_texto_topografia(texto_cliente) for x in [
+                "cotizacion", "cotización", "plano", "precio", "precios", "cuota", "financiamiento"
+            ]):
+                respuesta = (
+                    "¡Claro! 😊 Te lo envío. Solo dime de cuál de los 3 proyectos lo quieres: "
+                    "Buenaventura Cuyotenango, Palmeras San Miguel o Vista Hermosa. 🏡"
+                )
+                guardar_mensaje(numero_cliente, "user", texto_cliente)
+                guardar_mensaje(numero_cliente, "assistant", respuesta)
+                if procesamiento_sigue_vigente(numero_cliente, message_id):
+                    enviar_whatsapp(numero_cliente, respuesta)
+                return
+
+        # CONTINUACIÓN DE FOTOS/VIDEOS PENDIENTES
+        # Ejemplo:
+        # Cliente: "Me puede fotos"
+        # Bot: "¿De cuál proyecto?"
+        # Cliente: "Palmeras San Miguel"
+        # => enviar el material inmediatamente, sin volver a preguntar qué desea.
+        if multimedia_pendiente(numero_cliente) and proyecto:
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(
+                numero_cliente,
+                "assistant",
+                f"Se envió el material multimedia del proyecto {proyecto}."
+            )
+
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_multimedia_del_proyecto(
+                    numero_cliente,
+                    proyecto,
+                    enviar_fotos=True,
+                    enviar_videos=True
+                )
+            return
+
+        # SEGUIMIENTO DE TOPOGRAFÍA DESPUÉS DE ENVIAR PLANOS
+        # Tiene prioridad para que "plano" no vuelva a interpretarse como el PDF.
+        respuesta_pref_topografia = respuesta_preferencia_topografia(
+            numero_cliente,
+            texto_cliente,
+            proyecto
+        )
+        if respuesta_pref_topografia:
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta_pref_topografia)
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta_pref_topografia)
+            return
+
+        # Si ya estamos hablando de topografía y manda un número de lote.
+        respuesta_lote_topografia = respuesta_revision_lote_topografia(
+            numero_cliente,
+            proyecto,
+            texto_cliente
+        )
+        if respuesta_lote_topografia:
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta_lote_topografia)
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta_lote_topografia)
+            return
+
+        # Si pregunta si el lote elegido es quebrado/inclinado.
+        respuesta_quebrado = respuesta_si_pregunta_quebrado(
+            numero_cliente,
+            proyecto,
+            texto_cliente
+        )
+        if respuesta_quebrado:
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta_quebrado)
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta_quebrado)
+            return
+
+        # PROCESO DE COMPRA Y SEGUIMIENTOS DIRECTOS
+        respuesta_compra_directa = seguimiento_compra_respuesta_directa(
+            texto_cliente,
+            proyecto
+        )
+        if respuesta_compra_directa:
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta_compra_directa)
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta_compra_directa)
+            return
+
+        if pregunta_proceso_compra(texto_cliente):
+            respuesta = respuesta_proceso_compra(proyecto)
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta)
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta)
+            return
+
+        # BANCO / FINANCIAMIENTO PROPIO - PRIORIDAD ABSOLUTA
+        # Si la frase menciona banco + financiamiento, nunca debe caer en cotizaciones.
+        if pregunta_banco_financiamiento(texto_cliente):
+            respuesta = respuesta_financiamiento_propio()
+
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta)
+
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta)
+
+            return
+
+        # PLAZO DE ENTREGA DE ESCRITURA - PRIORIDAD SUPERIOR A GASTOS
+        if pregunta_plazo_escritura(texto_cliente):
+            respuesta = respuesta_plazo_escritura(proyecto)
+
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta)
+
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta)
+
+            return
+
+        # TITULO DE AGUA - EXPLICACION ESPECIFICA
+        if pregunta_titulo_agua(texto_cliente):
+            respuesta = respuesta_titulo_agua(proyecto)
+
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta)
+
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta)
+
+            return
+
+        # QUE INCLUYE / POR QUE SE PAGA EL MANTENIMIENTO - PRIORIDAD ALTA
+        if pregunta_que_incluye_mantenimiento(texto_cliente):
+            respuesta = respuesta_que_incluye_mantenimiento()
+
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta)
+
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta)
+
+            return
+
+        # COSTOS / GASTOS ADICIONALES - PRIORIDAD ABSOLUTA
+        # Debe resolverse antes de IA, cotización, cuotas o cualquier otra rama.
+        # También conserva el tema para seguimientos como "¿cuánto es de cada uno?".
+        if (
+            pide_gastos_adicionales(texto_cliente)
+            or seguimiento_gastos_adicionales(numero_cliente, texto_cliente)
+            or respuesta_proyecto_pendiente_de_gastos(numero_cliente, texto_cliente)
+        ):
+            ultima_intencion[numero_cliente] = "gastos_adicionales"
+            respuesta = respuesta_gastos_adicionales(proyecto)
+
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta)
+
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta)
+
+            return
+
+        # DESCUENTO POR PAGO DE CONTADO - REGLA EXACTA
+        respuesta_desc_pendiente = respuesta_cantidad_descuento_pendiente(
+            numero_cliente,
+            texto_cliente
+        )
+        if respuesta_desc_pendiente:
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta_desc_pendiente)
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta_desc_pendiente)
+            return
+
+        if pregunta_descuento_contado(texto_cliente):
+            respuesta = respuesta_descuento_contado(numero_cliente, texto_cliente)
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta)
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta)
+            return
+
+        # DISEÑO DE CONSTRUCCION LIBRE
+        if pregunta_diseno_construccion(texto_cliente):
+            respuesta = respuesta_diseno_construccion()
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta)
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta)
+            return
+
+        # PALMERAS: explicar POR QUÉ no hay garita únicamente si el cliente lo pregunta.
+        if pregunta_por_que_sin_garita_palmeras(texto_cliente, proyecto):
+            respuesta = respuesta_por_que_sin_garita_palmeras()
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta)
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta)
+            return
+
+        # ESTADO REAL DE GARITA / AMENIDADES SEGUN PROYECTO
+        if pregunta_estado_amenidades_o_garita(texto_cliente):
+            respuesta = respuesta_estado_amenidades(numero_cliente, proyecto)
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta)
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta)
+            return
+
+        # CONFIRMACION AL CTA "QUIERE QUE LE MUESTRE CUALES TENEMOS DISPONIBLES"
+        # Envia directamente el/los planos, leyenda de colores y seguimiento de topografia.
+        if confirmacion_para_mostrar_disponibilidad(numero_cliente, texto_cliente):
+            if not proyecto:
+                respuesta = (
+                    "Claro 😊 ¿De qué proyecto deseas que te muestre la disponibilidad: "
+                    "Palmeras San Miguel, Vista Hermosa o Buenaventura Cuyotenango?"
+                )
+                guardar_mensaje(numero_cliente, "user", texto_cliente)
+                guardar_mensaje(numero_cliente, "assistant", respuesta)
+                if procesamiento_sigue_vigente(numero_cliente, message_id):
+                    enviar_whatsapp(numero_cliente, respuesta)
+                return
+
+            limpiar_confirmacion_disponibilidad(numero_cliente)
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(
+                numero_cliente,
+                "assistant",
+                f"Se enviaron los planos de {nombre_proyecto_plano(proyecto)} y su leyenda de disponibilidad."
+            )
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_planos_solicitados(numero_cliente, proyecto, "disponibilidad")
+            return
+
+        # TOPOGRAFÍA DEL TERRENO - RESPUESTA INTELIGENTE
+        # "lote plano" significa terreno llano; NO debe enviar el PDF/croquis.
+        if pregunta_topografia_terreno(texto_cliente):
+            respuesta = generar_respuesta(
+                numero_cliente,
+                texto_cliente
+            )
+
+            if not respuesta or not respuesta.strip():
+                respuesta = (
+                    "Claro 😊 Déjame revisar exactamente lo que me solicitas "
+                    "y te lo envío en un momento."
+                )
+
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta)
+
+            return
+
+        # PLANOS / MAPA DE LOTES - PRIORIDAD ALTA
+        # Usa los PDF públicos de GitHub Pages. Si el archivo se actualiza
+        # conservando el mismo nombre, el bot seguirá enviando la versión nueva.
+        if pide_plano(texto_cliente):
+            # Si el mensaje trae un proyecto explícito, actualizar_proyecto_activo
+            # ya lo habrá fijado. Si no, usamos el proyecto de la conversación.
+            if not proyecto:
+                respuesta = (
+                    "Claro 😊 ¿De qué proyecto deseas que te envíe el plano: "
+                    "Palmeras San Miguel, Vista Hermosa o Buenaventura Cuyotenango?"
+                )
+                guardar_mensaje(numero_cliente, "user", texto_cliente)
+                guardar_mensaje(numero_cliente, "assistant", respuesta)
+                if procesamiento_sigue_vigente(numero_cliente, message_id):
+                    enviar_whatsapp(numero_cliente, respuesta)
+                return
+
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(
+                numero_cliente,
+                "assistant",
+                f"Se enviaron los planos de {nombre_proyecto_plano(proyecto)} y su leyenda de disponibilidad."
+            )
+
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_planos_solicitados(
+                    numero_cliente,
+                    proyecto,
+                    texto_cliente
+                )
+            return
+
+        # PLAZO DE ENTREGA / URBANIZACION
+        if pregunta_plazo_entrega_urbanizacion(texto_cliente):
+            respuesta = respuesta_plazo_entrega_urbanizacion(proyecto)
+
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta)
+
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta)
+
+            return
+
+        # AMENIDAD ESPECIFICA:
+        # Responde la pregunta y manda fotos/videos relacionados.
+        amenidad_pedida = detectar_amenidad_solicitada(texto_cliente)
+
+        if amenidad_pedida:
+            respuesta = respuesta_amenidad(
+                proyecto,
+                amenidad_pedida,
+                texto_cliente
+            )
+
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta)
+
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta)
+
+                enviar_material_amenidad(
+                    numero_cliente,
+                    proyecto,
+                    amenidad_pedida
+                )
+
+            return
+
+        # RUTA / XOCHI - PRIORIDAD ALTA:
+        # Debe ejecutarse ANTES de visita porque frases como "puedo ir por Xochi"
+        # contienen "puedo ir" pero son preguntas de ruta, no de agendamiento.
+        if pregunta_como_llegar_o_mejor_ruta(texto_cliente):
+            respuesta_ruta = respuesta_ruta_recomendada(proyecto)
+
+            if respuesta_ruta:
+                guardar_mensaje(numero_cliente, "user", texto_cliente)
+                guardar_mensaje(numero_cliente, "assistant", respuesta_ruta)
+
+                if procesamiento_sigue_vigente(numero_cliente, message_id):
+                    enviar_whatsapp(numero_cliente, respuesta_ruta)
+                    enviar_tarifario_xochi(numero_cliente)
+
+                return
+
+        # PUNTO DE ENCUENTRO:
+        # Si el cliente pregunta dónde nos podemos juntar, sugerimos primero
+        # el proyecto y luego un punto cercano conocido, sin dejar la respuesta abierta.
+        if pregunta_punto_encuentro(texto_cliente):
+            respuesta = respuesta_punto_encuentro(
+                numero_cliente,
+                proyecto
+            )
+
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta)
+
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta)
+
+            return
+
+        # CITA YA CERRADA:
+        # Nunca volvemos a ofrecer otra visita ni preguntamos otro día/hora
+        # a menos que el cliente pida explícitamente cambiar/reprogramar.
+        if cita_ya_cerrada(numero_cliente) and pregunta_sobre_cita_existente(texto_cliente):
+            respuesta = resumen_cita_cerrada(numero_cliente)
+
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta)
+
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta)
+
+            return
+
+        # VISITA / CITA:
+        # Si el cliente ya quiere conocer los lotes, dejamos de repetir información
+        # y avanzamos directamente a coordinar día y hora.
+        if (
+            not cita_ya_cerrada(numero_cliente)
+            and (
+                detectar_intencion_visita(texto_cliente)
+                or continuar_visita_pendiente(
+                    numero_cliente,
+                    texto_cliente
+                )
+            )
+        ):
+            respuesta = respuesta_visita(
+                numero_cliente,
+                texto_cliente,
+                proyecto
+            )
+
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta)
+
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta)
+
+            return
+
+        # COMPRA DESDE EL EXTRANJERO / REQUISITOS
+        # Si el cliente dice que está fuera de Guatemala, o pide requisitos,
+        # damos los documentos y un CTA claro para avanzar.
+        if cliente_en_extranjero(texto_cliente) or pide_requisitos_compra(texto_cliente):
+            respuesta = respuesta_requisitos_segun_contexto(
+                numero_cliente,
+                texto_cliente
+            )
+
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta)
+
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta)
+
+            return
+
+        # ENGANCHE - RESPUESTA DIRECTA Y PRIORITARIA
+        # Aplica a todos los proyectos: desde Q6,000 y puede fraccionarse
+        # en 2 pagos mensuales de Q3,000. No manda cotizaciones si solo
+        # preguntan por el enganche.
+        if pregunta_enganche(texto_cliente):
+            ultima_intencion[numero_cliente] = "enganche"
+            respuesta = respuesta_enganche(proyecto, texto_cliente)
+
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta)
+
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta)
+
+            return
+
+        # MEDIDAS DISPONIBLES - RESPUESTA DIRECTA
+        if pregunta_medidas_disponibles(texto_cliente):
+            respuesta = respuesta_medidas_disponibles(proyecto)
+            if respuesta:
+                guardar_mensaje(numero_cliente, "user", texto_cliente)
+                guardar_mensaje(numero_cliente, "assistant", respuesta)
+                if procesamiento_sigue_vigente(numero_cliente, message_id):
+                    enviar_whatsapp(numero_cliente, respuesta)
+                return
+
+        # MEDIDA ESPECIFICA - PRECIO Y ENGANCHE EXACTOS
+        medida_consultada = detectar_medida_en_texto(texto_cliente)
+        if medida_consultada and not pregunta_cuota_especifica(texto_cliente):
+            # Si pide explícitamente una cotización, esa intención se atiende más abajo
+            # para poder enviar la imagen correspondiente. Para consultas naturales como
+            # "¿lotes de 8x18?" o "¿cuánto vale 8x16?", respondemos con el monto exacto.
+            if not any(x in texto_cliente.lower() for x in ["cotizacion", "cotización", "cotizaciones"]):
+                respuesta = respuesta_medida_especifica(proyecto, medida_consultada, texto_cliente)
+                if respuesta:
+                    guardar_mensaje(numero_cliente, "user", texto_cliente)
+                    guardar_mensaje(numero_cliente, "assistant", respuesta)
+                    if procesamiento_sigue_vigente(numero_cliente, message_id):
+                        enviar_whatsapp(numero_cliente, respuesta)
+                    return
+
+        # CANTIDAD DE LOTES DEL PROYECTO
+        if pregunta_cantidad_lotes(texto_cliente):
+            respuesta = respuesta_cantidad_lotes(proyecto)
+
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta)
+
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta)
+
+            return
+
+        # CLIMA DEL LUGAR
+        if pregunta_clima_lugar(texto_cliente):
+            respuesta = respuesta_clima_lugar()
+
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta)
+
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_whatsapp(numero_cliente, respuesta)
+
+            return
+
+        # MEJOR RUTA / XOCHI
+        # Si por el proyecto activo la mejor recomendación es Xochi,
+        # responde la ruta y envía automáticamente el tarifario.
+        if pregunta_como_llegar_o_mejor_ruta(texto_cliente):
+            respuesta_ruta = respuesta_ruta_recomendada(proyecto)
+
+            if respuesta_ruta:
+                guardar_mensaje(numero_cliente, "user", texto_cliente)
+                guardar_mensaje(numero_cliente, "assistant", respuesta_ruta)
+
+                if procesamiento_sigue_vigente(numero_cliente, message_id):
+                    enviar_whatsapp(numero_cliente, respuesta_ruta)
+                    enviar_tarifario_xochi(numero_cliente)
+
+                return
+
+        # UBICACION
+        if pide_ubicacion(texto_cliente):
+            enviar_ubicacion_proyecto(
+                numero_cliente,
+                proyecto
+            )
+            return
+
+        # Diferencia de precio entre fases
+        # Recuperamos también el proyecto persistente por si el mensaje actual es muy corto
+        # y no vuelve a mencionar "Vista Hermosa" o "Palmeras".
+        proyecto_diferencia = proyecto or obtener_proyecto_actual(numero_cliente)
+        if pregunta_por_diferencia_de_fases(texto_cliente, proyecto_diferencia):
+            respuesta = respuesta_diferencia_fases(numero_cliente)
+
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(numero_cliente, "assistant", respuesta)
+
+            enviar_whatsapp(numero_cliente, respuesta)
+            return
+
+        # CUOTA ESPECIFICA POR PLAZO:
+        # Si pregunta "¿cuánto es la cuota a 7 años?", responder el monto.
+        # NO volver a enviar las imágenes de cotización.
+        if pregunta_cuota_especifica(texto_cliente):
+            respuesta = respuesta_cuota_especifica(
+                proyecto,
+                texto_cliente
+            )
+
+            if respuesta:
+                guardar_mensaje(numero_cliente, "user", texto_cliente)
+                guardar_mensaje(numero_cliente, "assistant", respuesta)
+
+                if procesamiento_sigue_vigente(numero_cliente, message_id):
+                    enviar_whatsapp(numero_cliente, respuesta)
+
+                return
+
+        # PRECIO GENERAL: EVITAR REPETIR TODO EL PAQUETE
+        # Si "¿cuánto valen los terrenos?" es la primera consulta comercial,
+        # mantenemos el comportamiento completo. Si la conversación ya venía
+        # avanzando, respondemos solo precios + una pregunta de calificación.
+        if proyecto != "palmeras" and es_consulta_general_de_precio(texto_cliente):
+            if es_primera_consulta_comercial(numero_cliente):
+                guardar_mensaje(numero_cliente, "user", texto_cliente)
+                guardar_mensaje(
+                    numero_cliente,
+                    "assistant",
+                    f"Se envió la información completa de {proyecto or 'el proyecto'} por ser la primera consulta comercial."
+                )
+                if procesamiento_sigue_vigente(numero_cliente, message_id):
+                    if proyecto:
+                        enviar_info_completa_proyecto(numero_cliente, proyecto, cierre=True)
+                    else:
+                        enviar_whatsapp(
+                            numero_cliente,
+                            "¡Claro! 😊 ¿De cuál proyecto desea conocer los precios?"
+                        )
+                return
+
+            respuesta_precio = respuesta_precio_breve_con_intencion(proyecto)
+            if respuesta_precio:
+                guardar_mensaje(numero_cliente, "user", texto_cliente)
+                guardar_mensaje(numero_cliente, "assistant", respuesta_precio)
+                if procesamiento_sigue_vigente(numero_cliente, message_id):
+                    enviar_whatsapp(numero_cliente, respuesta_precio)
+                return
+
+        # PRECIOS / CUOTAS / COTIZACIONES
+        # Cotización explícita, cuotas, plazos o confirmaciones conservan el flujo
+        # de imágenes y planes de pago existente.
+        if proyecto != "palmeras" and debe_enviar_cotizacion_directa(
+            numero_cliente,
+            texto_cliente
+        ):
+            enviar_cotizacion_del_proyecto(
+                numero_cliente,
+                proyecto,
+                detectar_medida_en_texto(texto_cliente)
+            )
+            return
+
+        # MULTIMEDIA CONTROLADA (fallback; la prioridad global está arriba).
+        quiere_fotos = pide_fotos(texto_cliente)
+        quiere_videos = pide_videos(texto_cliente)
+
+        if quiere_fotos or quiere_videos:
+            enviar_multimedia_del_proyecto(
+                numero_cliente,
+                proyecto,
+                enviar_fotos=quiere_fotos,
+                enviar_videos=quiere_videos
+            )
+            return
+
+        # SELECCIÓN SIMPLE DE PROYECTO -> INFORMACIÓN COMPLETA DIRECTA
+        # Si el cliente únicamente responde con el nombre del proyecto (por ejemplo
+        # "De Buenaventura"), no lo hacemos elegir entre cotización, ubicación,
+        # requisitos o visita. Enviamos de una vez el paquete completo que ya existe
+        # en este app.py: resumen, ubicación, cotizaciones, fotos/videos y amenidades.
+        # Este bloque está justo antes de la IA para NO alterar ningún flujo específico
+        # que ya se trabajó anteriormente.
+        if proyecto and proyecto != "palmeras" and es_seleccion_simple_de_proyecto(texto_cliente):
+            guardar_mensaje(numero_cliente, "user", texto_cliente)
+            guardar_mensaje(
+                numero_cliente,
+                "assistant",
+                f"Se envió la información completa del proyecto {proyecto}."
+            )
+
+            if procesamiento_sigue_vigente(numero_cliente, message_id):
+                enviar_info_completa_proyecto(
+                    numero_cliente,
+                    proyecto,
+                    cierre=True
+                )
+            return
+
+        # RESPUESTA NORMAL CON IA
+        respuesta_ia = generar_respuesta(
+            numero_cliente,
+            texto_cliente
+        )
+
+        print("\nRESPUESTA IA:")
+        print(respuesta_ia)
+
         if procesamiento_sigue_vigente(numero_cliente, message_id):
-            enviar_whatsapp(numero_cliente, respuesta_ia)
-        return
+            enviar_whatsapp(
+                numero_cliente,
+                respuesta_ia
+            )
+
+            # Si la IA recomendó Xochi al responder una consulta de ruta,
+            # adjuntamos el tarifario automáticamente.
+            if (
+                pregunta_como_llegar_o_mejor_ruta(texto_cliente)
+                and "xochi" in respuesta_ia.lower()
+            ):
+                enviar_tarifario_xochi(numero_cliente)
+        else:
+            print("RESPUESTA TARDIA CANCELADA:", message_id)
 
     except Exception as error:
         print("\nERROR PROCESANDO MENSAJE:")
@@ -13500,27 +14800,8 @@ CRM_HTML = r"""
         .quick-chip.secondary { border-color:#d1d5db; background:white; color:#374151; }
         .quick-chip:disabled { opacity:.42; cursor:not-allowed; }
         .next-mini { margin-top:5px; font-size:11px; color:#b45309; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-        .intent-badge {
-            display:inline-block; margin-top:6px; margin-left:4px; padding:3px 7px; border-radius:999px;
-            font-size:10px; font-weight:900; background:#f1f5f9; color:#334155;
-        }
-        .intent-badge.high { background:#fee2e2; color:#b91c1c; }
-        .intent-badge.medium { background:#dcfce7; color:#166534; }
-        .intent-badge.unknown { background:#fef3c7; color:#92400e; }
-        .ai-analysis {
-            background:#f8fafc; border-bottom:1px solid #dbe1e7; padding:12px 18px;
-        }
-        .ai-analysis-head { display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
-        .ai-analysis-title { font-weight:900; font-size:13px; color:#0f172a; }
-        .ai-analysis-grid { display:grid; grid-template-columns:repeat(4,minmax(150px,1fr)); gap:8px; margin-top:10px; }
-        .ai-box { background:white; border:1px solid #e2e8f0; border-radius:10px; padding:9px 10px; min-width:0; }
-        .ai-box.wide { grid-column:span 2; }
-        .ai-label { font-size:10px; font-weight:800; color:#64748b; text-transform:uppercase; letter-spacing:.03em; }
-        .ai-value { margin-top:4px; font-size:12px; line-height:1.35; color:#1e293b; white-space:pre-wrap; }
-        .ai-refresh { border:1px solid #cbd5e1; background:white; color:#334155; border-radius:8px; padding:7px 10px; font-size:11px; font-weight:800; cursor:pointer; }
         @media (max-width: 980px) {
             .lead-form { grid-template-columns:1fr 1fr; }
-            .ai-analysis-grid { grid-template-columns:1fr 1fr; }
             .save-lead { width:100%; }
         }
         @media (max-width: 760px) {
@@ -13532,8 +14813,6 @@ CRM_HTML = r"""
             }
             .bubble { max-width: 88%; }
             .chat-head { align-items: flex-start; }
-            .ai-analysis-grid { grid-template-columns:1fr; }
-            .ai-box.wide { grid-column:span 1; }
         }
     </style>
 </head>
@@ -13593,7 +14872,6 @@ CRM_HTML = r"""
                    data-label="{{ ((c.nombre_manual ~ ' ' ~ c.identificador) if c.nombre_manual else c.identificador) ~ ' ' ~ c.anuncio_nombre ~ ' ' ~ c.anuncio_id }}"
                    data-stage="{{ c.etapa }}"
                    data-folder="{{ c.carpeta }}"
-                   data-intent="{{ c.clasificacion_comercial }}"
                    href="{{ url_for('crm', numero=c.numero) }}">
                     <div>
                         {% if c.canal == 'facebook' %}
@@ -13615,9 +14893,6 @@ CRM_HTML = r"""
                         <div class="small" style="color:{% if c.anuncio_mapeado %}#2563eb{% else %}#b45309{% endif %};font-weight:700;">📢 {{ c.anuncio_nombre }}</div>
                     {% endif %}
                     <span class="stage-badge">{{ c.etapa }}</span>
-                    <span class="intent-badge {% if c.clasificacion_comercial == 'ALTA INTENCIÓN' %}high{% elif c.clasificacion_comercial == 'INTENCIÓN MEDIA' %}medium{% else %}unknown{% endif %}">
-                        {% if c.clasificacion_comercial == 'ALTA INTENCIÓN' %}🔥{% elif c.clasificacion_comercial == 'INTENCIÓN MEDIA' %}🟢{% else %}🟡{% endif %} {{ c.clasificacion_comercial }}
-                    </span>
                     {% if c.carpeta %}<span class="folder-badge">📁 {{ c.carpeta }}</span>{% endif %}
                     {% if c.proxima_accion %}
                         <div class="next-mini">⏰ {{ c.proxima_accion }}{% if c.proxima_accion_fecha %} · {{ c.proxima_accion_fecha|replace('T',' ') }}{% endif %}</div>
@@ -13660,37 +14935,6 @@ CRM_HTML = r"""
                         {% endif %}
                     </form>
                 </div>
-            </div>
-
-            <div class="ai-analysis">
-                <div class="ai-analysis-head">
-                    <div>
-                        <span class="ai-analysis-title">🧠 Análisis comercial IA</span>
-                        <span class="intent-badge {% if meta_seleccionada.clasificacion_comercial == 'ALTA INTENCIÓN' %}high{% elif meta_seleccionada.clasificacion_comercial == 'INTENCIÓN MEDIA' %}medium{% else %}unknown{% endif %}">
-                            {% if meta_seleccionada.clasificacion_comercial == 'ALTA INTENCIÓN' %}🔥{% elif meta_seleccionada.clasificacion_comercial == 'INTENCIÓN MEDIA' %}🟢{% else %}🟡{% endif %} {{ meta_seleccionada.clasificacion_comercial }}
-                        </span>
-                        {% if meta_seleccionada.analisis_confianza %}<span class="small" style="display:inline-block;margin-left:6px;">Confianza {{ meta_seleccionada.analisis_confianza }}</span>{% endif %}
-                    </div>
-                    <form method="post" action="{{ url_for('crm_reanalizar_ia', numero=seleccionado) }}">
-                        <button class="ai-refresh" type="submit">🔄 Reanalizar</button>
-                    </form>
-                </div>
-                {% if meta_seleccionada.resumen_ia %}
-                <div class="ai-analysis-grid">
-                    <div class="ai-box wide"><div class="ai-label">Resumen</div><div class="ai-value">{{ meta_seleccionada.resumen_ia }}</div></div>
-                    <div class="ai-box"><div class="ai-label">Motivación</div><div class="ai-value">{{ meta_seleccionada.motivacion or 'No identificada' }}</div></div>
-                    <div class="ai-box"><div class="ai-label">Interés concreto</div><div class="ai-value">{{ meta_seleccionada.interes_especifico or 'No identificado' }}</div></div>
-                    <div class="ai-box"><div class="ai-label">Forma de pago</div><div class="ai-value">{{ meta_seleccionada.forma_pago_interes or 'No identificada' }}</div></div>
-                    <div class="ai-box"><div class="ai-label">Horizonte de compra</div><div class="ai-value">{{ meta_seleccionada.horizonte_compra or 'No identificado' }}</div></div>
-                    <div class="ai-box wide"><div class="ai-label">Objeciones / dudas</div><div class="ai-value">{{ meta_seleccionada.objeciones or 'Sin objeción clara todavía' }}</div></div>
-                    <div class="ai-box wide"><div class="ai-label">Señales de compra</div><div class="ai-value">{{ meta_seleccionada.senales_compra or 'Todavía no hay señales concluyentes' }}</div></div>
-                    <div class="ai-box wide"><div class="ai-label">Próxima acción recomendada</div><div class="ai-value">{{ meta_seleccionada.proxima_accion_ia or 'Continuar obteniendo contexto de forma natural' }}</div></div>
-                    <div class="ai-box"><div class="ai-label">Estado comercial</div><div class="ai-value">{{ meta_seleccionada.estado_negociacion_ia or 'En evaluación' }}</div></div>
-                    <div class="ai-box"><div class="ai-label">Último análisis</div><div class="ai-value">{{ meta_seleccionada.analisis_updated_at or 'Pendiente' }}</div></div>
-                </div>
-                {% else %}
-                    <div class="small" style="margin-top:7px;">Aún no hay análisis comercial. Se generará automáticamente después de la próxima conversación o puede usar “Reanalizar”.</div>
-                {% endif %}
             </div>
 
             <div class="lead-management">
@@ -13736,7 +14980,9 @@ CRM_HTML = r"""
                 <div class="quick-tools-title">⚡ MENSAJES Y ENVÍOS RÁPIDOS · usan el proyecto activo: {{ proyecto_seleccionado }}</div>
                 <div class="quick-grid">
                     <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='palmeras-completa') }}"><button class="quick-chip" type="submit" title="Fija Palmeras San Miguel como proyecto activo y envía toda la información">🌴 Info Palmeras</button></form>
+                    <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='protocolo-palmeras') }}"><button class="quick-chip" type="submit" title="Envía la presentación aprobada de Palmeras, ambos planos y deja el flujo esperando fase">🌴 Protocolo Palmeras</button></form>
                     <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='vista-completa') }}"><button class="quick-chip" type="submit" title="Fija Ciudad Vista Hermosa como proyecto activo y envía toda la información">🏘️ Info Vista Hermosa</button></form>
+                    <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='info-completa') }}"><button class="quick-chip" type="submit" {% if not proyecto_clave_seleccionado %}disabled title="Primero debe existir un proyecto activo"{% endif %}>🏡 Info completa</button></form>
                     <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='cotizaciones') }}"><button class="quick-chip" type="submit" {% if not proyecto_clave_seleccionado %}disabled{% endif %}>💰 Cotizaciones</button></form>
                     <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='ubicacion') }}"><button class="quick-chip" type="submit" {% if not proyecto_clave_seleccionado %}disabled{% endif %}>📍 Ubicación</button></form>
                     <form method="post" action="{{ url_for('crm_accion_rapida', numero=seleccionado, accion='plano') }}"><button class="quick-chip" type="submit" {% if not proyecto_clave_seleccionado %}disabled{% endif %}>🗺️ Plano</button></form>
@@ -14567,9 +15813,6 @@ def crm():
                 "proxima_accion": meta["proxima_accion"],
                 "proxima_accion_fecha": meta["proxima_accion_fecha"],
                 "carpeta": meta.get("carpeta", ""),
-                "clasificacion_comercial": meta.get("clasificacion_comercial", "INTENCIÓN POR DETERMINAR"),
-                "resumen_ia": meta.get("resumen_ia", ""),
-                "proxima_accion_ia": meta.get("proxima_accion_ia", ""),
             })
 
         mensajes_seleccionados = list(
@@ -14674,17 +15917,6 @@ def crm_data():
         "seleccionado": seleccionado,
         "eventos_entrantes": eventos_entrantes
     })
-
-
-@app.route("/crm/analisis-ia/<numero>", methods=["POST"])
-def crm_reanalizar_ia(numero):
-    if not crm_autorizado():
-        return crm_pedir_login()
-    try:
-        programar_analisis_comercial_ia(numero)
-    except Exception as exc:
-        print("CRM REANALIZAR IA ERROR:", numero, exc)
-    return redirect(url_for("crm", numero=numero))
 
 
 @app.route("/crm/gestion/<numero>", methods=["POST"])
