@@ -1,3 +1,4 @@
+# VERSION_CRM_MEMORIA_COMERCIAL_IA_FASE1_20261019 - clasificación + resumen + objeciones + próxima acción
 # VERSION_SEGUIMIENTO_PERSISTENTE_CARPETAS_CRM_20261016 - 10m+1/3/5/7 reanudable + carpetas manuales CRM
 # VERSION_INTERVENCION_1357_NOMBRES_CRM_20261004 - seguimientos 10m+1/3/5/7, pausa IA por duda y nombre manual CRM
 # VERSION_CTA_PALMERAS_3_PREGUNTAS_20261004 - info y precios siguen protocolo; visita lo rompe
@@ -6115,6 +6116,15 @@ CRM_ETAPAS = [
     "Perdido",
 ]
 
+# Clasificación comercial automática de la Fase 1.
+# Se mantiene separada de la etapa manual del embudo para que la IA pueda
+# analizar sin pisar decisiones que Gabriel haya tomado en el CRM.
+CRM_CLASIFICACIONES_IA = [
+    "ALTA INTENCIÓN",
+    "INTENCIÓN MEDIA",
+    "INTENCIÓN POR DETERMINAR",
+]
+
 crm_lead_meta = {}
 _crm_lead_meta_cargada = False
 _crm_lead_meta_db_inicializada = False
@@ -6142,10 +6152,34 @@ def inicializar_crm_lead_meta_db():
                             proxima_accion TEXT NOT NULL DEFAULT '',
                             proxima_accion_fecha TEXT NOT NULL DEFAULT '',
                             carpeta TEXT NOT NULL DEFAULT '',
+                            clasificacion_comercial TEXT NOT NULL DEFAULT 'INTENCIÓN POR DETERMINAR',
+                            motivacion TEXT NOT NULL DEFAULT '',
+                            interes_especifico TEXT NOT NULL DEFAULT '',
+                            forma_pago_interes TEXT NOT NULL DEFAULT '',
+                            horizonte_compra TEXT NOT NULL DEFAULT '',
+                            objeciones TEXT NOT NULL DEFAULT '',
+                            senales_compra TEXT NOT NULL DEFAULT '',
+                            resumen_ia TEXT NOT NULL DEFAULT '',
+                            proxima_accion_ia TEXT NOT NULL DEFAULT '',
+                            estado_negociacion_ia TEXT NOT NULL DEFAULT '',
+                            analisis_confianza TEXT NOT NULL DEFAULT '',
+                            analisis_updated_at TIMESTAMPTZ NULL,
                             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                         )
                     """)
                     cur.execute("ALTER TABLE crm_lead_meta ADD COLUMN IF NOT EXISTS carpeta TEXT NOT NULL DEFAULT ''")
+                    cur.execute("ALTER TABLE crm_lead_meta ADD COLUMN IF NOT EXISTS clasificacion_comercial TEXT NOT NULL DEFAULT 'INTENCIÓN POR DETERMINAR'")
+                    cur.execute("ALTER TABLE crm_lead_meta ADD COLUMN IF NOT EXISTS motivacion TEXT NOT NULL DEFAULT ''")
+                    cur.execute("ALTER TABLE crm_lead_meta ADD COLUMN IF NOT EXISTS interes_especifico TEXT NOT NULL DEFAULT ''")
+                    cur.execute("ALTER TABLE crm_lead_meta ADD COLUMN IF NOT EXISTS forma_pago_interes TEXT NOT NULL DEFAULT ''")
+                    cur.execute("ALTER TABLE crm_lead_meta ADD COLUMN IF NOT EXISTS horizonte_compra TEXT NOT NULL DEFAULT ''")
+                    cur.execute("ALTER TABLE crm_lead_meta ADD COLUMN IF NOT EXISTS objeciones TEXT NOT NULL DEFAULT ''")
+                    cur.execute("ALTER TABLE crm_lead_meta ADD COLUMN IF NOT EXISTS senales_compra TEXT NOT NULL DEFAULT ''")
+                    cur.execute("ALTER TABLE crm_lead_meta ADD COLUMN IF NOT EXISTS resumen_ia TEXT NOT NULL DEFAULT ''")
+                    cur.execute("ALTER TABLE crm_lead_meta ADD COLUMN IF NOT EXISTS proxima_accion_ia TEXT NOT NULL DEFAULT ''")
+                    cur.execute("ALTER TABLE crm_lead_meta ADD COLUMN IF NOT EXISTS estado_negociacion_ia TEXT NOT NULL DEFAULT ''")
+                    cur.execute("ALTER TABLE crm_lead_meta ADD COLUMN IF NOT EXISTS analisis_confianza TEXT NOT NULL DEFAULT ''")
+                    cur.execute("ALTER TABLE crm_lead_meta ADD COLUMN IF NOT EXISTS analisis_updated_at TIMESTAMPTZ NULL")
                 conn.commit()
                 _crm_lead_meta_db_inicializada = True
                 print("CRM LEADS DB: tabla lista")
@@ -6170,7 +6204,12 @@ def cargar_crm_lead_meta():
         try:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT numero, etapa, proxima_accion, proxima_accion_fecha, carpeta
+                    SELECT numero, etapa, proxima_accion, proxima_accion_fecha, carpeta,
+                           clasificacion_comercial, motivacion, interes_especifico,
+                           forma_pago_interes, horizonte_compra, objeciones, senales_compra,
+                           resumen_ia, proxima_accion_ia, estado_negociacion_ia,
+                           analisis_confianza,
+                           COALESCE(TO_CHAR(analisis_updated_at AT TIME ZONE 'America/Guatemala', 'DD/MM/YYYY HH24:MI'), '')
                     FROM crm_lead_meta
                 """)
                 filas = cur.fetchall()
@@ -6178,12 +6217,31 @@ def cargar_crm_lead_meta():
             conn.close()
 
         with lock_crm_lead_meta:
-            for numero, etapa, accion, fecha, carpeta in filas:
+            for fila in filas:
+                (
+                    numero, etapa, accion, fecha, carpeta,
+                    clasificacion, motivacion, interes_especifico,
+                    forma_pago_interes, horizonte_compra, objeciones, senales_compra,
+                    resumen_ia, proxima_accion_ia, estado_negociacion_ia,
+                    analisis_confianza, analisis_updated_at,
+                ) = fila
                 crm_lead_meta[str(numero)] = {
                     "etapa": etapa if etapa in CRM_ETAPAS else "Nuevo lead",
                     "proxima_accion": accion or "",
                     "proxima_accion_fecha": fecha or "",
                     "carpeta": carpeta or "",
+                    "clasificacion_comercial": clasificacion if clasificacion in CRM_CLASIFICACIONES_IA else "INTENCIÓN POR DETERMINAR",
+                    "motivacion": motivacion or "",
+                    "interes_especifico": interes_especifico or "",
+                    "forma_pago_interes": forma_pago_interes or "",
+                    "horizonte_compra": horizonte_compra or "",
+                    "objeciones": objeciones or "",
+                    "senales_compra": senales_compra or "",
+                    "resumen_ia": resumen_ia or "",
+                    "proxima_accion_ia": proxima_accion_ia or "",
+                    "estado_negociacion_ia": estado_negociacion_ia or "",
+                    "analisis_confianza": analisis_confianza or "",
+                    "analisis_updated_at": analisis_updated_at or "",
                 }
             _crm_lead_meta_cargada = True
     except Exception as exc:
@@ -6200,6 +6258,18 @@ def crm_obtener_meta(numero):
             "proxima_accion": "",
             "proxima_accion_fecha": "",
             "carpeta": "",
+            "clasificacion_comercial": "INTENCIÓN POR DETERMINAR",
+            "motivacion": "",
+            "interes_especifico": "",
+            "forma_pago_interes": "",
+            "horizonte_compra": "",
+            "objeciones": "",
+            "senales_compra": "",
+            "resumen_ia": "",
+            "proxima_accion_ia": "",
+            "estado_negociacion_ia": "",
+            "analisis_confianza": "",
+            "analisis_updated_at": "",
         }
     with lock_crm_lead_meta:
         meta = crm_lead_meta.get(numero) or {}
@@ -6208,6 +6278,18 @@ def crm_obtener_meta(numero):
             "proxima_accion": str(meta.get("proxima_accion") or ""),
             "proxima_accion_fecha": str(meta.get("proxima_accion_fecha") or ""),
             "carpeta": str(meta.get("carpeta") or ""),
+            "clasificacion_comercial": meta.get("clasificacion_comercial") if meta.get("clasificacion_comercial") in CRM_CLASIFICACIONES_IA else "INTENCIÓN POR DETERMINAR",
+            "motivacion": str(meta.get("motivacion") or ""),
+            "interes_especifico": str(meta.get("interes_especifico") or ""),
+            "forma_pago_interes": str(meta.get("forma_pago_interes") or ""),
+            "horizonte_compra": str(meta.get("horizonte_compra") or ""),
+            "objeciones": str(meta.get("objeciones") or ""),
+            "senales_compra": str(meta.get("senales_compra") or ""),
+            "resumen_ia": str(meta.get("resumen_ia") or ""),
+            "proxima_accion_ia": str(meta.get("proxima_accion_ia") or ""),
+            "estado_negociacion_ia": str(meta.get("estado_negociacion_ia") or ""),
+            "analisis_confianza": str(meta.get("analisis_confianza") or ""),
+            "analisis_updated_at": str(meta.get("analisis_updated_at") or ""),
         }
 
 
@@ -6224,12 +6306,14 @@ def crm_guardar_meta(numero, etapa, proxima_accion, proxima_accion_fecha, carpet
     carpeta = str(carpeta or "").strip()[:80]
 
     with lock_crm_lead_meta:
-        crm_lead_meta[numero] = {
+        existente = dict(crm_lead_meta.get(numero) or {})
+        existente.update({
             "etapa": etapa,
             "proxima_accion": proxima_accion,
             "proxima_accion_fecha": proxima_accion_fecha,
             "carpeta": carpeta,
-        }
+        })
+        crm_lead_meta[numero] = existente
 
     if not inicializar_crm_lead_meta_db():
         return False
@@ -6257,6 +6341,214 @@ def crm_guardar_meta(numero, etapa, proxima_accion, proxima_accion_fecha, carpet
         print("CRM LEADS DB SAVE ERROR:", exc)
         return False
 
+
+# ============================================================
+# FASE 1 - MEMORIA Y CLASIFICACION COMERCIAL CON IA
+# ============================================================
+_analisis_comercial_version = {}
+lock_analisis_comercial = Lock()
+
+
+def _limpiar_json_modelo(texto):
+    bruto = str(texto or "").strip()
+    if bruto.startswith("```"):
+        bruto = re.sub(r"^```(?:json)?\s*", "", bruto, flags=re.I)
+        bruto = re.sub(r"\s*```$", "", bruto)
+    inicio = bruto.find("{")
+    fin = bruto.rfind("}")
+    if inicio >= 0 and fin > inicio:
+        bruto = bruto[inicio:fin + 1]
+    return bruto.strip()
+
+
+def crm_guardar_analisis_ia(numero, analisis):
+    """Guarda solamente la memoria comercial de IA sin pisar campos manuales del CRM."""
+    numero = str(numero or "").strip()
+    if not numero or not isinstance(analisis, dict):
+        return False
+
+    clasificacion = str(analisis.get("clasificacion_comercial") or "INTENCIÓN POR DETERMINAR").strip().upper()
+    normalizadas = {x.upper(): x for x in CRM_CLASIFICACIONES_IA}
+    clasificacion = normalizadas.get(clasificacion, "INTENCIÓN POR DETERMINAR")
+
+    campos = {
+        "clasificacion_comercial": clasificacion,
+        "motivacion": str(analisis.get("motivacion") or "").strip()[:300],
+        "interes_especifico": str(analisis.get("interes_especifico") or "").strip()[:300],
+        "forma_pago_interes": str(analisis.get("forma_pago_interes") or "").strip()[:180],
+        "horizonte_compra": str(analisis.get("horizonte_compra") or "").strip()[:180],
+        "objeciones": str(analisis.get("objeciones") or "").strip()[:700],
+        "senales_compra": str(analisis.get("senales_compra") or "").strip()[:700],
+        "resumen_ia": str(analisis.get("resumen_ia") or "").strip()[:1200],
+        "proxima_accion_ia": str(analisis.get("proxima_accion_ia") or "").strip()[:500],
+        "estado_negociacion_ia": str(analisis.get("estado_negociacion_ia") or "").strip()[:250],
+        "analisis_confianza": str(analisis.get("analisis_confianza") or "").strip().upper()[:20],
+        "analisis_updated_at": datetime.now(ZoneInfo("America/Guatemala")).strftime("%d/%m/%Y %H:%M"),
+    }
+
+    cargar_crm_lead_meta()
+    with lock_crm_lead_meta:
+        existente = dict(crm_lead_meta.get(numero) or {})
+        existente.update(campos)
+        crm_lead_meta[numero] = existente
+
+    if not inicializar_crm_lead_meta_db():
+        return False
+
+    try:
+        conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO crm_lead_meta (
+                        numero, clasificacion_comercial, motivacion, interes_especifico,
+                        forma_pago_interes, horizonte_compra, objeciones, senales_compra,
+                        resumen_ia, proxima_accion_ia, estado_negociacion_ia,
+                        analisis_confianza, analisis_updated_at, updated_at
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(),NOW())
+                    ON CONFLICT (numero) DO UPDATE SET
+                        clasificacion_comercial = EXCLUDED.clasificacion_comercial,
+                        motivacion = EXCLUDED.motivacion,
+                        interes_especifico = EXCLUDED.interes_especifico,
+                        forma_pago_interes = EXCLUDED.forma_pago_interes,
+                        horizonte_compra = EXCLUDED.horizonte_compra,
+                        objeciones = EXCLUDED.objeciones,
+                        senales_compra = EXCLUDED.senales_compra,
+                        resumen_ia = EXCLUDED.resumen_ia,
+                        proxima_accion_ia = EXCLUDED.proxima_accion_ia,
+                        estado_negociacion_ia = EXCLUDED.estado_negociacion_ia,
+                        analisis_confianza = EXCLUDED.analisis_confianza,
+                        analisis_updated_at = NOW(),
+                        updated_at = NOW()
+                """, (
+                    numero, campos["clasificacion_comercial"], campos["motivacion"], campos["interes_especifico"],
+                    campos["forma_pago_interes"], campos["horizonte_compra"], campos["objeciones"], campos["senales_compra"],
+                    campos["resumen_ia"], campos["proxima_accion_ia"], campos["estado_negociacion_ia"],
+                    campos["analisis_confianza"],
+                ))
+            conn.commit()
+        finally:
+            conn.close()
+        return True
+    except Exception as exc:
+        print("CRM ANALISIS IA SAVE ERROR:", numero, exc)
+        return False
+
+
+def analizar_prospecto_comercial_ia(numero):
+    """Analiza silenciosamente la conversación y actualiza la ficha comercial del prospecto."""
+    numero = str(numero or "").strip()
+    if not numero:
+        return None
+
+    historial = obtener_historial(numero) or []
+    if not historial:
+        return None
+
+    # Usamos solo el tramo reciente para mantener el análisis rápido, pero incluimos
+    # el resumen anterior para conservar aprendizajes comerciales importantes.
+    recientes = historial[-30:]
+    lineas = []
+    for item in recientes:
+        rol = str(item.get("role") or "")
+        contenido = str(item.get("content") or "").strip()
+        if not contenido:
+            continue
+        etiqueta = "CLIENTE" if rol == "user" else "ASESOR"
+        lineas.append(f"{etiqueta}: {contenido[:1200]}")
+    transcript = "\n".join(lineas)[-14000:]
+
+    meta_anterior = crm_obtener_meta(numero)
+    proyecto = crm_nombre_proyecto(numero)
+    memoria_anterior = {
+        "clasificacion_comercial": meta_anterior.get("clasificacion_comercial", ""),
+        "motivacion": meta_anterior.get("motivacion", ""),
+        "interes_especifico": meta_anterior.get("interes_especifico", ""),
+        "forma_pago_interes": meta_anterior.get("forma_pago_interes", ""),
+        "horizonte_compra": meta_anterior.get("horizonte_compra", ""),
+        "objeciones": meta_anterior.get("objeciones", ""),
+        "senales_compra": meta_anterior.get("senales_compra", ""),
+        "resumen_ia": meta_anterior.get("resumen_ia", ""),
+        "estado_negociacion_ia": meta_anterior.get("estado_negociacion_ia", ""),
+    }
+
+    instrucciones = """
+USTED ES UN DIRECTOR COMERCIAL INMOBILIARIO. Analice la conversación de UN prospecto y actualice su memoria comercial.
+NO redacte un mensaje para el cliente. Su salida es exclusivamente JSON para uso interno del CRM.
+
+CLASIFICACIÓN PERMITIDA, exactamente una:
+- ALTA INTENCIÓN: señales concretas de avance, por ejemplo visita, llamada, reserva, compra próxima, disponibilidad específica, requisitos para comprar o análisis serio de forma de pago.
+- INTENCIÓN MEDIA: interés real y conversación útil, pero todavía necesita información, confianza, comparación o tiempo.
+- INTENCIÓN POR DETERMINAR: todavía no hay suficiente evidencia. Preguntar solo precio NO convierte al prospecto en malo.
+
+REGLAS:
+- Analice el contexto completo, no solamente el último mensaje.
+- No invente motivaciones, presupuesto, ubicación, plazo ni objeciones.
+- Si algo no está claro use "No identificado" o cadena vacía, según corresponda.
+- Distinga una objeción de una falta de interés. Una objeción puede ser señal de compra.
+- Si el cliente pidió no recibir más mensajes, ya compró, reservó, o dijo claramente que no le interesa, refleje eso en estado_negociacion_ia y en proxima_accion_ia.
+- La próxima acción debe ser comercialmente útil y específica, no genérica.
+- El resumen debe ser factual, breve y entendible antes de una llamada.
+- No cambie hechos anteriores confirmados solo porque el último mensaje sea corto.
+
+Devuelva SOLO JSON válido con estas claves exactas:
+{
+  "clasificacion_comercial": "ALTA INTENCIÓN|INTENCIÓN MEDIA|INTENCIÓN POR DETERMINAR",
+  "motivacion": "",
+  "interes_especifico": "",
+  "forma_pago_interes": "",
+  "horizonte_compra": "",
+  "objeciones": "",
+  "senales_compra": "",
+  "resumen_ia": "",
+  "proxima_accion_ia": "",
+  "estado_negociacion_ia": "",
+  "analisis_confianza": "ALTA|MEDIA|BAJA"
+}
+"""
+
+    entrada = (
+        f"PROYECTO REGISTRADO: {proyecto}\n"
+        f"MEMORIA ANTERIOR: {json.dumps(memoria_anterior, ensure_ascii=False)}\n\n"
+        f"CONVERSACIÓN RECIENTE:\n{transcript}"
+    )
+
+    try:
+        respuesta = client.responses.create(
+            model="gpt-5-mini",
+            instructions=instrucciones,
+            input=entrada,
+            max_output_tokens=550,
+        )
+        bruto = _limpiar_json_modelo(respuesta.output_text)
+        analisis = json.loads(bruto)
+        if not isinstance(analisis, dict):
+            raise ValueError("La respuesta de análisis no fue un objeto JSON")
+        crm_guardar_analisis_ia(numero, analisis)
+        print("CRM ANALISIS IA:", numero, analisis.get("clasificacion_comercial"), analisis.get("proxima_accion_ia"))
+        return analisis
+    except Exception as exc:
+        print("ERROR ANALISIS COMERCIAL IA:", numero, exc)
+        return None
+
+
+def programar_analisis_comercial_ia(numero):
+    """Debounce simple: si llegan varios mensajes seguidos, analiza solo el estado más reciente."""
+    numero = str(numero or "").strip()
+    if not numero:
+        return
+    with lock_analisis_comercial:
+        version = _analisis_comercial_version.get(numero, 0) + 1
+        _analisis_comercial_version[numero] = version
+
+    def worker():
+        time.sleep(0.8)
+        with lock_analisis_comercial:
+            if _analisis_comercial_version.get(numero) != version:
+                return
+        analizar_prospecto_comercial_ia(numero)
+
+    Thread(target=worker, daemon=True).start()
 
 
 # ============================================================
@@ -6570,6 +6862,71 @@ def asegurar_estilo_vendedor_ia(texto):
     return asegurar_pregunta_final_ia(texto)
 
 
+
+def editar_respuesta_comercial_ia(numero_cliente, mensaje_cliente, borrador, proyecto_actual_texto, requiere_intervencion=False):
+    """Segunda pasada de IA: actúa como director comercial y convierte el borrador
+    en un mensaje humano, breve y vendedor. No usa guiones ni decide por palabras
+    clave; evalúa la intención real del mensaje y el contexto.
+    """
+    borrador = str(borrador or "").strip()
+    mensaje_cliente = str(mensaje_cliente or "").strip()
+    if not borrador:
+        return borrador
+
+    try:
+        instrucciones_editor = f"""
+USTED ES EL DIRECTOR COMERCIAL QUE REVISA EL MENSAJE DE UN ASESOR INMOBILIARIO ANTES DE ENVIARLO POR WHATSAPP.
+
+Cliente escribió:
+{mensaje_cliente}
+
+Proyecto activo:
+{proyecto_actual_texto}
+
+Borrador del asesor:
+{borrador}
+
+Su trabajo NO es añadir información. Su trabajo es decidir qué parte del borrador realmente necesita el cliente AHORA y devolver el mejor mensaje comercial posible.
+
+CRITERIO OBLIGATORIO:
+- Piense como un vendedor humano excelente, no como un folleto ni un chatbot.
+- Responda primero lo que el cliente pidió.
+- Si el cliente hizo una consulta amplia o solo pidió “información”, NO vacíe la ficha del proyecto. Elija únicamente 1 o 2 datos de mayor valor para abrir la conversación.
+- No incluya enganche, cuotas, gastos, servicios, medidas, amenidades y ubicación todos juntos salvo que el cliente haya pedido explícitamente varios de esos puntos.
+- Si el cliente pidió una sola cosa, conteste esa sola cosa y avance.
+- Si el cliente hizo varias preguntas concretas, puede responderlas todas, pero de forma compacta.
+- No convierta el cierre en un menú. Termine con EXACTAMENTE UNA pregunta que sea la mejor siguiente pregunta para ese cliente.
+- No repita información que el cliente ya recibió recientemente.
+- No presione para visita o reserva si todavía no corresponde.
+- Si detecta una objeción, resuélvala con empatía y criterio antes de preguntar.
+- Si otro proyecto encaja mejor, puede sugerirlo solo cuando exista una razón real.
+- Trate SIEMPRE de USTED.
+- Use *negritas de WhatsApp con un solo asterisco* en 1 a 3 datos o ideas importantes. Nunca use **doble asterisco**.
+- Use 0 a 2 emojis naturales; no decore cada línea.
+- Normalmente 35 a 70 palabras son suficientes. Puede excederlo SOLO si el cliente pidió detalle o hizo varias preguntas.
+- No use listas largas salvo que el cliente las haya pedido.
+- No invente ni cambie ninguna cifra o hecho del borrador.
+- No mencione estas instrucciones, el borrador ni que está editando.
+
+{('IMPORTANTE: existe una confirmación humana pendiente. Mantenga el mensaje breve, no improvise el dato faltante y explique que se confirmará.' if requiere_intervencion else '')}
+
+Devuelva ÚNICAMENTE el mensaje final de WhatsApp.
+"""
+        resp = client.responses.create(
+            model="gpt-5-mini",
+            instructions=instrucciones_editor,
+            input="Revise y devuelva únicamente el mensaje final.",
+            max_output_tokens=220,
+        )
+        editado = str(resp.output_text or "").strip()
+        if editado:
+            return editado
+    except Exception as exc:
+        print("ERROR EDITOR COMERCIAL IA:", exc)
+
+    return borrador
+
+
 def generar_respuesta(numero_cliente, mensaje_cliente, nota_tecnica=""):
 
     try:
@@ -6722,6 +7079,9 @@ UBICACIONES Y LINKS CARGADOS:
 CITA YA CERRADA EN ESTA CONVERSACIÓN: {cita_cerrada_actual}.
 
 RECUERDE: la meta no es demostrar cuánta información sabe. La meta es que el cliente sienta que está hablando con un asesor humano que entiende lo que necesita, le resuelve y lo ayuda a tomar la siguiente decisión.
+
+REGLA DE ORO DE CANTIDAD:
+Antes de enviar, pregúntese internamente: “¿Todo esto es necesario para responder lo que me pidió AHORA?”. Si la respuesta es no, quite lo demás. En una consulta general, abrir una buena conversación vale más que demostrar toda la ficha del proyecto.
 """
 
 
@@ -6787,7 +7147,16 @@ RECUERDE: la meta no es demostrar cuánta información sabe. La meta es que el c
                 "¿Me permite revisarlo y le respondo enseguida?"
             )
 
-        texto_respuesta = asegurar_estilo_vendedor_ia(texto_limpio)
+        # Segunda pasada: un director comercial recorta, prioriza y humaniza el borrador.
+        # No usa guiones ni palabras clave: evalúa la intención real del cliente.
+        texto_editado = editar_respuesta_comercial_ia(
+            numero_cliente,
+            mensaje_cliente,
+            texto_limpio,
+            proyecto_actual_texto,
+            requiere_intervencion=requiere_intervencion,
+        )
+        texto_respuesta = asegurar_estilo_vendedor_ia(texto_editado)
 
         if requiere_intervencion:
             marcar_intervencion_automatica(
@@ -6813,6 +7182,12 @@ RECUERDE: la meta no es demostrar cuánta información sabe. La meta es que el c
             texto_respuesta
         )
 
+        # Fase 1: la clasificación se actualiza en segundo plano y nunca retrasa
+        # la respuesta que recibe el cliente.
+        try:
+            programar_analisis_comercial_ia(numero_cliente)
+        except Exception as exc:
+            print("ERROR PROGRAMANDO ANALISIS COMERCIAL:", numero_cliente, exc)
 
         return texto_respuesta
 
@@ -13125,8 +13500,27 @@ CRM_HTML = r"""
         .quick-chip.secondary { border-color:#d1d5db; background:white; color:#374151; }
         .quick-chip:disabled { opacity:.42; cursor:not-allowed; }
         .next-mini { margin-top:5px; font-size:11px; color:#b45309; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .intent-badge {
+            display:inline-block; margin-top:6px; margin-left:4px; padding:3px 7px; border-radius:999px;
+            font-size:10px; font-weight:900; background:#f1f5f9; color:#334155;
+        }
+        .intent-badge.high { background:#fee2e2; color:#b91c1c; }
+        .intent-badge.medium { background:#dcfce7; color:#166534; }
+        .intent-badge.unknown { background:#fef3c7; color:#92400e; }
+        .ai-analysis {
+            background:#f8fafc; border-bottom:1px solid #dbe1e7; padding:12px 18px;
+        }
+        .ai-analysis-head { display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
+        .ai-analysis-title { font-weight:900; font-size:13px; color:#0f172a; }
+        .ai-analysis-grid { display:grid; grid-template-columns:repeat(4,minmax(150px,1fr)); gap:8px; margin-top:10px; }
+        .ai-box { background:white; border:1px solid #e2e8f0; border-radius:10px; padding:9px 10px; min-width:0; }
+        .ai-box.wide { grid-column:span 2; }
+        .ai-label { font-size:10px; font-weight:800; color:#64748b; text-transform:uppercase; letter-spacing:.03em; }
+        .ai-value { margin-top:4px; font-size:12px; line-height:1.35; color:#1e293b; white-space:pre-wrap; }
+        .ai-refresh { border:1px solid #cbd5e1; background:white; color:#334155; border-radius:8px; padding:7px 10px; font-size:11px; font-weight:800; cursor:pointer; }
         @media (max-width: 980px) {
             .lead-form { grid-template-columns:1fr 1fr; }
+            .ai-analysis-grid { grid-template-columns:1fr 1fr; }
             .save-lead { width:100%; }
         }
         @media (max-width: 760px) {
@@ -13138,6 +13532,8 @@ CRM_HTML = r"""
             }
             .bubble { max-width: 88%; }
             .chat-head { align-items: flex-start; }
+            .ai-analysis-grid { grid-template-columns:1fr; }
+            .ai-box.wide { grid-column:span 1; }
         }
     </style>
 </head>
@@ -13197,6 +13593,7 @@ CRM_HTML = r"""
                    data-label="{{ ((c.nombre_manual ~ ' ' ~ c.identificador) if c.nombre_manual else c.identificador) ~ ' ' ~ c.anuncio_nombre ~ ' ' ~ c.anuncio_id }}"
                    data-stage="{{ c.etapa }}"
                    data-folder="{{ c.carpeta }}"
+                   data-intent="{{ c.clasificacion_comercial }}"
                    href="{{ url_for('crm', numero=c.numero) }}">
                     <div>
                         {% if c.canal == 'facebook' %}
@@ -13218,6 +13615,9 @@ CRM_HTML = r"""
                         <div class="small" style="color:{% if c.anuncio_mapeado %}#2563eb{% else %}#b45309{% endif %};font-weight:700;">📢 {{ c.anuncio_nombre }}</div>
                     {% endif %}
                     <span class="stage-badge">{{ c.etapa }}</span>
+                    <span class="intent-badge {% if c.clasificacion_comercial == 'ALTA INTENCIÓN' %}high{% elif c.clasificacion_comercial == 'INTENCIÓN MEDIA' %}medium{% else %}unknown{% endif %}">
+                        {% if c.clasificacion_comercial == 'ALTA INTENCIÓN' %}🔥{% elif c.clasificacion_comercial == 'INTENCIÓN MEDIA' %}🟢{% else %}🟡{% endif %} {{ c.clasificacion_comercial }}
+                    </span>
                     {% if c.carpeta %}<span class="folder-badge">📁 {{ c.carpeta }}</span>{% endif %}
                     {% if c.proxima_accion %}
                         <div class="next-mini">⏰ {{ c.proxima_accion }}{% if c.proxima_accion_fecha %} · {{ c.proxima_accion_fecha|replace('T',' ') }}{% endif %}</div>
@@ -13260,6 +13660,37 @@ CRM_HTML = r"""
                         {% endif %}
                     </form>
                 </div>
+            </div>
+
+            <div class="ai-analysis">
+                <div class="ai-analysis-head">
+                    <div>
+                        <span class="ai-analysis-title">🧠 Análisis comercial IA</span>
+                        <span class="intent-badge {% if meta_seleccionada.clasificacion_comercial == 'ALTA INTENCIÓN' %}high{% elif meta_seleccionada.clasificacion_comercial == 'INTENCIÓN MEDIA' %}medium{% else %}unknown{% endif %}">
+                            {% if meta_seleccionada.clasificacion_comercial == 'ALTA INTENCIÓN' %}🔥{% elif meta_seleccionada.clasificacion_comercial == 'INTENCIÓN MEDIA' %}🟢{% else %}🟡{% endif %} {{ meta_seleccionada.clasificacion_comercial }}
+                        </span>
+                        {% if meta_seleccionada.analisis_confianza %}<span class="small" style="display:inline-block;margin-left:6px;">Confianza {{ meta_seleccionada.analisis_confianza }}</span>{% endif %}
+                    </div>
+                    <form method="post" action="{{ url_for('crm_reanalizar_ia', numero=seleccionado) }}">
+                        <button class="ai-refresh" type="submit">🔄 Reanalizar</button>
+                    </form>
+                </div>
+                {% if meta_seleccionada.resumen_ia %}
+                <div class="ai-analysis-grid">
+                    <div class="ai-box wide"><div class="ai-label">Resumen</div><div class="ai-value">{{ meta_seleccionada.resumen_ia }}</div></div>
+                    <div class="ai-box"><div class="ai-label">Motivación</div><div class="ai-value">{{ meta_seleccionada.motivacion or 'No identificada' }}</div></div>
+                    <div class="ai-box"><div class="ai-label">Interés concreto</div><div class="ai-value">{{ meta_seleccionada.interes_especifico or 'No identificado' }}</div></div>
+                    <div class="ai-box"><div class="ai-label">Forma de pago</div><div class="ai-value">{{ meta_seleccionada.forma_pago_interes or 'No identificada' }}</div></div>
+                    <div class="ai-box"><div class="ai-label">Horizonte de compra</div><div class="ai-value">{{ meta_seleccionada.horizonte_compra or 'No identificado' }}</div></div>
+                    <div class="ai-box wide"><div class="ai-label">Objeciones / dudas</div><div class="ai-value">{{ meta_seleccionada.objeciones or 'Sin objeción clara todavía' }}</div></div>
+                    <div class="ai-box wide"><div class="ai-label">Señales de compra</div><div class="ai-value">{{ meta_seleccionada.senales_compra or 'Todavía no hay señales concluyentes' }}</div></div>
+                    <div class="ai-box wide"><div class="ai-label">Próxima acción recomendada</div><div class="ai-value">{{ meta_seleccionada.proxima_accion_ia or 'Continuar obteniendo contexto de forma natural' }}</div></div>
+                    <div class="ai-box"><div class="ai-label">Estado comercial</div><div class="ai-value">{{ meta_seleccionada.estado_negociacion_ia or 'En evaluación' }}</div></div>
+                    <div class="ai-box"><div class="ai-label">Último análisis</div><div class="ai-value">{{ meta_seleccionada.analisis_updated_at or 'Pendiente' }}</div></div>
+                </div>
+                {% else %}
+                    <div class="small" style="margin-top:7px;">Aún no hay análisis comercial. Se generará automáticamente después de la próxima conversación o puede usar “Reanalizar”.</div>
+                {% endif %}
             </div>
 
             <div class="lead-management">
@@ -14136,6 +14567,9 @@ def crm():
                 "proxima_accion": meta["proxima_accion"],
                 "proxima_accion_fecha": meta["proxima_accion_fecha"],
                 "carpeta": meta.get("carpeta", ""),
+                "clasificacion_comercial": meta.get("clasificacion_comercial", "INTENCIÓN POR DETERMINAR"),
+                "resumen_ia": meta.get("resumen_ia", ""),
+                "proxima_accion_ia": meta.get("proxima_accion_ia", ""),
             })
 
         mensajes_seleccionados = list(
@@ -14240,6 +14674,17 @@ def crm_data():
         "seleccionado": seleccionado,
         "eventos_entrantes": eventos_entrantes
     })
+
+
+@app.route("/crm/analisis-ia/<numero>", methods=["POST"])
+def crm_reanalizar_ia(numero):
+    if not crm_autorizado():
+        return crm_pedir_login()
+    try:
+        programar_analisis_comercial_ia(numero)
+    except Exception as exc:
+        print("CRM REANALIZAR IA ERROR:", numero, exc)
+    return redirect(url_for("crm", numero=numero))
 
 
 @app.route("/crm/gestion/<numero>", methods=["POST"])
